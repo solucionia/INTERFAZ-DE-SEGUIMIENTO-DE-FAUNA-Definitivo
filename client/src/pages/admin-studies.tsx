@@ -1,0 +1,435 @@
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import type { Study, User } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+  FormDescription,
+} from "@/components/ui/form";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-react";
+
+const studyFormSchema = z.object({
+  name: z.string().min(2, "Nombre requerido"),
+  movebankStudyId: z.coerce.number().int().positive("ID de estudio requerido"),
+  movebankUsername: z.string().min(1, "Usuario de Movebank requerido"),
+  movebankPassword: z.string().min(1, "Contraseña de Movebank requerida"),
+  alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
+  active: z.boolean(),
+});
+
+type StudyFormValues = z.infer<typeof studyFormSchema>;
+
+export default function AdminStudies() {
+  const { toast } = useToast();
+  const [editStudy, setEditStudy] = useState<Study | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [deleteStudy, setDeleteStudy] = useState<Study | null>(null);
+  const [assignStudy, setAssignStudy] = useState<Study | null>(null);
+
+  const { data: studies, isLoading } = useQuery<Study[]>({
+    queryKey: ["/api/studies"],
+  });
+
+  const { data: allUsers } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+  });
+
+  const { data: studyUsers, isLoading: assignLoading } = useQuery<string[]>({
+    queryKey: ["/api/studies", assignStudy?.id, "users"],
+    enabled: !!assignStudy,
+  });
+
+  const form = useForm<StudyFormValues>({
+    resolver: zodResolver(studyFormSchema),
+    defaultValues: {
+      name: "",
+      movebankStudyId: 0,
+      movebankUsername: "",
+      movebankPassword: "",
+      alertEmail: "",
+      active: true,
+    },
+  });
+
+  const openCreate = () => {
+    setEditStudy(null);
+    form.reset({
+      name: "",
+      movebankStudyId: 0,
+      movebankUsername: "",
+      movebankPassword: "",
+      alertEmail: "",
+      active: true,
+    });
+    setShowForm(true);
+  };
+
+  const openEdit = (study: Study) => {
+    setEditStudy(study);
+    form.reset({
+      name: study.name,
+      movebankStudyId: study.movebankStudyId,
+      movebankUsername: study.movebankUsername,
+      movebankPassword: study.movebankPassword,
+      alertEmail: study.alertEmail || "",
+      active: study.active,
+    });
+    setShowForm(true);
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: async (values: StudyFormValues) => {
+      if (editStudy) {
+        await apiRequest("PATCH", `/api/studies/${editStudy.id}`, values);
+      } else {
+        await apiRequest("POST", "/api/studies", values);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/studies"] });
+      setShowForm(false);
+      toast({ title: editStudy ? "Estudio actualizado" : "Estudio creado" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/studies/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/studies"] });
+      setDeleteStudy(null);
+      toast({ title: "Estudio eliminado" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: async ({ studyId, userId, assign }: { studyId: string; userId: string; assign: boolean }) => {
+      if (assign) {
+        await apiRequest("POST", `/api/studies/${studyId}/users`, { userId });
+      } else {
+        await apiRequest("DELETE", `/api/studies/${studyId}/users/${userId}`);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", assignStudy?.id, "users"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const onSubmit = (values: StudyFormValues) => {
+    saveMutation.mutate(values);
+  };
+
+  const normalUsers = allUsers?.filter((u) => u.role !== "superuser") || [];
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground" data-testid="text-admin-studies-title">
+            Gestionar estudios
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Crea, edita y asigna estudios de Movebank
+          </p>
+        </div>
+        <Button onClick={openCreate} data-testid="button-create-study">
+          <Plus className="w-4 h-4 mr-2" />
+          Nuevo estudio
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-5 space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-12 w-full rounded" />
+              ))}
+            </div>
+          ) : studies && studies.length > 0 ? (
+            <div className="overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Movebank ID</TableHead>
+                    <TableHead>Email alertas</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {studies.map((study) => (
+                    <TableRow key={study.id} data-testid={`row-study-${study.id}`}>
+                      <TableCell className="font-medium">{study.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{study.movebankStudyId}</TableCell>
+                      <TableCell className="text-muted-foreground">{study.alertEmail || "—"}</TableCell>
+                      <TableCell>
+                        {study.active ? (
+                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
+                            Activo
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="opacity-50">Inactivo</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => setAssignStudy(study)}
+                            data-testid={`button-assign-${study.id}`}
+                          >
+                            <Users className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => openEdit(study)}
+                            data-testid={`button-edit-${study.id}`}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => setDeleteStudy(study)}
+                            data-testid={`button-delete-${study.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <div className="py-12 text-center">
+              <Settings className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">No hay estudios creados</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editStudy ? "Editar estudio" : "Nuevo estudio"}</DialogTitle>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nombre del estudio</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ej: Águilas reales Patagonia" data-testid="input-study-name" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="movebankStudyId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Study ID de Movebank</FormLabel>
+                    <FormControl>
+                      <Input type="number" placeholder="Ej: 12345678" data-testid="input-study-movebank-id" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="movebankUsername"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Usuario de Movebank</FormLabel>
+                    <FormControl>
+                      <Input placeholder="usuario@movebank" data-testid="input-study-mb-user" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="movebankPassword"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contraseña de Movebank</FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="••••••" data-testid="input-study-mb-pass" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="alertEmail"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email de alertas (opcional)</FormLabel>
+                    <FormControl>
+                      <Input type="email" placeholder="alertas@ejemplo.com" data-testid="input-study-alert-email" {...field} />
+                    </FormControl>
+                    <FormDescription>Correo para recibir alertas de este estudio</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="active"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between">
+                    <FormLabel>Estudio activo</FormLabel>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-study-active" />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save-study">
+                  {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {editStudy ? "Guardar cambios" : "Crear estudio"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteStudy} onOpenChange={(open) => !open && setDeleteStudy(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar estudio</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Estás seguro de eliminar "{deleteStudy?.name}"? Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteStudy && deleteMutation.mutate(deleteStudy.id)}
+              className="bg-destructive text-destructive-foreground"
+              data-testid="button-confirm-delete"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={!!assignStudy} onOpenChange={(open) => !open && setAssignStudy(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Asignar usuarios a "{assignStudy?.name}"</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 max-h-64 overflow-auto py-2">
+            {assignLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-8 w-full rounded" />
+                ))}
+              </div>
+            ) : normalUsers.length > 0 ? (
+              normalUsers.map((u) => {
+                const isAssigned = studyUsers?.includes(u.id);
+                return (
+                  <div key={u.id} className="flex items-center gap-3 py-1" data-testid={`assign-user-${u.id}`}>
+                    <Checkbox
+                      checked={isAssigned}
+                      onCheckedChange={(checked) => {
+                        if (assignStudy) {
+                          assignMutation.mutate({
+                            studyId: assignStudy.id,
+                            userId: u.id,
+                            assign: !!checked,
+                          });
+                        }
+                      }}
+                    />
+                    <div>
+                      <p className="text-sm font-medium">{u.name}</p>
+                      <p className="text-xs text-muted-foreground">{u.email}</p>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No hay usuarios normales registrados
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
