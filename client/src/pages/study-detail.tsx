@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRoute } from "wouter";
+import { useRoute, Link } from "wouter";
 import type { Study, Individual, Deployment } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Radio, PawPrint, AlertCircle } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -100,14 +100,22 @@ export default function StudyDetail() {
             Movebank Study ID: {study.movebankStudyId}
           </p>
         </div>
-        <Button
-          onClick={handleSync}
-          disabled={syncing}
-          data-testid="button-sync-movebank"
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-          {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href={`/study/${studyId}/visualize`}>
+            <Button variant="outline" data-testid="button-visualize">
+              <BarChart3 className="w-4 h-4 mr-2" />
+              Visualizar datos
+            </Button>
+          </Link>
+          <Button
+            onClick={handleSync}
+            disabled={syncing}
+            data-testid="button-sync-movebank"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

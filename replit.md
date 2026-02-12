@@ -21,6 +21,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/auth-page.tsx` - Login/Register page
 - `client/src/pages/dashboard.tsx` - Main dashboard
 - `client/src/pages/study-detail.tsx` - Study detail with individual animals list
+- `client/src/pages/study-visualization.tsx` - Data visualization with accelerometer chart + GPS map
 - `client/src/pages/admin-studies.tsx` - CRUD for studies (superuser only)
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 
@@ -32,12 +33,18 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 5. Local caching of Movebank data in PostgreSQL
 6. Dark/light theme toggle
 7. Collapsible sidebar with Shadcn sidebar primitives
+8. Data visualization page with accelerometer chart (Recharts) and GPS map (Leaflet)
+9. Bidirectional chart-map synchronization (click chart → highlight map, click map → highlight chart)
+10. Multi-animal support with color-coded tracks and per-animal chart filtering
+11. Zoom by drag on accelerometer chart with visual selection area
+12. Resizable split panel layout (accelerometer chart top, GPS map bottom)
 
 ## API Routes
 - POST /api/auth/register, /api/auth/login, /api/auth/logout, GET /api/auth/me
 - GET /api/studies, GET /api/studies/:id, POST /api/studies, PATCH /api/studies/:id, DELETE /api/studies/:id
 - GET/POST /api/studies/:id/users, DELETE /api/studies/:studyId/users/:userId
 - GET /api/studies/:id/individuals, GET /api/studies/:id/deployments
+- GET /api/studies/:id/events?individuals=...&sensor_type=...&timestamp_start=...&timestamp_end=... (GPS: 653, Acc: 2365683)
 - POST /api/studies/:id/sync (triggers Movebank fetch)
 - GET /api/users (superuser only)
 

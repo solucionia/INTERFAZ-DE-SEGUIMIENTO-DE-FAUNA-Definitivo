@@ -4,7 +4,7 @@ import passport from "passport";
 import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
-import { fetchMovebankIndividuals, fetchMovebankDeployments } from "./movebank";
+import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
 import { registerSchema, insertStudySchema } from "@shared/schema";
 import { log } from "./index";
 
@@ -15,9 +15,9 @@ async function requireStudyAccess(req: Request, res: Response, next: NextFunctio
   const user = req.user!;
   if (user.role === "superuser") return next();
 
-  const studyId = req.params.id || req.params.studyId;
+  const studyId = (req.params.id || req.params.studyId) as string;
   const userStudyIds = (await storage.getStudiesForUser(user.id)).map((s) => s.id);
-  if (!userStudyIds.includes(studyId)) {
+  if (!userStudyIds.includes(studyId as string)) {
     return res.status(403).json({ message: "Acceso denegado a este estudio" });
   }
   next();
@@ -157,6 +157,51 @@ export async function registerRoutes(
   app.get("/api/studies/:id/deployments", requireStudyAccess, async (req, res) => {
     const deployments = await storage.getDeployments(req.params.id);
     return res.json(deployments);
+  });
+
+  app.get("/api/studies/:id/events", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end } = req.query;
+      if (!individualIds || !sensor_type || !timestamp_start || !timestamp_end) {
+        return res.status(400).json({ message: "Parámetros requeridos: individuals, sensor_type, timestamp_start, timestamp_end" });
+      }
+
+      const sensorTypeId = parseInt(sensor_type as string, 10);
+      const tsStart = parseInt(timestamp_start as string, 10);
+      const tsEnd = parseInt(timestamp_end as string, 10);
+      const ids = (individualIds as string).split(",");
+
+      const results: Record<string, Record<string, string>[]> = {};
+
+      await Promise.all(
+        ids.map(async (animalId) => {
+          const trimmed = animalId.trim();
+          try {
+            const events = await fetchMovebankEvents(
+              study.movebankStudyId,
+              study.movebankUsername,
+              study.movebankPassword,
+              trimmed,
+              sensorTypeId,
+              tsStart,
+              tsEnd
+            );
+            results[trimmed] = events;
+          } catch (e: any) {
+            log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
+            results[trimmed] = [];
+          }
+        })
+      );
+
+      return res.json(results);
+    } catch (e: any) {
+      log(`Events error: ${e.message}`, "movebank");
+      return res.status(500).json({ message: `Error al obtener eventos: ${e.message}` });
+    }
   });
 
   app.post("/api/studies/:id/sync", requireStudyAccess, async (req, res) => {

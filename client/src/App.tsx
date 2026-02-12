@@ -12,6 +12,7 @@ import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/auth-page";
 import Dashboard from "@/pages/dashboard";
 import StudyDetail from "@/pages/study-detail";
+import StudyVisualization from "@/pages/study-visualization";
 import AdminStudies from "@/pages/admin-studies";
 import AdminUsers from "@/pages/admin-users";
 import { Loader2 } from "lucide-react";
@@ -21,6 +22,7 @@ function AuthenticatedRouter() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/study/:id" component={StudyDetail} />
+      <Route path="/study/:id/visualize" component={StudyVisualization} />
       <Route path="/admin/studies" component={AdminStudies} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route component={NotFound} />
