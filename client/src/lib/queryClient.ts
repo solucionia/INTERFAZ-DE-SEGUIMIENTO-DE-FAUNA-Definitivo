@@ -1,8 +1,17 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { toast } from "@/hooks/use-toast";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
+    if (res.status === 429) {
+      let msg = "Límite de peticiones alcanzado. Espere un momento.";
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.message) msg = parsed.message;
+      } catch {}
+      toast({ title: "Límite alcanzado", description: msg, variant: "destructive" });
+    }
     throw new Error(`${res.status}: ${text}`);
   }
 }

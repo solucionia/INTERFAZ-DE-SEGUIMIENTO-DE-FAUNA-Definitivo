@@ -7,6 +7,7 @@ import { initEncryption } from "./encryption";
 import { migrateEncryptCredentials } from "./migrateEncrypt";
 
 const app = express();
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 app.use(compression());

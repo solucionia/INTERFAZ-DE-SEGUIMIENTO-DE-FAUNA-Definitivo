@@ -11,6 +11,7 @@ import { sendEventAlert } from "./emailService";
 import { runAnalysis } from "./geoAnalysis";
 import { decrypt } from "./encryption";
 import { log } from "./index";
+import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 
 function maskStudyCredentials(study: Study): Study {
   return {
@@ -41,7 +42,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   setupAuth(app);
 
-  app.post("/api/auth/register", async (req, res, next) => {
+  app.use("/api", apiLimiter);
+
+  app.post("/api/auth/register", authLimiter, async (req, res, next) => {
     try {
       const parsed = registerSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -71,7 +74,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", authLimiter, (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
       if (!user) {
@@ -339,7 +342,7 @@ export async function registerRoutes(
     return res.json(deployments);
   });
 
-  app.get("/api/studies/:id/events", requireStudyAccess, async (req, res) => {
+  app.get("/api/studies/:id/events", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -608,7 +611,7 @@ export async function registerRoutes(
   });
 
   // Detect events (trigger analysis)
-  app.post("/api/studies/:id/detect-events", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/detect-events", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -833,7 +836,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  app.post("/api/studies/:id/sync", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/sync", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });

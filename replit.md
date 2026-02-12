@@ -34,6 +34,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
 - `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
 - `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
+- `server/rateLimiter.ts` - Rate limiting middleware (auth: 5/min, API: 100/min, Movebank: 20/min)
 
 ## Key Features
 1. Two roles: superuser (first registered user) and normal user
