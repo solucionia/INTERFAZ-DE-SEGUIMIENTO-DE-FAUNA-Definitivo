@@ -56,7 +56,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-react";
 
-const studyFormSchema = z.object({
+const createStudyFormSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
   movebankStudyId: z.coerce.number().int().positive("ID de estudio requerido"),
   movebankUsername: z.string().min(1, "Usuario de Movebank requerido"),
@@ -66,7 +66,17 @@ const studyFormSchema = z.object({
   active: z.boolean(),
 });
 
-type StudyFormValues = z.infer<typeof studyFormSchema>;
+const editStudyFormSchema = z.object({
+  name: z.string().min(2, "Nombre requerido"),
+  movebankStudyId: z.coerce.number().int().positive("ID de estudio requerido"),
+  movebankUsername: z.string().optional(),
+  movebankPassword: z.string().optional(),
+  alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
+  speciesProfileId: z.string().or(z.literal("")).optional(),
+  active: z.boolean(),
+});
+
+type StudyFormValues = z.infer<typeof createStudyFormSchema>;
 
 export default function AdminStudies() {
   const { toast } = useToast();
@@ -93,7 +103,7 @@ export default function AdminStudies() {
   });
 
   const form = useForm<StudyFormValues>({
-    resolver: zodResolver(studyFormSchema),
+    resolver: zodResolver(editStudy ? editStudyFormSchema : createStudyFormSchema),
     defaultValues: {
       name: "",
       movebankStudyId: 0,
@@ -124,8 +134,8 @@ export default function AdminStudies() {
     form.reset({
       name: study.name,
       movebankStudyId: study.movebankStudyId,
-      movebankUsername: study.movebankUsername,
-      movebankPassword: study.movebankPassword,
+      movebankUsername: "",
+      movebankPassword: "",
       alertEmail: study.alertEmail || "",
       speciesProfileId: study.speciesProfileId || "",
       active: study.active,
@@ -321,8 +331,16 @@ export default function AdminStudies() {
                   <FormItem>
                     <FormLabel>Usuario de Movebank</FormLabel>
                     <FormControl>
-                      <Input placeholder="usuario@movebank" data-testid="input-study-mb-user" {...field} />
+                      <Input
+                        type="password"
+                        placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario@movebank"}
+                        data-testid="input-study-mb-user"
+                        {...field}
+                      />
                     </FormControl>
+                    {editStudy && (
+                      <FormDescription>Dejar vacío para mantener la credencial actual</FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -334,8 +352,16 @@ export default function AdminStudies() {
                   <FormItem>
                     <FormLabel>Contraseña de Movebank</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="••••••" data-testid="input-study-mb-pass" {...field} />
+                      <Input
+                        type="password"
+                        placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
+                        data-testid="input-study-mb-pass"
+                        {...field}
+                      />
                     </FormControl>
+                    {editStudy && (
+                      <FormDescription>Dejar vacío para mantener la credencial actual</FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

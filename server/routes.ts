@@ -5,11 +5,20 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis } from "./geoAnalysis";
+import { decrypt } from "./encryption";
 import { log } from "./index";
+
+function maskStudyCredentials(study: Study): Study {
+  return {
+    ...study,
+    movebankUsername: "••••••••",
+    movebankPassword: "••••••••",
+  };
+}
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
@@ -220,7 +229,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/export-kml", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.query;
@@ -257,16 +266,19 @@ export async function registerRoutes(
 
   app.get("/api/studies", requireAuth, async (req, res) => {
     const user = req.user!;
+    let studyList: Study[];
     if (user.role === "superuser") {
-      return res.json(await storage.getAllStudies());
+      studyList = await storage.getAllStudies();
+    } else {
+      studyList = await storage.getStudiesForUser(user.id);
     }
-    return res.json(await storage.getStudiesForUser(user.id));
+    return res.json(studyList.map(maskStudyCredentials));
   });
 
   app.get("/api/studies/:id", requireStudyAccess, async (req, res) => {
     const study = await storage.getStudy(req.params.id);
     if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
-    return res.json(study);
+    return res.json(maskStudyCredentials(study));
   });
 
   app.post("/api/studies", requireSuperuser, async (req, res) => {
@@ -276,16 +288,23 @@ export async function registerRoutes(
         return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
       }
       const study = await storage.createStudy(parsed.data);
-      return res.json(study);
+      return res.json(maskStudyCredentials(study));
     } catch (e: any) {
       return res.status(400).json({ message: e.message });
     }
   });
 
   app.patch("/api/studies/:id", requireSuperuser, async (req, res) => {
-    const study = await storage.updateStudy(req.params.id, req.body);
+    const updateData = { ...req.body };
+    if (!updateData.movebankUsername || updateData.movebankUsername === "••••••••") {
+      delete updateData.movebankUsername;
+    }
+    if (!updateData.movebankPassword || updateData.movebankPassword === "••••••••") {
+      delete updateData.movebankPassword;
+    }
+    const study = await storage.updateStudy(req.params.id, updateData);
     if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
-    return res.json(study);
+    return res.json(maskStudyCredentials(study));
   });
 
   app.delete("/api/studies/:id", requireSuperuser, async (req, res) => {
@@ -322,7 +341,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/events", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end, force } = req.query;
@@ -591,7 +610,7 @@ export async function registerRoutes(
   // Detect events (trigger analysis)
   app.post("/api/studies/:id/detect-events", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.body;
@@ -710,13 +729,15 @@ export async function registerRoutes(
       }[] = [];
 
       for (const { study, activeIndividuals } of accessibleStudies) {
+        const decryptedUsername = decrypt(study.movebankUsername);
+        const decryptedPassword = decrypt(study.movebankPassword);
         for (const animal of activeIndividuals) {
           try {
             const recentWindow = now - cutoffMs * 2;
             const gpsEvents = await fetchMovebankEvents(
               study.movebankStudyId,
-              study.movebankUsername,
-              study.movebankPassword,
+              decryptedUsername,
+              decryptedPassword,
               animal.localIdentifier,
               653,
               recentWindow,
@@ -814,7 +835,7 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/sync", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       log(`Syncing study ${study.name} (${study.movebankStudyId})`, "movebank");
@@ -863,7 +884,7 @@ export async function registerRoutes(
   // Geospatial Analysis
   app.post("/api/studies/:id/analysis", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { analysisType, individuals: animalIds, timestampStart, timestampEnd, params } = req.body;

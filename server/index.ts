@@ -3,6 +3,8 @@ import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { initEncryption } from "./encryption";
+import { migrateEncryptCredentials } from "./migrateEncrypt";
 
 const app = express();
 const httpServer = createServer(app);
@@ -65,6 +67,8 @@ app.use((req, res, next) => {
 import { startScheduler } from "./scheduler";
 
 (async () => {
+  initEncryption();
+  await migrateEncryptCredentials();
   await registerRoutes(httpServer, app);
   startScheduler();
 

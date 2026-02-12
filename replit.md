@@ -109,7 +109,17 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - UNIQUE constraint on (study_id, individual_local_identifier, timestamp) prevents duplicates
 - Cache is cascaded on study deletion
 
+## Credential Encryption
+- Movebank credentials (username/password) are encrypted at rest using AES-256-GCM
+- `server/encryption.ts` - encrypt/decrypt module using Node.js crypto
+- `server/migrateEncrypt.ts` - Auto-migration script that encrypts plaintext credentials on startup
+- Encrypted format: `iv_hex:authTag_hex:ciphertext_hex`
+- Credentials are masked as "••••••••" in API responses to the UI
+- Decryption happens only when connecting to Movebank API
+- Edit form allows empty credential fields to keep existing values unchanged
+
 ## Environment Variables
+- ENCRYPTION_KEY - 64-char hex string (32 bytes) for AES-256-GCM encryption of Movebank credentials
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM - Email alert configuration
 - DATABASE_URL - PostgreSQL connection
 - SESSION_SECRET - Express session secret

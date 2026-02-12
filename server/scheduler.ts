@@ -4,6 +4,7 @@ import { fetchMovebankEvents } from "./movebank";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert, sendEmissionSummaryEmail } from "./emailService";
 import { DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
+import { decrypt } from "./encryption";
 import { log } from "./index";
 
 const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
@@ -25,12 +26,14 @@ async function runEventDetection() {
 
       const now = Date.now();
       const sixHoursAgo = now - 6 * 60 * 60 * 1000;
+      const decryptedUsername = decrypt(study.movebankUsername);
+      const decryptedPassword = decrypt(study.movebankPassword);
 
       for (const animal of activeIndividuals) {
         try {
           const [gpsRows, accRows] = await Promise.all([
-            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animal.localIdentifier, 653, sixHoursAgo, now),
-            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animal.localIdentifier, 2365683, sixHoursAgo, now),
+            fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 653, sixHoursAgo, now),
+            fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 2365683, sixHoursAgo, now),
           ]);
 
           const gpsSamples = gpsRows
@@ -174,13 +177,15 @@ async function runEmissionCheck() {
         : studiesWithAnimals.filter((s) => userStudies.some((us) => us.id === s.study.id));
 
       for (const { study, activeIndividuals } of accessibleStudies) {
+        const emDecryptedUsername = decrypt(study.movebankUsername);
+        const emDecryptedPassword = decrypt(study.movebankPassword);
         for (const animal of activeIndividuals) {
           try {
             const recentWindow = now - cutoffMs * 2;
             const gpsEvents = await fetchMovebankEvents(
               study.movebankStudyId,
-              study.movebankUsername,
-              study.movebankPassword,
+              emDecryptedUsername,
+              emDecryptedPassword,
               animal.localIdentifier,
               653,
               recentWindow,

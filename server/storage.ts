@@ -1,5 +1,6 @@
 import { eq, and, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
 import { db } from "./db";
+import { encrypt, decrypt } from "./encryption";
 import {
   users, studies, userStudies, individuals, deployments,
   speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, activityLogs,
@@ -23,6 +24,7 @@ export interface IStorage {
 
   getAllStudies(): Promise<Study[]>;
   getStudy(id: string): Promise<Study | undefined>;
+  getStudyDecrypted(id: string): Promise<Study | undefined>;
   createStudy(study: InsertStudy): Promise<Study>;
   updateStudy(id: string, study: Partial<InsertStudy>): Promise<Study | undefined>;
   deleteStudy(id: string): Promise<void>;
@@ -138,13 +140,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createStudy(study: InsertStudy): Promise<Study> {
-    const [created] = await db.insert(studies).values(study).returning();
+    const encrypted = {
+      ...study,
+      movebankUsername: encrypt(study.movebankUsername),
+      movebankPassword: encrypt(study.movebankPassword),
+    };
+    const [created] = await db.insert(studies).values(encrypted).returning();
     return created;
   }
 
   async updateStudy(id: string, data: Partial<InsertStudy>): Promise<Study | undefined> {
-    const [updated] = await db.update(studies).set(data).where(eq(studies.id, id)).returning();
+    const toUpdate = { ...data };
+    if (toUpdate.movebankUsername) {
+      toUpdate.movebankUsername = encrypt(toUpdate.movebankUsername);
+    }
+    if (toUpdate.movebankPassword) {
+      toUpdate.movebankPassword = encrypt(toUpdate.movebankPassword);
+    }
+    const [updated] = await db.update(studies).set(toUpdate).where(eq(studies.id, id)).returning();
     return updated;
+  }
+
+  async getStudyDecrypted(id: string): Promise<Study | undefined> {
+    const study = await this.getStudy(id);
+    if (!study) return undefined;
+    return {
+      ...study,
+      movebankUsername: decrypt(study.movebankUsername),
+      movebankPassword: decrypt(study.movebankPassword),
+    };
   }
 
   async deleteStudy(id: string): Promise<void> {
