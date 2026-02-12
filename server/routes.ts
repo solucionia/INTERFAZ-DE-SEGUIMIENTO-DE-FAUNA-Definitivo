@@ -856,6 +856,7 @@ export async function registerRoutes(
         taxonCanonicalName: r.taxon_canonical_name || null,
         sex: r.sex || null,
         animalLifeStage: r.animal_life_stage || null,
+        synced: true,
       }));
 
       const deploymentsData = rawDeployments.map((r) => ({
@@ -865,6 +866,7 @@ export async function registerRoutes(
         localIdentifier: r.local_identifier || null,
         deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
         deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
+        synced: true,
       }));
 
       await Promise.all([

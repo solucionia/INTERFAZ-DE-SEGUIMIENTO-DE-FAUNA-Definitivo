@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
@@ -276,17 +276,25 @@ export default function StudyDetail() {
                           {ind.animalLifeStage || "—"}
                         </TableCell>
                         <TableCell>
-                          {hasActive ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                              <span className="text-sm text-emerald-500">Rastreando</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" />
-                              <span className="text-sm text-muted-foreground">Sin dispositivo</span>
-                            </div>
-                          )}
+                          <div className="flex flex-col gap-1">
+                            {hasActive ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                                <span className="text-sm text-emerald-500">Rastreando</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" />
+                                <span className="text-sm text-muted-foreground">Sin dispositivo</span>
+                              </div>
+                            )}
+                            {ind.synced === false && (
+                              <div className="flex items-center gap-1.5" data-testid={`badge-unsynced-${ind.movebankId}`}>
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                <span className="text-xs text-amber-500">No encontrado en ultima sincronizacion</span>
+                              </div>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

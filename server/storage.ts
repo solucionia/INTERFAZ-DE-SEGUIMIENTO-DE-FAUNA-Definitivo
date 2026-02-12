@@ -210,10 +210,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void> {
-    await db.delete(individuals).where(eq(individuals.studyId, studyId));
-    if (data.length > 0) {
-      await db.insert(individuals).values(data);
-    }
+    await db.transaction(async (tx) => {
+      await tx.update(individuals)
+        .set({ synced: false })
+        .where(eq(individuals.studyId, studyId));
+
+      for (const row of data) {
+        await tx.insert(individuals)
+          .values({ ...row, synced: true })
+          .onConflictDoUpdate({
+            target: [individuals.studyId, individuals.movebankId],
+            set: {
+              localIdentifier: row.localIdentifier,
+              nickName: row.nickName,
+              taxonCanonicalName: row.taxonCanonicalName,
+              sex: row.sex,
+              animalLifeStage: row.animalLifeStage,
+              synced: true,
+            },
+          });
+      }
+    });
   }
 
   async getDeployments(studyId: string): Promise<Deployment[]> {
@@ -221,10 +238,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void> {
-    await db.delete(deployments).where(eq(deployments.studyId, studyId));
-    if (data.length > 0) {
-      await db.insert(deployments).values(data);
-    }
+    await db.transaction(async (tx) => {
+      await tx.update(deployments)
+        .set({ synced: false })
+        .where(eq(deployments.studyId, studyId));
+
+      for (const row of data) {
+        await tx.insert(deployments)
+          .values({ ...row, synced: true })
+          .onConflictDoUpdate({
+            target: [deployments.studyId, deployments.movebankId],
+            set: {
+              individualId: row.individualId,
+              localIdentifier: row.localIdentifier,
+              deployOn: row.deployOn,
+              deployOff: row.deployOff,
+              synced: true,
+            },
+          });
+      }
+    });
   }
 
   async getAllSpeciesProfiles(): Promise<SpeciesProfile[]> {
