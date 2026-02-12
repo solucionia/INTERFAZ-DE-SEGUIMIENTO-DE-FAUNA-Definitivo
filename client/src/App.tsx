@@ -18,6 +18,8 @@ import AdminUsers from "@/pages/admin-users";
 import AdminSpeciesProfiles from "@/pages/admin-species-profiles";
 import EmissionMonitor from "@/pages/emission-monitor";
 import GeoAnalysis from "@/pages/geo-analysis";
+import AlertHistory from "@/pages/alert-history";
+import RawData from "@/pages/raw-data";
 import { Loader2 } from "lucide-react";
 
 function AuthenticatedRouter() {
@@ -27,10 +29,12 @@ function AuthenticatedRouter() {
       <Route path="/study/:id" component={StudyDetail} />
       <Route path="/study/:id/visualize" component={StudyVisualization} />
       <Route path="/study/:id/analysis" component={GeoAnalysis} />
+      <Route path="/study/:id/data" component={RawData} />
       <Route path="/admin/studies" component={AdminStudies} />
       <Route path="/admin/species-profiles" component={AdminSpeciesProfiles} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/monitor" component={EmissionMonitor} />
+      <Route path="/alerts" component={AlertHistory} />
       <Route component={NotFound} />
     </Switch>
   );

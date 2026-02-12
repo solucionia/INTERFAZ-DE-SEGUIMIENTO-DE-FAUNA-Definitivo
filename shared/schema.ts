@@ -9,9 +9,11 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("user"),
+  alertEmail: text("alert_email"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, role: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, role: true, createdAt: true });
 export const loginSchema = z.object({
   email: z.string().email("Email inválido"),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
@@ -164,6 +166,8 @@ export const detectedEvents = pgTable("detected_events", {
   lng: doublePrecision("lng"),
   accValues: jsonb("acc_values").$type<{ x: number; y: number; z: number }[]>(),
   description: text("description"),
+  readStatus: boolean("read_status").notNull().default(false),
+  resolvedStatus: boolean("resolved_status").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -226,3 +230,17 @@ export const savedAnalyses = pgTable("saved_analyses", {
 export const insertSavedAnalysisSchema = createInsertSchema(savedAnalyses).omit({ id: true, createdAt: true });
 export type InsertSavedAnalysis = z.infer<typeof insertSavedAnalysisSchema>;
 export type SavedAnalysis = typeof savedAnalyses.$inferSelect;
+
+export const activityLogs = pgTable("activity_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  resource: text("resource"),
+  resourceId: varchar("resource_id"),
+  details: text("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type ActivityLog = typeof activityLogs.$inferSelect;
+export const insertActivityLogSchema = createInsertSchema(activityLogs).omit({ id: true, createdAt: true });
+export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;

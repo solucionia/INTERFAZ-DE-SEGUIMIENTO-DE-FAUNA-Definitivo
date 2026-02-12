@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { log } from "./index";
@@ -101,6 +101,164 @@ export async function registerRoutes(
     const users = await storage.getAllUsers();
     const safe = users.map(({ password: _, ...u }) => u);
     return res.json(safe);
+  });
+
+  app.post("/api/users", requireSuperuser, async (req, res) => {
+    try {
+      const parsed = registerSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos invalidos" });
+      }
+      const { name, email, password } = parsed.data;
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        return res.status(400).json({ message: "Este email ya esta registrado" });
+      }
+      const hashed = await bcrypt.hash(password, 10);
+      const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null });
+      await storage.createActivityLog({ userId: req.user!.id, action: "create_user", resource: "user", resourceId: user.id, details: `Creo usuario ${name}` });
+      const { password: _, ...safe } = user;
+      return res.json(safe);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/users/:id", requireAuth, async (req, res) => {
+    const user = req.user!;
+    if (user.role !== "superuser" && user.id !== req.params.id) {
+      return res.status(403).json({ message: "Acceso denegado" });
+    }
+    const { alertEmail } = req.body;
+    const updated = await storage.updateUser(req.params.id, { alertEmail });
+    if (!updated) return res.status(404).json({ message: "Usuario no encontrado" });
+    const { password: _, ...safe } = updated;
+    return res.json(safe);
+  });
+
+  app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
+    try {
+      const user = req.user!;
+      let studyList;
+      if (user.role === "superuser") {
+        studyList = await storage.getAllStudies();
+      } else {
+        studyList = await storage.getStudiesForUser(user.id);
+      }
+      const studyIds = studyList.map((s) => s.id);
+      const summary = await storage.getDashboardSummary(studyIds);
+      return res.json(summary);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/alerts/history", requireAuth, async (req, res) => {
+    try {
+      const user = req.user!;
+      const { studyId, eventType, individualLocalId, readStatus, resolvedStatus, timestampStart, timestampEnd, limit, offset } = req.query;
+
+      let accessibleStudyIds: string[];
+      if (user.role === "superuser") {
+        const allStudies = await storage.getAllStudies();
+        accessibleStudyIds = allStudies.map((s) => s.id);
+      } else {
+        accessibleStudyIds = (await storage.getStudiesForUser(user.id)).map((s) => s.id);
+      }
+
+      const filterStudyId = studyId as string | undefined;
+      if (filterStudyId && !accessibleStudyIds.includes(filterStudyId)) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+
+      const filters: any = {
+        studyId: filterStudyId,
+        eventType: eventType as string | undefined,
+        individualLocalId: individualLocalId as string | undefined,
+        limit: limit ? parseInt(limit as string, 10) : 50,
+        offset: offset ? parseInt(offset as string, 10) : 0,
+      };
+      if (readStatus !== undefined) filters.readStatus = readStatus === "true";
+      if (resolvedStatus !== undefined) filters.resolvedStatus = resolvedStatus === "true";
+      if (timestampStart) filters.timestampStart = parseInt(timestampStart as string, 10);
+      if (timestampEnd) filters.timestampEnd = parseInt(timestampEnd as string, 10);
+
+      if (!filterStudyId && accessibleStudyIds.length > 0) {
+        filters.studyId = undefined;
+      }
+
+      const result = await storage.getAllDetectedEvents(filters);
+      if (!filterStudyId) {
+        result.events = result.events.filter((e) => accessibleStudyIds.includes(e.studyId));
+      }
+
+      const stats = await storage.getDetectedEventStats(accessibleStudyIds);
+      return res.json({ ...result, stats });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/alerts/:id", requireAuth, async (req, res) => {
+    const { readStatus, resolvedStatus } = req.body;
+    const updated = await storage.updateDetectedEvent(req.params.id, { readStatus, resolvedStatus });
+    if (!updated) return res.status(404).json({ message: "Alerta no encontrada" });
+    return res.json(updated);
+  });
+
+  app.patch("/api/alerts/bulk/read", requireAuth, async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) return res.status(400).json({ message: "ids requeridos" });
+    for (const id of ids) {
+      await storage.updateDetectedEvent(id, { readStatus: true });
+    }
+    return res.json({ ok: true, count: ids.length });
+  });
+
+  app.get("/api/activity-logs", requireSuperuser, async (req, res) => {
+    const { limit, offset } = req.query;
+    const result = await storage.getActivityLogs({
+      limit: limit ? parseInt(limit as string, 10) : 50,
+      offset: offset ? parseInt(offset as string, 10) : 0,
+    });
+    return res.json(result);
+  });
+
+  app.get("/api/studies/:id/export-kml", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { individuals: individualIds, timestamp_start, timestamp_end } = req.query;
+      if (!individualIds || !timestamp_start || !timestamp_end) {
+        return res.status(400).json({ message: "Parametros requeridos: individuals, timestamp_start, timestamp_end" });
+      }
+
+      const ids = (individualIds as string).split(",");
+      const tsStart = parseInt(timestamp_start as string, 10);
+      const tsEnd = parseInt(timestamp_end as string, 10);
+
+      let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${study.name}</name>\n`;
+
+      for (const animalId of ids) {
+        const gpsEvents = await fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId.trim(), 653, tsStart, tsEnd);
+        const coords = gpsEvents
+          .filter((r) => r.location_lat && r.location_long)
+          .map((r) => `${r.location_long},${r.location_lat},0`)
+          .join("\n");
+
+        if (coords) {
+          kml += `<Placemark>\n<name>${animalId.trim()}</name>\n<LineString>\n<coordinates>\n${coords}\n</coordinates>\n</LineString>\n</Placemark>\n`;
+        }
+      }
+
+      kml += `</Document>\n</kml>`;
+      res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml");
+      res.setHeader("Content-Disposition", `attachment; filename="${study.name}_tracks.kml"`);
+      return res.send(kml);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
   });
 
   app.get("/api/studies", requireAuth, async (req, res) => {

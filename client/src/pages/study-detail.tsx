@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database } from "lucide-react";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -108,6 +109,7 @@ export default function StudyDetail() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <Breadcrumbs items={[{ label: study.name }]} />
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-3 mb-1">
@@ -137,6 +139,12 @@ export default function StudyDetail() {
             <Button variant="outline" data-testid="button-geo-analysis">
               <Globe className="w-4 h-4 mr-2" />
               Analisis geoespacial
+            </Button>
+          </Link>
+          <Link href={`/study/${studyId}/data`}>
+            <Button variant="outline" data-testid="button-raw-data">
+              <Database className="w-4 h-4 mr-2" />
+              Datos brutos
             </Button>
           </Link>
           <Button

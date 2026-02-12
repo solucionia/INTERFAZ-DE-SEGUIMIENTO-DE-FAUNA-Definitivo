@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -59,7 +59,7 @@ export function AppSidebar() {
       <SidebarContent>
         {isSuperuser && (
           <SidebarGroup>
-            <SidebarGroupLabel>Administración</SidebarGroupLabel>
+            <SidebarGroupLabel>Administracion</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
@@ -92,6 +92,7 @@ export function AppSidebar() {
         )}
 
         <SidebarGroup>
+          <SidebarGroupLabel>Herramientas</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -99,6 +100,14 @@ export function AppSidebar() {
                   <Link href="/monitor" data-testid="link-emission-monitor">
                     <WifiOff className="w-4 h-4" />
                     <span>Monitor de emision</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/alerts"}>
+                  <Link href="/alerts" data-testid="link-alert-history">
+                    <Bell className="w-4 h-4" />
+                    <span>Historial de alertas</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -124,7 +133,7 @@ export function AppSidebar() {
               ) : studies && studies.length > 0 ? (
                 studies.map((study) => (
                   <SidebarMenuItem key={study.id}>
-                    <SidebarMenuButton asChild isActive={location === `/study/${study.id}`}>
+                    <SidebarMenuButton asChild isActive={location === `/study/${study.id}` || location.startsWith(`/study/${study.id}/`)}>
                       <Link href={`/study/${study.id}`} data-testid={`link-study-${study.id}`}>
                         <Radio className="w-4 h-4" />
                         <span className="truncate flex-1">{study.name}</span>
@@ -174,7 +183,7 @@ export function AppSidebar() {
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => logout()} data-testid="button-logout">
               <LogOut className="w-4 h-4 mr-2" />
-              Cerrar sesión
+              Cerrar sesion
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

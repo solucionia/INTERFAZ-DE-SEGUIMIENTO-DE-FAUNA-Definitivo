@@ -1,14 +1,15 @@
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   users, studies, userStudies, individuals, deployments,
-  speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses,
+  speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, activityLogs,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
   type SpeciesProfile, type InsertSpeciesProfile,
   type DetectedEvent, type InsertDetectedEvent,
   type EmissionAlert, type InsertEmissionAlert,
   type SavedAnalysis, type InsertSavedAnalysis,
+  type ActivityLog, type InsertActivityLog,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -62,6 +63,31 @@ export interface IStorage {
   getSavedAnalysis(id: string): Promise<SavedAnalysis | undefined>;
   createSavedAnalysis(analysis: InsertSavedAnalysis): Promise<SavedAnalysis>;
   deleteSavedAnalysis(id: string): Promise<void>;
+
+  updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null }>): Promise<User | undefined>;
+
+  updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean }>): Promise<DetectedEvent | undefined>;
+  getAllDetectedEvents(filters?: {
+    studyId?: string;
+    eventType?: string;
+    individualLocalId?: string;
+    readStatus?: boolean;
+    resolvedStatus?: boolean;
+    timestampStart?: number;
+    timestampEnd?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ events: DetectedEvent[]; total: number }>;
+  getDetectedEventStats(studyIds: string[]): Promise<Record<string, number>>;
+
+  createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
+  getActivityLogs(filters?: { userId?: string; limit?: number; offset?: number }): Promise<{ logs: ActivityLog[]; total: number }>;
+
+  getDashboardSummary(studyIds: string[]): Promise<{
+    totalAnimals: number;
+    recentAlerts: DetectedEvent[];
+    alertCountsByType: Record<string, number>;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -289,6 +315,108 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSavedAnalysis(id: string): Promise<void> {
     await db.delete(savedAnalyses).where(eq(savedAnalyses.id, id));
+  }
+
+  async updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null }>): Promise<User | undefined> {
+    const [updated] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+    return updated;
+  }
+
+  async updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean }>): Promise<DetectedEvent | undefined> {
+    const [updated] = await db.update(detectedEvents).set(data).where(eq(detectedEvents.id, id)).returning();
+    return updated;
+  }
+
+  async getAllDetectedEvents(filters?: {
+    studyId?: string;
+    eventType?: string;
+    individualLocalId?: string;
+    readStatus?: boolean;
+    resolvedStatus?: boolean;
+    timestampStart?: number;
+    timestampEnd?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ events: DetectedEvent[]; total: number }> {
+    const conditions: any[] = [];
+    if (filters?.studyId) conditions.push(eq(detectedEvents.studyId, filters.studyId));
+    if (filters?.eventType) conditions.push(eq(detectedEvents.eventType, filters.eventType));
+    if (filters?.individualLocalId) conditions.push(eq(detectedEvents.individualLocalId, filters.individualLocalId));
+    if (filters?.readStatus !== undefined) conditions.push(eq(detectedEvents.readStatus, filters.readStatus));
+    if (filters?.resolvedStatus !== undefined) conditions.push(eq(detectedEvents.resolvedStatus, filters.resolvedStatus));
+    if (filters?.timestampStart) conditions.push(gte(detectedEvents.timestampStart, filters.timestampStart));
+    if (filters?.timestampEnd) conditions.push(lte(detectedEvents.timestampEnd, filters.timestampEnd));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [totalResult] = await db.select({ count: count() }).from(detectedEvents).where(whereClause);
+    const total = totalResult?.count || 0;
+
+    let query = db.select().from(detectedEvents).where(whereClause).orderBy(desc(detectedEvents.createdAt));
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    if (filters?.offset) query = query.offset(filters.offset) as any;
+
+    const events = await query;
+    return { events, total };
+  }
+
+  async getDetectedEventStats(studyIds: string[]): Promise<Record<string, number>> {
+    if (studyIds.length === 0) return {};
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const events = await db.select().from(detectedEvents)
+      .where(and(
+        inArray(detectedEvents.studyId, studyIds),
+        gte(detectedEvents.timestampStart, thirtyDaysAgo)
+      ));
+    const stats: Record<string, number> = {};
+    for (const e of events) {
+      stats[e.eventType] = (stats[e.eventType] || 0) + 1;
+    }
+    return stats;
+  }
+
+  async createActivityLog(log: InsertActivityLog): Promise<ActivityLog> {
+    const [created] = await db.insert(activityLogs).values(log).returning();
+    return created;
+  }
+
+  async getActivityLogs(filters?: { userId?: string; limit?: number; offset?: number }): Promise<{ logs: ActivityLog[]; total: number }> {
+    const conditions: any[] = [];
+    if (filters?.userId) conditions.push(eq(activityLogs.userId, filters.userId));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [totalResult] = await db.select({ count: count() }).from(activityLogs).where(whereClause);
+    const total = totalResult?.count || 0;
+
+    let query = db.select().from(activityLogs).where(whereClause).orderBy(desc(activityLogs.createdAt));
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    if (filters?.offset) query = query.offset(filters.offset) as any;
+
+    const logs = await query;
+    return { logs, total };
+  }
+
+  async getDashboardSummary(studyIds: string[]): Promise<{
+    totalAnimals: number;
+    recentAlerts: DetectedEvent[];
+    alertCountsByType: Record<string, number>;
+  }> {
+    let totalAnimals = 0;
+    if (studyIds.length > 0) {
+      const inds = await db.select().from(individuals).where(inArray(individuals.studyId, studyIds));
+      totalAnimals = inds.length;
+    }
+
+    const recentAlerts = studyIds.length > 0
+      ? await db.select().from(detectedEvents)
+          .where(inArray(detectedEvents.studyId, studyIds))
+          .orderBy(desc(detectedEvents.createdAt))
+          .limit(10)
+      : [];
+
+    const alertCountsByType = await this.getDetectedEventStats(studyIds);
+
+    return { totalAnimals, recentAlerts, alertCountsByType };
   }
 }
 

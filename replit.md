@@ -30,6 +30,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
 - `client/src/pages/geo-analysis.tsx` - Geospatial analysis with R/adehabitat (MCP, Kernel, distance, speed)
+- `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
+- `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
+- `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
 - `r-scripts/` - R script templates for geospatial analyses (mcp.R, kernel.R, distance.R, speed.R)
 
 ## Key Features
@@ -85,6 +88,11 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/analysis (execute R geospatial analysis)
 - GET /api/studies/:id/analyses (list saved analyses for study)
 - GET /api/analyses/:id, DELETE /api/analyses/:id (get/delete saved analysis)
+- GET /api/dashboard/summary (dashboard statistics)
+- GET /api/alerts/history?studyId=...&eventType=...&readStatus=...&resolvedStatus=...&dateStart=...&dateEnd=...&page=... (alert history with filtering/pagination)
+- PATCH /api/alerts/:id/read, /api/alerts/:id/resolve (mark alert read/resolved)
+- POST /api/alerts/mark-read (bulk mark alerts as read)
+- GET /api/studies/:id/export-kml (KML export for Google Earth)
 
 ## Environment Variables
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM - Email alert configuration
