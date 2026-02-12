@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -131,6 +131,12 @@ export default function StudyDetail() {
             <Button variant="outline" data-testid="button-visualize">
               <BarChart3 className="w-4 h-4 mr-2" />
               Visualizar datos
+            </Button>
+          </Link>
+          <Link href={`/study/${studyId}/analysis`}>
+            <Button variant="outline" data-testid="button-geo-analysis">
+              <Globe className="w-4 h-4 mr-2" />
+              Analisis geoespacial
             </Button>
           </Link>
           <Button

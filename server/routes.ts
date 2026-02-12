@@ -5,10 +5,17 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { log } from "./index";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+
+const execFileAsync = promisify(execFile);
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
@@ -521,6 +528,144 @@ export async function registerRoutes(
       log(`Sync error: ${e.message}`, "movebank");
       return res.status(500).json({ message: `Error al sincronizar: ${e.message}` });
     }
+  });
+
+  // Geospatial Analysis
+  app.post("/api/studies/:id/analysis", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { analysisType, individuals: animalIds, timestampStart, timestampEnd, params } = req.body;
+
+      if (!ANALYSIS_TYPES.includes(analysisType)) {
+        return res.status(400).json({ message: `Tipo de analisis invalido. Use: ${ANALYSIS_TYPES.join(", ")}` });
+      }
+      if (!animalIds || !Array.isArray(animalIds) || animalIds.length === 0) {
+        return res.status(400).json({ message: "Seleccione al menos un animal" });
+      }
+      if (!timestampStart || !timestampEnd) {
+        return res.status(400).json({ message: "Rango de fechas requerido" });
+      }
+
+      const allGpsRows: { individual_id: string; timestamp: number; latitude: number; longitude: number }[] = [];
+
+      for (const animalId of animalIds) {
+        const gpsEvents = await fetchMovebankEvents(
+          study.movebankStudyId,
+          study.movebankUsername,
+          study.movebankPassword,
+          animalId,
+          653,
+          timestampStart,
+          timestampEnd
+        );
+
+        for (const ev of gpsEvents) {
+          if (ev.location_lat && ev.location_long) {
+            const lat = parseFloat(ev.location_lat);
+            const lng = parseFloat(ev.location_long);
+            const ts = new Date(ev.timestamp).getTime();
+            if (!isNaN(lat) && !isNaN(lng) && !isNaN(ts)) {
+              allGpsRows.push({ individual_id: animalId, timestamp: ts, latitude: lat, longitude: lng });
+            }
+          }
+        }
+      }
+
+      if (allGpsRows.length < 2) {
+        return res.status(400).json({ message: "No se encontraron datos GPS suficientes en el rango seleccionado" });
+      }
+
+      const tmpDir = os.tmpdir();
+      const csvPath = path.join(tmpDir, `analysis_${Date.now()}_input.csv`);
+      const jsonPath = path.join(tmpDir, `analysis_${Date.now()}_output.json`);
+
+      const csvHeader = "individual_id,timestamp,latitude,longitude\n";
+      const csvRows = allGpsRows.map((r) => `${r.individual_id},${r.timestamp},${r.latitude},${r.longitude}`).join("\n");
+      fs.writeFileSync(csvPath, csvHeader + csvRows);
+
+      const scriptMap: Record<string, string> = {
+        mcp: "mcp.R",
+        kernel: "kernel.R",
+        distance: "distance.R",
+        speed: "speed.R",
+      };
+
+      const scriptPath = path.join(process.cwd(), "r-scripts", scriptMap[analysisType]);
+
+      const rArgs = [scriptPath, csvPath, jsonPath];
+      if (analysisType === "mcp" && params?.percent) {
+        rArgs.push(String(params.percent));
+      }
+
+      try {
+        await execFileAsync("Rscript", rArgs, { timeout: 60000, env: { ...process.env, R_LIBS_USER: "/home/runner/R/library" } });
+      } catch (rError: any) {
+        log(`R execution error: ${rError.stderr || rError.message}`, "analysis");
+        return res.status(500).json({ message: `Error ejecutando analisis R: ${rError.stderr || rError.message}` });
+      }
+
+      if (!fs.existsSync(jsonPath)) {
+        return res.status(500).json({ message: "El script R no genero resultados" });
+      }
+
+      const resultRaw = fs.readFileSync(jsonPath, "utf-8");
+      const resultData = JSON.parse(resultRaw);
+
+      try { fs.unlinkSync(csvPath); } catch {}
+      try { fs.unlinkSync(jsonPath); } catch {}
+
+      if (resultData.error) {
+        return res.status(500).json({ message: resultData.message || "Error en analisis R" });
+      }
+
+      const saved = await storage.createSavedAnalysis({
+        userId: req.user!.id,
+        studyId: study.id,
+        analysisType: analysisType as AnalysisType,
+        individuals: animalIds,
+        timestampStart,
+        timestampEnd,
+        params: params || {},
+        resultData: resultData,
+        resultGeojson: resultData.geojson || null,
+      });
+
+      return res.json({
+        id: saved.id,
+        ...resultData,
+      });
+    } catch (e: any) {
+      log(`Analysis error: ${e.message}`, "analysis");
+      return res.status(500).json({ message: `Error en analisis: ${e.message}` });
+    }
+  });
+
+  app.get("/api/studies/:id/analyses", requireStudyAccess, async (req, res) => {
+    const analyses = await storage.getSavedAnalyses(req.params.id, req.user!.id);
+    return res.json(analyses);
+  });
+
+  app.get("/api/analyses/:id", requireAuth, async (req, res) => {
+    const analysis = await storage.getSavedAnalysis(req.params.id);
+    if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+    const user = req.user!;
+    if (user.role !== "superuser" && analysis.userId !== user.id) {
+      return res.status(403).json({ message: "Acceso denegado" });
+    }
+    return res.json(analysis);
+  });
+
+  app.delete("/api/analyses/:id", requireAuth, async (req, res) => {
+    const analysis = await storage.getSavedAnalysis(req.params.id);
+    if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+    const user = req.user!;
+    if (user.role !== "superuser" && analysis.userId !== user.id) {
+      return res.status(403).json({ message: "Acceso denegado" });
+    }
+    await storage.deleteSavedAnalysis(req.params.id);
+    return res.json({ ok: true });
   });
 
   return httpServer;

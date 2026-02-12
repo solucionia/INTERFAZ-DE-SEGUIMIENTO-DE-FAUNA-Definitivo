@@ -10,7 +10,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - **Auth**: Passport.js local strategy with bcrypt, sessions stored in PostgreSQL
 
 ## Project Structure
-- `shared/schema.ts` - Data models: users, studies, userStudies, individuals, deployments, speciesProfiles, detectedEvents, alertLogs; EVENT_LABELS/EVENT_COLORS/EVENT_SEVERITY constants
+- `shared/schema.ts` - Data models: users, studies, userStudies, individuals, deployments, speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses; EVENT_LABELS/EVENT_COLORS/EVENT_SEVERITY/ANALYSIS_TYPES/ANALYSIS_LABELS constants
 - `server/auth.ts` - Passport.js setup, session config, requireAuth/requireSuperuser middleware
 - `server/storage.ts` - DatabaseStorage class implementing IStorage interface
 - `server/movebank.ts` - Movebank API integration (CSV parsing, Basic Auth)
@@ -29,6 +29,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
+- `client/src/pages/geo-analysis.tsx` - Geospatial analysis with R/adehabitat (MCP, Kernel, distance, speed)
+- `r-scripts/` - R script templates for geospatial analyses (mcp.R, kernel.R, distance.R, speed.R)
 
 ## Key Features
 1. Two roles: superuser (first registered user) and normal user
@@ -53,6 +55,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 20. Emission alert system: users configure email alerts for non-transmitting animals with daily deduplication
 21. Automated cron scheduler (node-cron): runs event detection and emission checks every 6 hours
 22. Active/inactive animal indicators on study detail page (green=active, grayed=inactive)
+23. Geospatial analysis using R (adehabitatHR/LT): MCP home range, Kernel density, distance traveled, movement speed
+24. Analysis results visualized on Leaflet map (polygons) and Recharts (distance/speed charts)
+25. Saved analyses with history, reload, and CSV export
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -77,6 +82,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/detect-events (triggers analysis)
 - GET /api/monitor/emissions?days=N (check non-emitting animals)
 - GET/POST /api/emission-alerts, PATCH/DELETE /api/emission-alerts/:id
+- POST /api/studies/:id/analysis (execute R geospatial analysis)
+- GET /api/studies/:id/analyses (list saved analyses for study)
+- GET /api/analyses/:id, DELETE /api/analyses/:id (get/delete saved analysis)
 
 ## Environment Variables
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM - Email alert configuration
