@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRoute, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Study, Individual, DetectedEvent } from "@shared/schema";
@@ -11,6 +11,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
@@ -28,7 +34,12 @@ import {
   ExternalLink,
   Search,
   RefreshCw,
+  FileDown,
+  Image,
+  FileText,
 } from "lucide-react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import {
   LineChart,
   Line,
@@ -197,6 +208,10 @@ export default function StudyVisualization() {
   const [detectedEvents, setDetectedEvents] = useState<DetectedEvent[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEvents, setShowEvents] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
 
   const { data: study } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -469,6 +484,162 @@ export default function StudyVisualization() {
   const totalGpsPoints = Object.values(gpsData).reduce((s, a) => s + a.length, 0);
   const totalAccPoints = Object.values(accData).reduce((s, a) => s + a.length, 0);
 
+  const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+
+  const exportChartPng = async () => {
+    if (!chartContainerRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(chartContainerRef.current, { backgroundColor: null, useCORS: true });
+      const link = document.createElement("a");
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      const animals = sanitizeFilename(selectedAnimals.join("_") || "todos");
+      link.download = `${studyName}_${animals}_${todayStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportacion completada", description: "Grafica exportada como PNG" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportMapPng = async () => {
+    if (!mapContainerRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(mapContainerRef.current, { backgroundColor: null, useCORS: true });
+      const link = document.createElement("a");
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      link.download = `mapa_${studyName}_${todayStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportacion completada", description: "Mapa exportado como PNG" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentW = pageW - margin * 2;
+      let cursorY = margin;
+
+      pdf.setFontSize(18);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(study?.name || "Estudio", margin, cursorY + 6);
+      cursorY += 12;
+
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Animales: ${selectedAnimals.join(", ")}`, margin, cursorY);
+      cursorY += 5;
+      const rangeText = dateStart && dateEnd
+        ? `Rango: ${dateStart} a ${dateEnd}`
+        : "Rango no especificado";
+      pdf.text(rangeText, margin, cursorY);
+      cursorY += 5;
+      pdf.text(`GPS: ${totalGpsPoints} puntos | Acelerometro: ${totalAccPoints} muestras`, margin, cursorY);
+      cursorY += 8;
+
+      if (chartContainerRef.current) {
+        const chartCanvas = await html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+        const chartImg = chartCanvas.toDataURL("image/png");
+        const chartAspect = chartCanvas.width / chartCanvas.height;
+        const chartImgW = contentW;
+        const chartImgH = contentW / chartAspect;
+        const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
+        const finalW = finalH * chartAspect;
+        pdf.text("Grafica de acelerometro", margin, cursorY);
+        cursorY += 4;
+        pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+        cursorY += finalH + 6;
+      }
+
+      if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
+        const mapCanvas = await html2canvas(mapContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+        const mapImg = mapCanvas.toDataURL("image/png");
+        const mapAspect = mapCanvas.width / mapCanvas.height;
+        const remainH = pageH - cursorY - margin - 10;
+        const mapImgH = Math.min(remainH, 70);
+        const mapImgW = Math.min(mapImgH * mapAspect, contentW);
+        pdf.text("Mapa GPS", margin, cursorY);
+        cursorY += 4;
+        pdf.addImage(mapImg, "PNG", margin, cursorY, mapImgW, mapImgH);
+        cursorY += mapImgH + 6;
+      }
+
+      if (detectedEvents.length > 0) {
+        if (cursorY + 30 > pageH - margin) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        pdf.setFontSize(12);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(`Eventos detectados (${detectedEvents.length})`, margin, cursorY);
+        cursorY += 6;
+
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        const colWidths = [contentW * 0.2, contentW * 0.2, contentW * 0.25, contentW * 0.2, contentW * 0.15];
+        const headers = ["Tipo", "Animal", "Fecha", "Coordenadas", "Severidad"];
+        headers.forEach((h, i) => {
+          const xPos = margin + colWidths.slice(0, i).reduce((a, b) => a + b, 0);
+          pdf.text(h, xPos, cursorY);
+        });
+        cursorY += 4;
+        pdf.setDrawColor(200, 200, 200);
+        pdf.line(margin, cursorY, margin + contentW, cursorY);
+        cursorY += 2;
+
+        pdf.setFont("helvetica", "normal");
+        for (const ev of detectedEvents) {
+          if (cursorY + 6 > pageH - margin) {
+            pdf.addPage();
+            cursorY = margin;
+          }
+          const label = EVENT_LABELS[ev.eventType as keyof typeof EVENT_LABELS] || ev.eventType;
+          const dateStr = formatTimestamp(ev.timestampStart);
+          const coords = ev.lat && ev.lng ? `${ev.lat.toFixed(4)}, ${ev.lng.toFixed(4)}` : "—";
+          const sev = ev.severity === "critical" ? "Critica" : ev.severity === "high" ? "Alta" : "Info";
+          const rowData = [label, ev.individualLocalId, dateStr, coords, sev];
+          rowData.forEach((val, i) => {
+            const xPos = margin + colWidths.slice(0, i).reduce((a, b) => a + b, 0);
+            pdf.text(String(val), xPos, cursorY);
+          });
+          cursorY += 5;
+        }
+      }
+
+      pdf.setFontSize(7);
+      pdf.setFont("helvetica", "italic");
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(
+        `Generado el ${format(new Date(), "dd/MM/yyyy HH:mm:ss", { locale: es })} — WildTrack`,
+        margin,
+        pageH - 5
+      );
+
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      pdf.save(`informe_${studyName}_${todayStr}.pdf`);
+      toast({ title: "Exportacion completada", description: "Informe PDF generado correctamente" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar PDF", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b space-y-4 shrink-0">
@@ -519,6 +690,30 @@ export default function StudyVisualization() {
               {detectMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
               Detectar eventos
             </Button>
+          )}
+          {dataLoaded && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" disabled={exporting} data-testid="button-export-menu">
+                  {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileDown className="w-4 h-4 mr-2" />}
+                  Exportar
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={exportChartPng} data-testid="menu-export-chart-png">
+                  <Image className="w-4 h-4 mr-2" />
+                  Exportar grafica como PNG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportMapPng} data-testid="menu-export-map-png">
+                  <Image className="w-4 h-4 mr-2" />
+                  Exportar mapa como PNG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportPdf} data-testid="menu-export-pdf">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Exportar informe PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           {dataLoaded && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -613,7 +808,7 @@ export default function StudyVisualization() {
                     </div>
                   </div>
                   {chartData.length > 0 ? (
-                    <div className="flex-1 min-h-0">
+                    <div className="flex-1 min-h-0" ref={chartContainerRef}>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart
                           data={chartData}
@@ -691,7 +886,7 @@ export default function StudyVisualization() {
                       <span className="text-xs text-muted-foreground font-normal ml-1">({selectedAnimals.length} animales)</span>
                     )}
                   </h2>
-                  <div className="flex-1 min-h-0 rounded-md overflow-hidden border">
+                  <div className="flex-1 min-h-0 rounded-md overflow-hidden border" ref={mapContainerRef}>
                     <MapContainer center={mapCenter || [0, 0]} zoom={12} style={{ height: "100%", width: "100%" }} scrollWheelZoom={true}>
                       <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                       <MapUpdater center={mapCenter} />
