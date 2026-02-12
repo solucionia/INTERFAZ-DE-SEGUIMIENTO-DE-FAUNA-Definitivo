@@ -1,0 +1,44 @@
+El análisis geoespacial con R no funciona porque los paquetes adehabitatHR, adehabitatLT, sp, rgeos y jsonlite requieren compilación de librerías C nativas (GEOS, PROJ, GDAL) que no están disponibles en Replit.
+
+Reemplaza completamente la integración con R por implementaciones en TypeScript/JavaScript puro usando la librería Turf.js (@turf/turf). Haz lo siguiente:
+
+1. Instala @turf/turf como dependencia
+
+2. Elimina el directorio r-scripts/ completo y toda referencia a Rscript o child_process para R
+
+3. Crea un nuevo módulo server/geoAnalysis.ts que implemente estos 4 análisis:
+
+   a) **MCP (Minimum Convex Polygon):**
+      - Recibe un array de puntos GPS [{lat, lng, timestamp}]
+      - Usa turf.convex() para calcular el polígono convexo envolvente
+      - Usa turf.area() para calcular el área en m², convertir a km²
+      - Devuelve: { geojson: FeatureCollection del polígono, area_km2: number }
+
+   b) **Kernel Density Estimation (KDE):**
+      - Crea una grid de puntos sobre el bounding box de los datos usando turf.pointGrid()
+      - Para cada punto de la grid, calcula la densidad sumando kernels gaussianos desde cada punto GPS usando turf.distance()
+      - Bandwidth (h) configurable, por defecto usar la regla de Silverman
+      - Genera contornos al 50% (core area) y 95% (home range) usando interpolación de isolíneas
+      - Si la generación de isolíneas es muy compleja, como alternativa: agrupa los puntos de la grid por nivel de densidad y genera polígonos con turf.convex() para cada nivel
+      - Devuelve: { geojson: FeatureCollection con polígonos al 50% y 95%, area_50_km2: number, area_95_km2: number }
+
+   c) **Distancia recorrida:**
+      - Calcula distancia entre puntos GPS consecutivos usando turf.distance()
+      - Agrupa por día para calcular distancia diaria
+      - Devuelve: { total_km: number, daily: [{date: string, distance_km: number}], average_daily_km: number }
+
+   d) **Velocidad de movimiento:**
+      - Calcula velocidad = distancia / tiempo entre puntos consecutivos
+      - Devuelve: { speeds: [{timestamp: number, speed_kmh: number}], average_kmh: number, max_kmh: number }
+
+4. Actualiza el endpoint POST /api/studies/:id/analysis para usar geoAnalysis.ts en vez de los scripts R
+
+5. Los resultados se siguen guardando en saved_analyses con result_data (JSON con métricas) y result_geojson (GeoJSON de polígonos)
+
+6. En la página geo-analysis.tsx:
+   - Muestra los polígonos MCP y Kernel sobre el mapa de Leaflet con colores semitransparentes (MCP en azul 30% opacidad, Kernel 95% en verde 20%, Kernel 50% en rojo 30%)
+   - Muestra la gráfica de distancia diaria con Recharts (barras por día)
+   - Muestra la gráfica de velocidad en el tiempo con Recharts (línea)
+   - Panel con métricas numéricas: área MCP, áreas Kernel, distancia total, velocidad media/máxima
+
+No rompas ninguna funcionalidad existente. Mantén la UI en español.
