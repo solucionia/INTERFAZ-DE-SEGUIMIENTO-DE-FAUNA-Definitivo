@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, integer, bigint, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -31,6 +31,7 @@ export const studies = pgTable("studies", {
   movebankUsername: text("movebank_username").notNull(),
   movebankPassword: text("movebank_password").notNull(),
   alertEmail: text("alert_email"),
+  speciesProfileId: varchar("species_profile_id"),
   active: boolean("active").notNull().default(true),
 });
 
@@ -72,3 +73,107 @@ export const deployments = pgTable("deployments", {
 });
 
 export type Deployment = typeof deployments.$inferSelect;
+
+export const eventThresholdsSchema = z.object({
+  mortality: z.object({
+    stationaryVariance: z.number().default(5),
+    durationHours: z.number().default(24),
+  }),
+  detachment: z.object({
+    xThresholdHigh: z.number().default(200),
+    xThresholdLow: z.number().default(-200),
+    minPositions: z.number().default(5),
+    windowSize: z.number().default(10),
+  }),
+  fight: z.object({
+    zThreshold: z.number().default(-300),
+    minOccurrences: z.number().default(2),
+    windowMinutes: z.number().default(120),
+  }),
+  feeding: z.object({
+    yThreshold: z.number().default(150),
+    minOccurrences: z.number().default(2),
+    windowMinutes: z.number().default(20),
+  }),
+  incubation: z.object({
+    yRangeLow: z.number().default(-200),
+    yRangeHigh: z.number().default(200),
+    minVariance: z.number().default(3),
+  }),
+});
+
+export type EventThresholds = z.infer<typeof eventThresholdsSchema>;
+
+export const DEFAULT_THRESHOLDS: EventThresholds = {
+  mortality: { stationaryVariance: 5, durationHours: 24 },
+  detachment: { xThresholdHigh: 200, xThresholdLow: -200, minPositions: 5, windowSize: 10 },
+  fight: { zThreshold: -300, minOccurrences: 2, windowMinutes: 120 },
+  feeding: { yThreshold: 150, minOccurrences: 2, windowMinutes: 20 },
+  incubation: { yRangeLow: -200, yRangeHigh: 200, minVariance: 3 },
+};
+
+export const speciesProfiles = pgTable("species_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  thresholds: jsonb("thresholds").notNull().$type<EventThresholds>(),
+});
+
+export const insertSpeciesProfileSchema = createInsertSchema(speciesProfiles).omit({ id: true }).extend({
+  thresholds: eventThresholdsSchema,
+});
+export type InsertSpeciesProfile = z.infer<typeof insertSpeciesProfileSchema>;
+export type SpeciesProfile = typeof speciesProfiles.$inferSelect;
+
+export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation"] as const;
+export type EventType = typeof EVENT_TYPES[number];
+
+export const EVENT_SEVERITY: Record<EventType, string> = {
+  mortality: "critical",
+  detachment: "high",
+  fight: "high",
+  feeding: "info",
+  incubation: "info",
+};
+
+export const EVENT_COLORS: Record<EventType, string> = {
+  mortality: "#ef4444",
+  detachment: "#f97316",
+  fight: "#f97316",
+  feeding: "#22c55e",
+  incubation: "#3b82f6",
+};
+
+export const EVENT_LABELS: Record<EventType, string> = {
+  mortality: "Mortalidad",
+  detachment: "Desprendimiento del emisor",
+  fight: "Pelea / Depredación",
+  feeding: "Alimentación",
+  incubation: "Incubación / Vuelo",
+};
+
+export const detectedEvents = pgTable("detected_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  individualLocalId: text("individual_local_id").notNull(),
+  eventType: text("event_type").notNull().$type<EventType>(),
+  severity: text("severity").notNull(),
+  timestampStart: bigint("timestamp_start", { mode: "number" }).notNull(),
+  timestampEnd: bigint("timestamp_end", { mode: "number" }).notNull(),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  accValues: jsonb("acc_values").$type<{ x: number; y: number; z: number }[]>(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type DetectedEvent = typeof detectedEvents.$inferSelect;
+export const insertDetectedEventSchema = createInsertSchema(detectedEvents).omit({ id: true, createdAt: true });
+export type InsertDetectedEvent = z.infer<typeof insertDetectedEventSchema>;
+
+export const alertLogs = pgTable("alert_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  detectedEventId: varchar("detected_event_id").notNull().references(() => detectedEvents.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  sentAt: timestamp("sent_at").defaultNow(),
+});

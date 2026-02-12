@@ -5,7 +5,9 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
+import { detectEvents } from "./eventDetection";
+import { sendEventAlert } from "./emailService";
 import { log } from "./index";
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
@@ -201,6 +203,146 @@ export async function registerRoutes(
     } catch (e: any) {
       log(`Events error: ${e.message}`, "movebank");
       return res.status(500).json({ message: `Error al obtener eventos: ${e.message}` });
+    }
+  });
+
+  // Species profiles CRUD
+  app.get("/api/species-profiles", requireAuth, async (_req, res) => {
+    const profiles = await storage.getAllSpeciesProfiles();
+    return res.json(profiles);
+  });
+
+  app.get("/api/species-profiles/:id", requireAuth, async (req, res) => {
+    const profile = await storage.getSpeciesProfile(req.params.id);
+    if (!profile) return res.status(404).json({ message: "Perfil no encontrado" });
+    return res.json(profile);
+  });
+
+  app.post("/api/species-profiles", requireSuperuser, async (req, res) => {
+    try {
+      const parsed = insertSpeciesProfileSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
+      }
+      const profile = await storage.createSpeciesProfile(parsed.data);
+      return res.json(profile);
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/species-profiles/:id", requireSuperuser, async (req, res) => {
+    const profile = await storage.updateSpeciesProfile(req.params.id, req.body);
+    if (!profile) return res.status(404).json({ message: "Perfil no encontrado" });
+    return res.json(profile);
+  });
+
+  app.delete("/api/species-profiles/:id", requireSuperuser, async (req, res) => {
+    await storage.deleteSpeciesProfile(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // Detected events
+  app.get("/api/studies/:id/detected-events", requireStudyAccess, async (req, res) => {
+    const { timestamp_start, timestamp_end } = req.query;
+    const tsStart = timestamp_start ? parseInt(timestamp_start as string, 10) : undefined;
+    const tsEnd = timestamp_end ? parseInt(timestamp_end as string, 10) : undefined;
+    const events = await storage.getDetectedEvents(req.params.id, tsStart, tsEnd);
+    return res.json(events);
+  });
+
+  // Detect events (trigger analysis)
+  app.post("/api/studies/:id/detect-events", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { individuals: individualIds, timestamp_start, timestamp_end } = req.body;
+      if (!individualIds || !timestamp_start || !timestamp_end) {
+        return res.status(400).json({ message: "Parámetros requeridos: individuals, timestamp_start, timestamp_end" });
+      }
+
+      let thresholds: EventThresholds = DEFAULT_THRESHOLDS;
+      if (study.speciesProfileId) {
+        const profile = await storage.getSpeciesProfile(study.speciesProfileId);
+        if (profile) {
+          thresholds = profile.thresholds as EventThresholds;
+        }
+      }
+
+      const ids = (individualIds as string).split(",").map((s: string) => s.trim());
+      const tsStart = parseInt(timestamp_start as string, 10);
+      const tsEnd = parseInt(timestamp_end as string, 10);
+
+      let totalEvents = 0;
+      let emailsSent = 0;
+
+      for (const animalId of ids) {
+        try {
+          const [gpsRows, accRows] = await Promise.all([
+            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId, 653, tsStart, tsEnd),
+            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId, 2365683, tsStart, tsEnd),
+          ]);
+
+          const gpsSamples = gpsRows
+            .filter((r) => r.location_lat && r.location_long)
+            .map((r) => ({
+              timestamp: new Date(r.timestamp).getTime(),
+              lat: parseFloat(r.location_lat),
+              lng: parseFloat(r.location_long),
+            }))
+            .filter((p) => !isNaN(p.lat) && !isNaN(p.lng) && !isNaN(p.timestamp));
+
+          const accSamples: { timestamp: number; x: number; y: number; z: number }[] = [];
+          for (const r of accRows) {
+            const rawAxes = r.accelerations_raw || r.eobs_accelerations_raw || "";
+            const ts = new Date(r.timestamp).getTime();
+            if (isNaN(ts)) continue;
+            if (rawAxes) {
+              const vals = rawAxes.split(/\s+/).map(Number);
+              for (let i = 0; i + 2 < vals.length; i += 3) {
+                if (!isNaN(vals[i]) && !isNaN(vals[i + 1]) && !isNaN(vals[i + 2])) {
+                  accSamples.push({ timestamp: ts + i * 10, x: vals[i], y: vals[i + 1], z: vals[i + 2] });
+                }
+              }
+            } else {
+              accSamples.push({
+                timestamp: ts,
+                x: parseFloat(r.acceleration_x || "0"),
+                y: parseFloat(r.acceleration_y || "0"),
+                z: parseFloat(r.acceleration_z || "0"),
+              });
+            }
+          }
+
+          const detected = detectEvents(accSamples, gpsSamples, thresholds, study.id, animalId);
+
+          for (const event of detected) {
+            const saved = await storage.createDetectedEvent(event);
+            totalEvents++;
+
+            if (study.alertEmail && (event.severity === "critical" || event.severity === "high")) {
+              const alreadySent = await storage.getAlertLog(saved.id, study.alertEmail);
+              if (!alreadySent) {
+                const sent = await sendEventAlert(saved, study.alertEmail, study.name);
+                if (sent) {
+                  await storage.createAlertLog(saved.id, study.alertEmail);
+                  emailsSent++;
+                }
+              }
+            }
+          }
+
+          log(`Detected ${detected.length} events for ${animalId}`, "events");
+        } catch (e: any) {
+          log(`Event detection error for ${animalId}: ${e.message}`, "events");
+        }
+      }
+
+      return res.json({ totalEvents, emailsSent });
+    } catch (e: any) {
+      log(`Event detection error: ${e.message}`, "events");
+      return res.status(500).json({ message: `Error al detectar eventos: ${e.message}` });
     }
   });
 

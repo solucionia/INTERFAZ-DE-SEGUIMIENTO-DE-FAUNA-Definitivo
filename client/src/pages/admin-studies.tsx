@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { Study, User } from "@shared/schema";
+import type { Study, User, SpeciesProfile } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,6 +47,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-react";
 
 const studyFormSchema = z.object({
@@ -55,6 +62,7 @@ const studyFormSchema = z.object({
   movebankUsername: z.string().min(1, "Usuario de Movebank requerido"),
   movebankPassword: z.string().min(1, "Contraseña de Movebank requerida"),
   alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
+  speciesProfileId: z.string().or(z.literal("")).optional(),
   active: z.boolean(),
 });
 
@@ -75,6 +83,10 @@ export default function AdminStudies() {
     queryKey: ["/api/users"],
   });
 
+  const { data: speciesProfiles } = useQuery<SpeciesProfile[]>({
+    queryKey: ["/api/species-profiles"],
+  });
+
   const { data: studyUsers, isLoading: assignLoading } = useQuery<string[]>({
     queryKey: ["/api/studies", assignStudy?.id, "users"],
     enabled: !!assignStudy,
@@ -88,6 +100,7 @@ export default function AdminStudies() {
       movebankUsername: "",
       movebankPassword: "",
       alertEmail: "",
+      speciesProfileId: "",
       active: true,
     },
   });
@@ -100,6 +113,7 @@ export default function AdminStudies() {
       movebankUsername: "",
       movebankPassword: "",
       alertEmail: "",
+      speciesProfileId: "",
       active: true,
     });
     setShowForm(true);
@@ -113,6 +127,7 @@ export default function AdminStudies() {
       movebankUsername: study.movebankUsername,
       movebankPassword: study.movebankPassword,
       alertEmail: study.alertEmail || "",
+      speciesProfileId: study.speciesProfileId || "",
       active: study.active,
     });
     setShowForm(true);
@@ -335,6 +350,30 @@ export default function AdminStudies() {
                       <Input type="email" placeholder="alertas@ejemplo.com" data-testid="input-study-alert-email" {...field} />
                     </FormControl>
                     <FormDescription>Correo para recibir alertas de este estudio</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="speciesProfileId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Perfil de especie (opcional)</FormLabel>
+                    <FormControl>
+                      <Select value={field.value || ""} onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)}>
+                        <SelectTrigger data-testid="select-species-profile">
+                          <SelectValue placeholder="Sin perfil asignado" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Sin perfil</SelectItem>
+                          {speciesProfiles?.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormDescription>Determina los umbrales de deteccion de eventos</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

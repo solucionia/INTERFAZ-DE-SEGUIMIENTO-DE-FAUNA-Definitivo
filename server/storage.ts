@@ -1,9 +1,12 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   users, studies, userStudies, individuals, deployments,
+  speciesProfiles, detectedEvents, alertLogs,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
+  type SpeciesProfile, type InsertSpeciesProfile,
+  type DetectedEvent, type InsertDetectedEvent,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -28,6 +31,19 @@ export interface IStorage {
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
+
+  getAllSpeciesProfiles(): Promise<SpeciesProfile[]>;
+  getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined>;
+  createSpeciesProfile(profile: InsertSpeciesProfile): Promise<SpeciesProfile>;
+  updateSpeciesProfile(id: string, data: Partial<InsertSpeciesProfile>): Promise<SpeciesProfile | undefined>;
+  deleteSpeciesProfile(id: string): Promise<void>;
+
+  getDetectedEvents(studyId: string, timestampStart?: number, timestampEnd?: number): Promise<DetectedEvent[]>;
+  createDetectedEvent(event: InsertDetectedEvent): Promise<DetectedEvent>;
+  deleteDetectedEventsForStudy(studyId: string): Promise<void>;
+
+  getAlertLog(eventId: string, email: string): Promise<boolean>;
+  createAlertLog(eventId: string, email: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -128,6 +144,61 @@ export class DatabaseStorage implements IStorage {
     if (data.length > 0) {
       await db.insert(deployments).values(data);
     }
+  }
+
+  async getAllSpeciesProfiles(): Promise<SpeciesProfile[]> {
+    return db.select().from(speciesProfiles);
+  }
+
+  async getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined> {
+    const [profile] = await db.select().from(speciesProfiles).where(eq(speciesProfiles.id, id));
+    return profile;
+  }
+
+  async createSpeciesProfile(profile: InsertSpeciesProfile): Promise<SpeciesProfile> {
+    const [created] = await db.insert(speciesProfiles).values(profile).returning();
+    return created;
+  }
+
+  async updateSpeciesProfile(id: string, data: Partial<InsertSpeciesProfile>): Promise<SpeciesProfile | undefined> {
+    const [updated] = await db.update(speciesProfiles).set(data).where(eq(speciesProfiles.id, id)).returning();
+    return updated;
+  }
+
+  async deleteSpeciesProfile(id: string): Promise<void> {
+    await db.delete(speciesProfiles).where(eq(speciesProfiles.id, id));
+  }
+
+  async getDetectedEvents(studyId: string, timestampStart?: number, timestampEnd?: number): Promise<DetectedEvent[]> {
+    let conditions = [eq(detectedEvents.studyId, studyId)];
+    if (timestampStart !== undefined) {
+      conditions.push(gte(detectedEvents.timestampStart, timestampStart));
+    }
+    if (timestampEnd !== undefined) {
+      conditions.push(lte(detectedEvents.timestampEnd, timestampEnd));
+    }
+    return db.select().from(detectedEvents)
+      .where(and(...conditions))
+      .orderBy(desc(detectedEvents.timestampStart));
+  }
+
+  async createDetectedEvent(event: InsertDetectedEvent): Promise<DetectedEvent> {
+    const [created] = await db.insert(detectedEvents).values(event as any).returning();
+    return created;
+  }
+
+  async deleteDetectedEventsForStudy(studyId: string): Promise<void> {
+    await db.delete(detectedEvents).where(eq(detectedEvents.studyId, studyId));
+  }
+
+  async getAlertLog(eventId: string, email: string): Promise<boolean> {
+    const [existing] = await db.select().from(alertLogs)
+      .where(and(eq(alertLogs.detectedEventId, eventId), eq(alertLogs.email, email)));
+    return !!existing;
+  }
+
+  async createAlertLog(eventId: string, email: string): Promise<void> {
+    await db.insert(alertLogs).values({ detectedEventId: eventId, email });
   }
 }
 

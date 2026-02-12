@@ -1,0 +1,43 @@
+Añade un sistema completo de detección de eventos basado en datos de acelerómetro. Los eventos se detectan automáticamente analizando los valores de los ejes X, Y, Z.
+
+1. **Tipos de eventos predefinidos con umbrales EDITABLES:**
+
+   Crea una sección de configuración donde el superusuario pueda modificar los umbrales por especie. Los valores por defecto son:
+
+   a) **Mortalidad:**
+      - Condición: Acelerómetro estacionario (sin variación significativa en ningún eje) durante un periodo prolongado configurable (por defecto 24 horas)
+      - Acción: Alerta crítica (color rojo) + envío de email + pin/chincheta con la ubicación GPS en Google Maps (enlace directo)
+
+   b) **Desprendimiento del emisor:**
+      - Condición: Eje X toma valores por encima de +200 o por debajo de -200 durante al menos 5 posiciones en un rango de 10 posiciones consecutivas
+      - Acción: Alerta alta (color naranja) + envío de email
+
+   c) **Pelea / Depredación:**
+      - Condición: Eje Z toma al menos dos valores por debajo de -300 alternándose con posiciones en valores positivos, en un periodo de 2 horas
+      - Acción: Alerta alta (color naranja) + envío de email
+
+   d) **Alimentación:**
+      - Condición: Eje Y toma al menos dos valores positivos por encima de 150 en un periodo de 20 minutos
+      - Acción: Alerta informativa (color verde)
+
+   e) **Incubación / Vuelo:**
+      - Condición: Eje Y toma valores entre -200 y +200 continuados pero con alternancia de valores de acelerómetro (no estacionario, hay movimiento pero contenido)
+      - Acción: Alerta informativa (color azul)
+
+2. **Panel de configuración de umbrales:**
+   - Tabla editable donde el superusuario puede crear "perfiles de especie"
+   - Cada perfil tiene los umbrales de cada tipo de evento
+   - Al crear/editar un estudio, se le asigna un perfil de especie
+   - Los valores numéricos de las condiciones (200, -200, 5, 10, -300, 150, 20 min, etc.) deben ser todos editables
+
+3. **Visualización de eventos:**
+   - En la gráfica de acelerómetro, marcar las zonas donde se detectan eventos con bandas de color semitransparentes
+   - Panel lateral o inferior con la lista de eventos detectados, ordenados por fecha
+   - Al hacer clic en un evento, centrar la gráfica y el mapa en ese momento/ubicación
+   - Cada evento muestra: tipo, timestamp, coordenadas GPS más cercanas, valores del acelerómetro
+
+4. **Sistema de alertas por email:**
+   - Usar Nodemailer para enviar emails
+   - Las alertas de mortalidad y desprendimiento incluyen un enlace a Google Maps con la última ubicación conocida: https://www.google.com/maps?q={lat},{lng}
+   - El email se envía al correo configurado para ese estudio
+   - Registro de alertas enviadas (log) para no duplicar

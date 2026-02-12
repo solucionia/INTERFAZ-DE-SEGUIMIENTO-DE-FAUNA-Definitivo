@@ -15,6 +15,7 @@ import StudyDetail from "@/pages/study-detail";
 import StudyVisualization from "@/pages/study-visualization";
 import AdminStudies from "@/pages/admin-studies";
 import AdminUsers from "@/pages/admin-users";
+import AdminSpeciesProfiles from "@/pages/admin-species-profiles";
 import { Loader2 } from "lucide-react";
 
 function AuthenticatedRouter() {
@@ -24,6 +25,7 @@ function AuthenticatedRouter() {
       <Route path="/study/:id" component={StudyDetail} />
       <Route path="/study/:id/visualize" component={StudyVisualization} />
       <Route path="/admin/studies" component={AdminStudies} />
+      <Route path="/admin/species-profiles" component={AdminSpeciesProfiles} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route component={NotFound} />
     </Switch>
