@@ -1,0 +1,39 @@
+Crea una aplicación web fullstack con las siguientes tecnologías:
+- Frontend: React con TypeScript, Tailwind CSS y Recharts para gráficas
+- Backend: Node.js con Express y TypeScript
+- Base de datos: PostgreSQL con Drizzle ORM
+- Autenticación: Passport.js con sesiones
+
+La aplicación es un sistema de seguimiento de fauna silvestre que se conecta con la API de Movebank (movebank.org).
+
+FUNCIONALIDADES DE ESTE PASO:
+
+1. **Sistema de autenticación con dos roles:**
+   - "superusuario": tiene acceso a TODOS los proyectos/estudios
+   - "usuario normal": solo tiene acceso a los proyectos que le hayan asignado
+   - Login con email y contraseña
+   - El primer usuario registrado es automáticamente superusuario
+
+2. **Gestión de Estudios de Movebank:**
+   - CRUD completo de estudios. Cada estudio tiene:
+     - Nombre del estudio
+     - Study ID de Movebank
+     - Credenciales de Movebank (usuario y contraseña de la cuenta Movebank asociada)
+     - Correo de alertas (cada estudio puede tener un correo diferente para recibir alertas)
+     - Estado: activo/inactivo
+   - El superusuario puede crear, editar y eliminar estudios
+   - El superusuario puede asignar estudios a usuarios normales
+
+3. **Dashboard principal:**
+   - Sidebar con la lista de estudios accesibles para el usuario logueado
+   - Al seleccionar un estudio, mostrar la lista de animales (individuos) obtenidos de Movebank
+   - Indicar visualmente cuáles animales tienen deployment activo (sin fecha fin) y cuáles no
+
+4. **Conexión con la API de Movebank:**
+   - Crear un servicio backend que se conecte a la REST API de Movebank
+   - Endpoint para obtener los individuos de un estudio: GET https://www.movebank.org/movebank/service/direct-read?entity_type=individual&study_id={study_id}
+   - Endpoint para obtener los deployments: GET https://www.movebank.org/movebank/service/direct-read?entity_type=deployment&study_id={study_id}
+   - Autenticación con Movebank usando HTTP Basic Auth con las credenciales almacenadas por estudio
+   - Cachear los datos en la base de datos local para no saturar la API de Movebank
+
+Usa un diseño limpio y profesional, con tema oscuro, pensado para uso científico/técnico. Sidebar colapsable, responsive.
