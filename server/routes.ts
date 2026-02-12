@@ -8,14 +8,8 @@ import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
+import { runAnalysis } from "./geoAnalysis";
 import { log } from "./index";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import * as fs from "fs";
-import * as path from "path";
-import * as os from "os";
-
-const execFileAsync = promisify(execFile);
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
   if (!req.isAuthenticated()) {
@@ -735,48 +729,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No se encontraron datos GPS suficientes en el rango seleccionado" });
       }
 
-      const tmpDir = os.tmpdir();
-      const csvPath = path.join(tmpDir, `analysis_${Date.now()}_input.csv`);
-      const jsonPath = path.join(tmpDir, `analysis_${Date.now()}_output.json`);
-
-      const csvHeader = "individual_id,timestamp,latitude,longitude\n";
-      const csvRows = allGpsRows.map((r) => `${r.individual_id},${r.timestamp},${r.latitude},${r.longitude}`).join("\n");
-      fs.writeFileSync(csvPath, csvHeader + csvRows);
-
-      const scriptMap: Record<string, string> = {
-        mcp: "mcp.R",
-        kernel: "kernel.R",
-        distance: "distance.R",
-        speed: "speed.R",
-      };
-
-      const scriptPath = path.join(process.cwd(), "r-scripts", scriptMap[analysisType]);
-
-      const rArgs = [scriptPath, csvPath, jsonPath];
-      if (analysisType === "mcp" && params?.percent) {
-        rArgs.push(String(params.percent));
-      }
-
-      try {
-        await execFileAsync("Rscript", rArgs, { timeout: 60000, env: { ...process.env, R_LIBS_USER: "/home/runner/R/library" } });
-      } catch (rError: any) {
-        log(`R execution error: ${rError.stderr || rError.message}`, "analysis");
-        return res.status(500).json({ message: `Error ejecutando analisis R: ${rError.stderr || rError.message}` });
-      }
-
-      if (!fs.existsSync(jsonPath)) {
-        return res.status(500).json({ message: "El script R no genero resultados" });
-      }
-
-      const resultRaw = fs.readFileSync(jsonPath, "utf-8");
-      const resultData = JSON.parse(resultRaw);
-
-      try { fs.unlinkSync(csvPath); } catch {}
-      try { fs.unlinkSync(jsonPath); } catch {}
-
-      if (resultData.error) {
-        return res.status(500).json({ message: resultData.message || "Error en analisis R" });
-      }
+      const resultData = runAnalysis(analysisType, allGpsRows, params);
 
       const saved = await storage.createSavedAnalysis({
         userId: req.user!.id,
@@ -786,8 +739,8 @@ export async function registerRoutes(
         timestampStart,
         timestampEnd,
         params: params || {},
-        resultData: resultData,
-        resultGeojson: resultData.geojson || null,
+        resultData: resultData as any,
+        resultGeojson: (resultData as any).geojson || null,
       });
 
       return res.json({

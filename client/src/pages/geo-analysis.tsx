@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Individual, SavedAnalysis } from "@shared/schema";
 import { ANALYSIS_LABELS, type AnalysisType } from "@shared/schema";
@@ -28,7 +27,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  MapPin,
   Loader2,
   Play,
   Download,
@@ -39,6 +37,9 @@ import {
   ChevronDown,
   ChevronUp,
   Globe,
+  Ruler,
+  Gauge,
+  Activity,
 } from "lucide-react";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import {
@@ -164,10 +165,9 @@ export default function GeoAnalysis() {
   };
 
   const loadSavedResult = async (analysis: SavedAnalysis) => {
+    const saved = analysis.resultData as any;
     setResultData({
-      analysisType: analysis.analysisType,
-      areas: analysis.resultData,
-      summary: analysis.resultData,
+      ...saved,
       geojson: analysis.resultGeojson,
     });
     setAnalysisType(analysis.analysisType as AnalysisType);
@@ -183,26 +183,29 @@ export default function GeoAnalysis() {
     if (!resultData) return;
     let csv = "";
 
-    if (resultData.analysisType === "mcp" || resultData.analysisType === "kernel") {
-      const areas = resultData.areas;
-      if (Array.isArray(areas)) {
-        const keys = Object.keys(areas[0] || {});
-        csv = keys.join(",") + "\n";
-        for (const row of areas) {
-          csv += keys.map((k) => row[k] ?? "").join(",") + "\n";
-        }
+    if (resultData.analysisType === "mcp") {
+      csv = "individual,area_km2\n";
+      for (const a of resultData.areas || []) {
+        csv += `${a.individual},${a.area_km2}\n`;
+      }
+    } else if (resultData.analysisType === "kernel") {
+      csv = "individual,area_95_km2,area_50_km2\n";
+      for (const a of resultData.areas || []) {
+        csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
       }
     } else if (resultData.analysisType === "distance") {
-      const daily = resultData.dailyDistances || [];
       csv = "individual,date,distance_km\n";
-      for (const d of daily) {
-        csv += `${d.individual},${d.date},${d.distance_km}\n`;
+      for (const ind of resultData.individuals || []) {
+        for (const d of ind.daily || []) {
+          csv += `${ind.individual},${d.date},${d.distance_km}\n`;
+        }
       }
     } else if (resultData.analysisType === "speed") {
-      const series = resultData.speedSeries || [];
       csv = "individual,timestamp,speed_kmh\n";
-      for (const s of series) {
-        csv += `${s.individual},${new Date(s.timestamp).toISOString()},${s.speed_kmh}\n`;
+      for (const ind of resultData.individuals || []) {
+        for (const s of ind.speeds || []) {
+          csv += `${ind.individual},${new Date(s.timestamp).toISOString()},${s.speed_kmh}\n`;
+        }
       }
     }
 
@@ -225,7 +228,7 @@ export default function GeoAnalysis() {
             Analisis geoespacial
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Analisis estadisticos con adehabitatHR/LT (R)
+            Analisis estadisticos de movimiento y home range (Turf.js)
           </p>
         </div>
         <div className="flex gap-2">
@@ -418,7 +421,7 @@ export default function GeoAnalysis() {
               {analysisMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Ejecutando R...
+                  Ejecutando...
                 </>
               ) : (
                 <>
@@ -435,9 +438,9 @@ export default function GeoAnalysis() {
             <Card>
               <CardContent className="py-12 text-center">
                 <Loader2 className="w-10 h-10 mx-auto mb-3 animate-spin text-primary" />
-                <p className="text-sm font-medium">Ejecutando analisis en R...</p>
+                <p className="text-sm font-medium">Ejecutando analisis...</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Obteniendo datos de Movebank y procesando con adehabitat
+                  Obteniendo datos de Movebank y procesando analisis geoespacial
                 </p>
               </CardContent>
             </Card>
@@ -445,7 +448,7 @@ export default function GeoAnalysis() {
 
           {resultData && !analysisMutation.isPending && (
             <>
-              <AnalysisResultSummary data={resultData} />
+              <MetricsPanel data={resultData} />
 
               {resultData.geojson && resultData.geojson.features?.length > 0 && (
                 <Card>
@@ -470,7 +473,34 @@ export default function GeoAnalysis() {
                         <GeoJSON
                           data={resultData.geojson}
                           style={(feature: any) => {
-                            const percent = feature?.properties?.percent;
+                            const props = feature?.properties || {};
+                            if (props.type === "mcp") {
+                              return {
+                                color: "#3b82f6",
+                                weight: 2,
+                                opacity: 0.8,
+                                fillColor: "#3b82f6",
+                                fillOpacity: 0.3,
+                              };
+                            }
+                            if (props.type === "kernel") {
+                              if (props.level === "50%") {
+                                return {
+                                  color: "#ef4444",
+                                  weight: 2,
+                                  opacity: 0.8,
+                                  fillColor: "#ef4444",
+                                  fillOpacity: 0.3,
+                                };
+                              }
+                              return {
+                                color: "#22c55e",
+                                weight: 2,
+                                opacity: 0.8,
+                                fillColor: "#22c55e",
+                                fillOpacity: 0.2,
+                              };
+                            }
                             const idx = resultData.geojson.features.indexOf(feature) || 0;
                             const color = ANIMAL_COLORS[idx % ANIMAL_COLORS.length];
                             return {
@@ -478,32 +508,60 @@ export default function GeoAnalysis() {
                               weight: 2,
                               opacity: 0.8,
                               fillColor: color,
-                              fillOpacity: percent === 50 ? 0.4 : 0.15,
+                              fillOpacity: 0.2,
                             };
                           }}
                           onEachFeature={(feature: any, layer: any) => {
                             const props = feature.properties || {};
                             let popup = `<b>${props.id || "Animal"}</b>`;
-                            if (props.area_km2 !== undefined) popup += `<br/>Area: ${props.area_km2.toFixed(2)} km²`;
-                            if (props.area !== undefined) popup += `<br/>Area: ${(props.area / 100).toFixed(2)} km²`;
-                            if (props.percent !== undefined) popup += `<br/>Nivel: ${props.percent}%`;
+                            if (props.type === "mcp") {
+                              popup += `<br/>MCP ${props.percent || 95}%`;
+                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                            } else if (props.type === "kernel") {
+                              popup += `<br/>Kernel ${props.level}`;
+                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                            } else if (props.area_km2 !== undefined) {
+                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                            }
                             layer.bindPopup(popup);
                           }}
                         />
                         <FitBounds geojson={resultData.geojson} />
                       </MapContainer>
                     </div>
+                    {resultData.analysisType === "kernel" && (
+                      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#22c55e", opacity: 0.6 }} />
+                          Home Range (95%)
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#ef4444", opacity: 0.6 }} />
+                          Core Area (50%)
+                        </div>
+                      </div>
+                    )}
+                    {resultData.analysisType === "mcp" && (
+                      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#3b82f6", opacity: 0.6 }} />
+                          MCP ({resultData.areas?.[0]?.percent || 95}%)
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
 
-              {(resultData.analysisType === "distance" || resultData.dailyDistances) && (
+              {resultData.analysisType === "distance" && (
                 <DistanceChart data={resultData} />
               )}
 
-              {(resultData.analysisType === "speed" || resultData.speedSeries) && (
+              {resultData.analysisType === "speed" && (
                 <SpeedChart data={resultData} />
               )}
+
+              <AnalysisResultTable data={resultData} />
             </>
           )}
 
@@ -523,20 +581,178 @@ export default function GeoAnalysis() {
   );
 }
 
-function AnalysisResultSummary({ data }: { data: any }) {
-  const areas = data.areas || data.summary;
-  if (!areas) return null;
+function MetricsPanel({ data }: { data: any }) {
+  if (data.analysisType === "mcp") {
+    const areas = data.areas || [];
+    const totalArea = areas.reduce((s: number, a: any) => s + (a.area_km2 || 0), 0);
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <MapIcon className="w-3.5 h-3.5" />
+              <span className="text-xs">Animales</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-animals">{areas.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Ruler className="w-3.5 h-3.5" />
+              <span className="text-xs">Area total</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-total-area">{totalArea.toFixed(3)} km\u00B2</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Activity className="w-3.5 h-3.5" />
+              <span className="text-xs">Promedio</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-avg-area">
+              {areas.length > 0 ? (totalArea / areas.length).toFixed(3) : "0"} km\u00B2
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-  const isList = Array.isArray(areas);
-  const items = isList ? areas : [areas];
+  if (data.analysisType === "kernel") {
+    const areas = data.areas || [];
+    const total95 = areas.reduce((s: number, a: any) => s + (a.area_95_km2 || 0), 0);
+    const total50 = areas.reduce((s: number, a: any) => s + (a.area_50_km2 || 0), 0);
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <MapIcon className="w-3.5 h-3.5" />
+              <span className="text-xs">Animales</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-kernel-animals">{areas.length}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
+              <span className="text-xs">Area 95%</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-area-95">{total95.toFixed(3)} km\u00B2</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+              <span className="text-xs">Area 50%</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-area-50">{total50.toFixed(3)} km\u00B2</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Activity className="w-3.5 h-3.5" />
+              <span className="text-xs">Ratio 50/95</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-ratio">
+              {total95 > 0 ? ((total50 / total95) * 100).toFixed(1) : "0"}%
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-  if (items.length === 0) return null;
+  if (data.analysisType === "distance") {
+    const inds = data.individuals || [];
+    const totalKm = inds.reduce((s: number, i: any) => s + (i.total_km || 0), 0);
+    const avgDaily = inds.reduce((s: number, i: any) => s + (i.average_daily_km || 0), 0) / Math.max(inds.length, 1);
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Ruler className="w-3.5 h-3.5" />
+              <span className="text-xs">Distancia total</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-total-dist">{totalKm.toFixed(1)} km</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Activity className="w-3.5 h-3.5" />
+              <span className="text-xs">Promedio diario</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-avg-daily">{avgDaily.toFixed(1)} km</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <MapIcon className="w-3.5 h-3.5" />
+              <span className="text-xs">Animales</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-dist-animals">{inds.length}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-  if (data.analysisType === "mcp" || data.analysisType === "kernel") {
+  if (data.analysisType === "speed") {
+    const inds = data.individuals || [];
+    const avgKmh = inds.reduce((s: number, i: any) => s + (i.average_kmh || 0), 0) / Math.max(inds.length, 1);
+    const maxKmh = Math.max(0, ...inds.map((i: any) => i.max_kmh || 0));
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Gauge className="w-3.5 h-3.5" />
+              <span className="text-xs">Velocidad media</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-avg-speed">{avgKmh.toFixed(1)} km/h</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <Gauge className="w-3.5 h-3.5" />
+              <span className="text-xs">Velocidad maxima</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-max-speed">{maxKmh.toFixed(1)} km/h</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="py-4 px-4">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <MapIcon className="w-3.5 h-3.5" />
+              <span className="text-xs">Animales</span>
+            </div>
+            <p className="text-xl font-bold" data-testid="text-metric-speed-animals">{inds.length}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function AnalysisResultTable({ data }: { data: any }) {
+  if (data.analysisType === "mcp") {
+    const areas = data.areas || [];
+    if (areas.length === 0) return null;
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Resultados: {ANALYSIS_LABELS[data.analysisType as AnalysisType]}</CardTitle>
+          <CardTitle className="text-base">Detalle por animal: MCP</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-auto">
@@ -544,36 +760,48 @@ function AnalysisResultSummary({ data }: { data: any }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Animal</TableHead>
-                  {data.analysisType === "mcp" && (
-                    <>
-                      <TableHead>Area (km²)</TableHead>
-                      <TableHead>Porcentaje</TableHead>
-                    </>
-                  )}
-                  {data.analysisType === "kernel" && (
-                    <>
-                      <TableHead>Area 50% (km²)</TableHead>
-                      <TableHead>Area 95% (km²)</TableHead>
-                    </>
-                  )}
+                  <TableHead>Area (km\u00B2)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item: any, idx: number) => (
+                {areas.map((item: any, idx: number) => (
                   <TableRow key={idx}>
-                    <TableCell className="font-medium">{item.individual || item.id || `#${idx + 1}`}</TableCell>
-                    {data.analysisType === "mcp" && (
-                      <>
-                        <TableCell>{typeof item.area_km2 === "number" ? item.area_km2.toFixed(3) : "—"}</TableCell>
-                        <TableCell>{data.percent || 95}%</TableCell>
-                      </>
-                    )}
-                    {data.analysisType === "kernel" && (
-                      <>
-                        <TableCell>{typeof item.area_50_km2 === "number" ? item.area_50_km2.toFixed(3) : "—"}</TableCell>
-                        <TableCell>{typeof item.area_95_km2 === "number" ? item.area_95_km2.toFixed(3) : "—"}</TableCell>
-                      </>
-                    )}
+                    <TableCell className="font-medium">{item.individual}</TableCell>
+                    <TableCell>{item.area_km2?.toFixed(3)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (data.analysisType === "kernel") {
+    const areas = data.areas || [];
+    if (areas.length === 0) return null;
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Detalle por animal: Kernel</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Animal</TableHead>
+                  <TableHead>Area 95% (km\u00B2)</TableHead>
+                  <TableHead>Area 50% (km\u00B2)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {areas.map((item: any, idx: number) => (
+                  <TableRow key={idx}>
+                    <TableCell className="font-medium">{item.individual}</TableCell>
+                    <TableCell>{item.area_95_km2?.toFixed(3)}</TableCell>
+                    <TableCell>{item.area_50_km2?.toFixed(3)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -585,10 +813,12 @@ function AnalysisResultSummary({ data }: { data: any }) {
   }
 
   if (data.analysisType === "distance") {
+    const inds = data.individuals || [];
+    if (inds.length === 0) return null;
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Resultados: Distancia recorrida</CardTitle>
+          <CardTitle className="text-base">Detalle por animal: Distancia</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-auto">
@@ -599,17 +829,15 @@ function AnalysisResultSummary({ data }: { data: any }) {
                   <TableHead>Distancia total (km)</TableHead>
                   <TableHead>Promedio diario (km)</TableHead>
                   <TableHead>Dias</TableHead>
-                  <TableHead>Puntos GPS</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item: any, idx: number) => (
+                {inds.map((item: any, idx: number) => (
                   <TableRow key={idx}>
                     <TableCell className="font-medium">{item.individual}</TableCell>
-                    <TableCell>{item.total_km}</TableCell>
-                    <TableCell>{item.avg_daily_km}</TableCell>
-                    <TableCell>{item.n_days}</TableCell>
-                    <TableCell>{item.n_points}</TableCell>
+                    <TableCell>{item.total_km?.toFixed(3)}</TableCell>
+                    <TableCell>{item.average_daily_km?.toFixed(3)}</TableCell>
+                    <TableCell>{item.daily?.length || 0}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -621,10 +849,12 @@ function AnalysisResultSummary({ data }: { data: any }) {
   }
 
   if (data.analysisType === "speed") {
+    const inds = data.individuals || [];
+    if (inds.length === 0) return null;
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Resultados: Velocidad de movimiento</CardTitle>
+          <CardTitle className="text-base">Detalle por animal: Velocidad</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-auto">
@@ -634,18 +864,16 @@ function AnalysisResultSummary({ data }: { data: any }) {
                   <TableHead>Animal</TableHead>
                   <TableHead>Velocidad media (km/h)</TableHead>
                   <TableHead>Velocidad max (km/h)</TableHead>
-                  <TableHead>Mediana (km/h)</TableHead>
-                  <TableHead>Segmentos</TableHead>
+                  <TableHead>Mediciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item: any, idx: number) => (
+                {inds.map((item: any, idx: number) => (
                   <TableRow key={idx}>
                     <TableCell className="font-medium">{item.individual}</TableCell>
-                    <TableCell>{item.mean_speed_kmh}</TableCell>
-                    <TableCell>{item.max_speed_kmh}</TableCell>
-                    <TableCell>{item.median_speed_kmh}</TableCell>
-                    <TableCell>{item.n_segments}</TableCell>
+                    <TableCell>{item.average_kmh?.toFixed(2)}</TableCell>
+                    <TableCell>{item.max_kmh?.toFixed(2)}</TableCell>
+                    <TableCell>{item.speeds?.length || 0}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -660,18 +888,23 @@ function AnalysisResultSummary({ data }: { data: any }) {
 }
 
 function DistanceChart({ data }: { data: any }) {
-  const daily = data.dailyDistances || [];
-  if (daily.length === 0) return null;
+  const inds = data.individuals || [];
+  if (inds.length === 0) return null;
 
-  const individuals = Array.from(new Set(daily.map((d: any) => d.individual))) as string[];
-  const dates = Array.from(new Set(daily.map((d: any) => d.date))) as string[];
-  dates.sort();
+  const allDates = new Set<string>();
+  for (const ind of inds) {
+    for (const d of ind.daily || []) {
+      allDates.add(d.date);
+    }
+  }
+  const dates = Array.from(allDates).sort();
+  if (dates.length === 0) return null;
 
   const chartData = dates.map((date) => {
     const row: any = { date };
-    for (const ind of individuals) {
-      const entry = daily.find((d: any) => d.date === date && d.individual === ind);
-      row[ind] = entry ? entry.distance_km : 0;
+    for (const ind of inds) {
+      const entry = (ind.daily || []).find((d: any) => d.date === date);
+      row[ind.individual] = entry ? entry.distance_km : 0;
     }
     return row;
   });
@@ -700,12 +933,12 @@ function DistanceChart({ data }: { data: any }) {
                 }}
               />
               <Legend />
-              {individuals.map((ind, idx) => (
+              {inds.map((ind: any, idx: number) => (
                 <Bar
-                  key={ind}
-                  dataKey={ind}
+                  key={ind.individual}
+                  dataKey={ind.individual}
                   fill={ANIMAL_COLORS[idx % ANIMAL_COLORS.length]}
-                  name={ind}
+                  name={ind.individual}
                   radius={[2, 2, 0, 0]}
                 />
               ))}
@@ -718,35 +951,30 @@ function DistanceChart({ data }: { data: any }) {
 }
 
 function SpeedChart({ data }: { data: any }) {
-  const series = data.speedSeries || [];
-  if (series.length === 0) return null;
+  const inds = data.individuals || [];
+  if (inds.length === 0) return null;
 
-  const individuals = Array.from(new Set(series.map((s: any) => s.individual))) as string[];
-
-  const chartData = series
-    .sort((a: any, b: any) => a.timestamp - b.timestamp)
-    .map((s: any) => ({
-      ...s,
-      time: format(new Date(s.timestamp), "dd/MM HH:mm"),
-    }));
-
-  const grouped: Record<string, any[]> = {};
-  for (const ind of individuals) {
-    grouped[ind] = chartData.filter((d: any) => d.individual === ind);
-  }
-
-  const mergedData: any[] = [];
-  const allTimes = Array.from(new Set(chartData.map((d: any) => d.timestamp))) as number[];
-  allTimes.sort((a, b) => a - b);
-
-  for (const ts of allTimes) {
-    const row: any = { time: format(new Date(ts), "dd/MM HH:mm"), timestamp: ts };
-    for (const ind of individuals) {
-      const point = series.find((s: any) => s.timestamp === ts && s.individual === ind);
-      if (point) row[ind] = point.speed_kmh;
+  const allTimestamps = new Set<number>();
+  for (const ind of inds) {
+    for (const s of ind.speeds || []) {
+      allTimestamps.add(s.timestamp);
     }
-    mergedData.push(row);
   }
+  const timestamps = Array.from(allTimestamps).sort((a, b) => a - b);
+  if (timestamps.length === 0) return null;
+
+  const maxPoints = 500;
+  const step = Math.max(1, Math.floor(timestamps.length / maxPoints));
+  const sampledTs = timestamps.filter((_, i) => i % step === 0);
+
+  const mergedData = sampledTs.map((ts) => {
+    const row: any = { time: format(new Date(ts), "dd/MM HH:mm"), timestamp: ts };
+    for (const ind of inds) {
+      const point = (ind.speeds || []).find((s: any) => s.timestamp === ts);
+      if (point) row[ind.individual] = point.speed_kmh;
+    }
+    return row;
+  });
 
   return (
     <Card>
@@ -772,15 +1000,15 @@ function SpeedChart({ data }: { data: any }) {
                 }}
               />
               <Legend />
-              {individuals.map((ind, idx) => (
+              {inds.map((ind: any, idx: number) => (
                 <Line
-                  key={ind}
+                  key={ind.individual}
                   type="monotone"
-                  dataKey={ind}
+                  dataKey={ind.individual}
                   stroke={ANIMAL_COLORS[idx % ANIMAL_COLORS.length]}
                   strokeWidth={1.5}
                   dot={false}
-                  name={ind}
+                  name={ind.individual}
                   connectNulls
                 />
               ))}

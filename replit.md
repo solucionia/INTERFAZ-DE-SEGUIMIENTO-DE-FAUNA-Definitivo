@@ -29,11 +29,11 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
-- `client/src/pages/geo-analysis.tsx` - Geospatial analysis with R/adehabitat (MCP, Kernel, distance, speed)
+- `server/geoAnalysis.ts` - Geospatial analysis engine using Turf.js (MCP, Kernel density, distance, speed)
+- `client/src/pages/geo-analysis.tsx` - Geospatial analysis UI with map visualization, charts, and metrics
 - `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
 - `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
 - `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
-- `r-scripts/` - R script templates for geospatial analyses (mcp.R, kernel.R, distance.R, speed.R)
 
 ## Key Features
 1. Two roles: superuser (first registered user) and normal user
@@ -58,7 +58,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 20. Emission alert system: users configure email alerts for non-transmitting animals with daily deduplication
 21. Automated cron scheduler (node-cron): runs event detection and emission checks every 6 hours
 22. Active/inactive animal indicators on study detail page (green=active, grayed=inactive)
-23. Geospatial analysis using R (adehabitatHR/LT): MCP home range, Kernel density, distance traveled, movement speed
+23. Geospatial analysis using Turf.js (@turf/turf): MCP home range, Kernel density, distance traveled, movement speed
 24. Analysis results visualized on Leaflet map (polygons) and Recharts (distance/speed charts)
 25. Saved analyses with history, reload, and CSV export
 
@@ -85,7 +85,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/detect-events (triggers analysis)
 - GET /api/monitor/emissions?days=N (check non-emitting animals)
 - GET/POST /api/emission-alerts, PATCH/DELETE /api/emission-alerts/:id
-- POST /api/studies/:id/analysis (execute R geospatial analysis)
+- POST /api/studies/:id/analysis (execute Turf.js geospatial analysis)
 - GET /api/studies/:id/analyses (list saved analyses for study)
 - GET /api/analyses/:id, DELETE /api/analyses/:id (get/delete saved analysis)
 - GET /api/dashboard/summary (dashboard statistics)
