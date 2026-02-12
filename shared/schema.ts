@@ -60,7 +60,10 @@ export const individuals = pgTable("individuals", {
   taxonCanonicalName: text("taxon_canonical_name"),
   sex: text("sex"),
   animalLifeStage: text("animal_life_stage"),
-});
+  synced: boolean("synced").notNull().default(true),
+}, (table) => [
+  uniqueIndex("individuals_study_movebank_unique").on(table.studyId, table.movebankId),
+]);
 
 export type Individual = typeof individuals.$inferSelect;
 
@@ -72,7 +75,10 @@ export const deployments = pgTable("deployments", {
   localIdentifier: text("local_identifier"),
   deployOn: text("deploy_on_date"),
   deployOff: text("deploy_off_date"),
-});
+  synced: boolean("synced").notNull().default(true),
+}, (table) => [
+  uniqueIndex("deployments_study_movebank_unique").on(table.studyId, table.movebankId),
+]);
 
 export type Deployment = typeof deployments.$inferSelect;
 
