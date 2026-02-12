@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   users, studies, userStudies, individuals, deployments,
   speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, activityLogs,
+  cachedGpsEvents, cachedAccEvents, cachedFetchRanges,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
   type SpeciesProfile, type InsertSpeciesProfile,
@@ -10,6 +11,7 @@ import {
   type EmissionAlert, type InsertEmissionAlert,
   type SavedAnalysis, type InsertSavedAnalysis,
   type ActivityLog, type InsertActivityLog,
+  type CachedGpsEvent, type CachedAccEvent, type CachedFetchRange,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -88,6 +90,17 @@ export interface IStorage {
     recentAlerts: DetectedEvent[];
     alertCountsByType: Record<string, number>;
   }>;
+
+  getCachedGpsEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedGpsEvent[]>;
+  insertCachedGpsEvents(events: Omit<CachedGpsEvent, "id">[]): Promise<void>;
+  getCachedAccEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedAccEvent[]>;
+  insertCachedAccEvents(events: Omit<CachedAccEvent, "id">[]): Promise<void>;
+  getCachedTimestampRange(studyId: string, individual: string, sensorType: "gps" | "acc"): Promise<{ min: number; max: number } | null>;
+  getCacheStats(): Promise<{ totalGps: number; totalAcc: number; byStudy: { studyId: string; studyName: string; gpsCount: number; accCount: number; lastGpsTimestamp: number | null; lastAccTimestamp: number | null }[] }>;
+  clearCacheForStudy(studyId: string): Promise<void>;
+  recordFetchedRange(studyId: string, individual: string, sensorType: string, rangeStart: number, rangeEnd: number): Promise<void>;
+  getFetchedRanges(studyId: string, individual: string, sensorType: string): Promise<{ rangeStart: number; rangeEnd: number }[]>;
+  computeUncoveredGaps(studyId: string, individual: string, sensorType: string, tsStart: number, tsEnd: number): Promise<{ start: number; end: number }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -417,6 +430,178 @@ export class DatabaseStorage implements IStorage {
     const alertCountsByType = await this.getDetectedEventStats(studyIds);
 
     return { totalAnimals, recentAlerts, alertCountsByType };
+  }
+
+  async getCachedGpsEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedGpsEvent[]> {
+    return db.select().from(cachedGpsEvents)
+      .where(and(
+        eq(cachedGpsEvents.studyId, studyId),
+        eq(cachedGpsEvents.individualLocalIdentifier, individual),
+        gte(cachedGpsEvents.timestamp, tsStart),
+        lte(cachedGpsEvents.timestamp, tsEnd)
+      ))
+      .orderBy(cachedGpsEvents.timestamp);
+  }
+
+  async insertCachedGpsEvents(events: Omit<CachedGpsEvent, "id">[]): Promise<void> {
+    if (events.length === 0) return;
+    const batchSize = 500;
+    for (let i = 0; i < events.length; i += batchSize) {
+      const batch = events.slice(i, i + batchSize);
+      await db.insert(cachedGpsEvents).values(batch).onConflictDoNothing();
+    }
+  }
+
+  async getCachedAccEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedAccEvent[]> {
+    return db.select().from(cachedAccEvents)
+      .where(and(
+        eq(cachedAccEvents.studyId, studyId),
+        eq(cachedAccEvents.individualLocalIdentifier, individual),
+        gte(cachedAccEvents.timestamp, tsStart),
+        lte(cachedAccEvents.timestamp, tsEnd)
+      ))
+      .orderBy(cachedAccEvents.timestamp);
+  }
+
+  async insertCachedAccEvents(events: Omit<CachedAccEvent, "id">[]): Promise<void> {
+    if (events.length === 0) return;
+    const batchSize = 500;
+    for (let i = 0; i < events.length; i += batchSize) {
+      const batch = events.slice(i, i + batchSize);
+      await db.insert(cachedAccEvents).values(batch).onConflictDoNothing();
+    }
+  }
+
+  async getCachedTimestampRange(studyId: string, individual: string, sensorType: "gps" | "acc"): Promise<{ min: number; max: number } | null> {
+    const table = sensorType === "gps" ? cachedGpsEvents : cachedAccEvents;
+    const idCol = sensorType === "gps" ? cachedGpsEvents.individualLocalIdentifier : cachedAccEvents.individualLocalIdentifier;
+    const studyCol = sensorType === "gps" ? cachedGpsEvents.studyId : cachedAccEvents.studyId;
+    const tsCol = sensorType === "gps" ? cachedGpsEvents.timestamp : cachedAccEvents.timestamp;
+
+    const result = await db.select({
+      minTs: sql<number>`MIN(${tsCol})`,
+      maxTs: sql<number>`MAX(${tsCol})`,
+    }).from(table)
+      .where(and(eq(studyCol, studyId), eq(idCol, individual)));
+
+    if (!result[0] || result[0].minTs === null) return null;
+    return { min: Number(result[0].minTs), max: Number(result[0].maxTs) };
+  }
+
+  async getCacheStats(): Promise<{ totalGps: number; totalAcc: number; byStudy: { studyId: string; studyName: string; gpsCount: number; accCount: number; lastGpsTimestamp: number | null; lastAccTimestamp: number | null }[] }> {
+    const [gpsTotal] = await db.select({ count: count() }).from(cachedGpsEvents);
+    const [accTotal] = await db.select({ count: count() }).from(cachedAccEvents);
+
+    const allStudies = await db.select().from(studies);
+    const byStudy: { studyId: string; studyName: string; gpsCount: number; accCount: number; lastGpsTimestamp: number | null; lastAccTimestamp: number | null }[] = [];
+
+    for (const study of allStudies) {
+      const [gps] = await db.select({
+        count: count(),
+        maxTs: sql<number>`MAX(${cachedGpsEvents.timestamp})`,
+      }).from(cachedGpsEvents).where(eq(cachedGpsEvents.studyId, study.id));
+
+      const [acc] = await db.select({
+        count: count(),
+        maxTs: sql<number>`MAX(${cachedAccEvents.timestamp})`,
+      }).from(cachedAccEvents).where(eq(cachedAccEvents.studyId, study.id));
+
+      if ((gps?.count || 0) > 0 || (acc?.count || 0) > 0) {
+        byStudy.push({
+          studyId: study.id,
+          studyName: study.name,
+          gpsCount: gps?.count || 0,
+          accCount: acc?.count || 0,
+          lastGpsTimestamp: gps?.maxTs ? Number(gps.maxTs) : null,
+          lastAccTimestamp: acc?.maxTs ? Number(acc.maxTs) : null,
+        });
+      }
+    }
+
+    return {
+      totalGps: gpsTotal?.count || 0,
+      totalAcc: accTotal?.count || 0,
+      byStudy,
+    };
+  }
+
+  async clearCacheForStudy(studyId: string): Promise<void> {
+    await db.delete(cachedGpsEvents).where(eq(cachedGpsEvents.studyId, studyId));
+    await db.delete(cachedAccEvents).where(eq(cachedAccEvents.studyId, studyId));
+    await db.delete(cachedFetchRanges).where(eq(cachedFetchRanges.studyId, studyId));
+  }
+
+  async recordFetchedRange(studyId: string, individual: string, sensorType: string, rangeStart: number, rangeEnd: number): Promise<void> {
+    const existing = await db.select()
+      .from(cachedFetchRanges)
+      .where(and(
+        eq(cachedFetchRanges.studyId, studyId),
+        eq(cachedFetchRanges.individualLocalIdentifier, individual),
+        eq(cachedFetchRanges.sensorType, sensorType),
+      ))
+      .orderBy(cachedFetchRanges.rangeStart);
+
+    const merged: { start: number; end: number }[] = [];
+    const allRanges = [...existing.map(r => ({ start: r.rangeStart, end: r.rangeEnd })), { start: rangeStart, end: rangeEnd }];
+    allRanges.sort((a, b) => a.start - b.start);
+
+    for (const range of allRanges) {
+      if (merged.length === 0 || range.start > merged[merged.length - 1].end + 1) {
+        merged.push({ ...range });
+      } else {
+        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, range.end);
+      }
+    }
+
+    await db.delete(cachedFetchRanges).where(and(
+      eq(cachedFetchRanges.studyId, studyId),
+      eq(cachedFetchRanges.individualLocalIdentifier, individual),
+      eq(cachedFetchRanges.sensorType, sensorType),
+    ));
+
+    for (const r of merged) {
+      await db.insert(cachedFetchRanges).values({
+        studyId,
+        individualLocalIdentifier: individual,
+        sensorType,
+        rangeStart: r.start,
+        rangeEnd: r.end,
+      });
+    }
+  }
+
+  async getFetchedRanges(studyId: string, individual: string, sensorType: string): Promise<{ rangeStart: number; rangeEnd: number }[]> {
+    const rows = await db.select()
+      .from(cachedFetchRanges)
+      .where(and(
+        eq(cachedFetchRanges.studyId, studyId),
+        eq(cachedFetchRanges.individualLocalIdentifier, individual),
+        eq(cachedFetchRanges.sensorType, sensorType),
+      ))
+      .orderBy(cachedFetchRanges.rangeStart);
+    return rows.map(r => ({ rangeStart: r.rangeStart, rangeEnd: r.rangeEnd }));
+  }
+
+  async computeUncoveredGaps(studyId: string, individual: string, sensorType: string, tsStart: number, tsEnd: number): Promise<{ start: number; end: number }[]> {
+    const ranges = await this.getFetchedRanges(studyId, individual, sensorType);
+    if (ranges.length === 0) return [{ start: tsStart, end: tsEnd }];
+
+    const gaps: { start: number; end: number }[] = [];
+    let current = tsStart;
+
+    for (const range of ranges) {
+      if (range.rangeStart > current) {
+        gaps.push({ start: current, end: Math.min(range.rangeStart - 1, tsEnd) });
+      }
+      current = Math.max(current, range.rangeEnd + 1);
+      if (current > tsEnd) break;
+    }
+
+    if (current <= tsEnd) {
+      gaps.push({ start: current, end: tsEnd });
+    }
+
+    return gaps.filter(g => g.start <= g.end);
   }
 }
 

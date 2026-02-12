@@ -27,6 +27,7 @@ import {
   Bird,
   ExternalLink,
   Search,
+  RefreshCw,
 } from "lucide-react";
 import {
   LineChart,
@@ -255,7 +256,9 @@ export default function StudyVisualization() {
     },
   });
 
-  const loadData = async () => {
+  const [forceLoading, setForceLoading] = useState(false);
+
+  const loadData = async (force = false) => {
     if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) {
       toast({ title: "Datos incompletos", description: "Selecciona animales y rango de fechas", variant: "destructive" });
       return;
@@ -269,6 +272,7 @@ export default function StudyVisualization() {
       return;
     }
 
+    if (force) setForceLoading(true);
     setLoading(true);
     setDataLoaded(false);
     setHighlightedTimestamp(null);
@@ -281,7 +285,8 @@ export default function StudyVisualization() {
 
     try {
       const animalParam = selectedAnimals.join(",");
-      const baseParams = `individuals=${encodeURIComponent(animalParam)}&timestamp_start=${tsStart}&timestamp_end=${tsEnd}`;
+      const forceParam = force ? "&force=true" : "";
+      const baseParams = `individuals=${encodeURIComponent(animalParam)}&timestamp_start=${tsStart}&timestamp_end=${tsEnd}${forceParam}`;
 
       const [gpsRes, accRes, eventsRes] = await Promise.all([
         fetch(`/api/studies/${studyId}/events?${baseParams}&sensor_type=${SENSOR_GPS}`, { credentials: "include" }),
@@ -322,11 +327,13 @@ export default function StudyVisualization() {
 
       const totalGps = Object.values(parsedGps).reduce((s, a) => s + a.length, 0);
       const totalAcc = Object.values(parsedAcc).reduce((s, a) => s + a.length, 0);
-      toast({ title: "Datos cargados", description: `${totalGps} puntos GPS, ${totalAcc} muestras de acelerometro` });
+      const source = force ? " (desde Movebank)" : "";
+      toast({ title: "Datos cargados", description: `${totalGps} puntos GPS, ${totalAcc} muestras de acelerometro${source}` });
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
       setLoading(false);
+      setForceLoading(false);
     }
   };
 
@@ -487,10 +494,21 @@ export default function StudyVisualization() {
             <Label className="text-xs text-muted-foreground">Fecha fin</Label>
             <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="w-40" data-testid="input-date-end" />
           </div>
-          <Button onClick={loadData} disabled={loading || selectedAnimals.length === 0} data-testid="button-load-data">
-            {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+          <Button onClick={() => loadData(false)} disabled={loading || selectedAnimals.length === 0} data-testid="button-load-data">
+            {loading && !forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Cargar datos
           </Button>
+          {dataLoaded && (
+            <Button
+              variant="outline"
+              onClick={() => loadData(true)}
+              disabled={loading || selectedAnimals.length === 0}
+              data-testid="button-force-reload"
+            >
+              {forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Forzar recarga
+            </Button>
+          )}
           {dataLoaded && (
             <Button
               variant="outline"

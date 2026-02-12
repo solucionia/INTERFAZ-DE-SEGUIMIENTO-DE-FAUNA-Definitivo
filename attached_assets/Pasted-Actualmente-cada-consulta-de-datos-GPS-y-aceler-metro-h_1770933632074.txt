@@ -1,0 +1,50 @@
+Actualmente cada consulta de datos GPS y acelerómetro hace una petición en tiempo real a Movebank, lo cual es lento y puede causar throttling, especialmente con el cron job que consulta todos los animales cada 6 horas.
+
+Implementa un sistema de caché local para estos datos:
+
+1. Crea dos nuevas tablas en el esquema:
+
+   cached_gps_events:
+   - id (varchar, PK, gen_random_uuid)
+   - study_id (varchar, FK → studies.id CASCADE)
+   - individual_local_identifier (text)
+   - timestamp (bigint) — milisegundos desde epoch
+   - latitude (double precision)
+   - longitude (double precision)
+   - ground_speed (double precision, nullable)
+   - heading (double precision, nullable)
+   - height_above_ellipsoid (double precision, nullable)
+   - UNIQUE constraint en (study_id, individual_local_identifier, timestamp)
+   - ÍNDICE en (study_id, individual_local_identifier, timestamp)
+
+   cached_acc_events:
+   - id (varchar, PK, gen_random_uuid)
+   - study_id (varchar, FK → studies.id CASCADE)
+   - individual_local_identifier (text)
+   - timestamp (bigint)
+   - x_acceleration (double precision)
+   - y_acceleration (double precision)
+   - z_acceleration (double precision)
+   - raw_data (text, nullable) — datos brutos por si hay más campos
+   - UNIQUE constraint en (study_id, individual_local_identifier, timestamp)
+   - ÍNDICE en (study_id, individual_local_identifier, timestamp)
+
+2. Modifica la lógica de consulta de eventos (GET /api/studies/:id/events):
+   - Recibe: study_id, individual_local_identifier, sensor_type_id, timestamp_start, timestamp_end
+   - Primero busca en la caché local qué rango de timestamps ya tiene para ese animal y sensor
+   - Solo pide a Movebank los rangos que NO estén en caché
+   - Guarda los datos nuevos en la caché con ON CONFLICT DO NOTHING
+   - Devuelve todos los datos combinados (caché + nuevos) ordenados por timestamp
+
+3. Modifica el cron job (scheduler.ts):
+   - Después de consultar datos para la detección de eventos, guárdalos en caché
+   - Esto hace que las consultas posteriores del frontend sean instantáneas para datos recientes
+
+4. Añade un botón "Forzar recarga desde Movebank" en study-visualization.tsx:
+   - Envía un parámetro force=true al endpoint
+   - Con force=true, ignora la caché y consulta todo desde Movebank, actualizando la caché
+
+5. Añade un endpoint para estadísticas de caché:
+   - GET /api/cache/stats — devuelve: total registros GPS, total registros Acc, último dato cacheado por estudio
+
+Mantén la compatibilidad con todo lo existente. No rompas las funcionalidades de visualización, detección de eventos ni exportaciones.

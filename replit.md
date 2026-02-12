@@ -10,7 +10,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - **Auth**: Passport.js local strategy with bcrypt, sessions stored in PostgreSQL
 
 ## Project Structure
-- `shared/schema.ts` - Data models: users, studies, userStudies, individuals, deployments, speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses; EVENT_LABELS/EVENT_COLORS/EVENT_SEVERITY/ANALYSIS_TYPES/ANALYSIS_LABELS constants
+- `shared/schema.ts` - Data models: users, studies, userStudies, individuals, deployments, speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, cachedGpsEvents, cachedAccEvents, cachedFetchRanges; EVENT_LABELS/EVENT_COLORS/EVENT_SEVERITY/ANALYSIS_TYPES/ANALYSIS_LABELS constants
 - `server/auth.ts` - Passport.js setup, session config, requireAuth/requireSuperuser middleware
 - `server/storage.ts` - DatabaseStorage class implementing IStorage interface
 - `server/movebank.ts` - Movebank API integration (CSV parsing, Basic Auth)
@@ -61,6 +61,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 23. Geospatial analysis using Turf.js (@turf/turf): MCP home range, Kernel density, distance traveled, movement speed
 24. Analysis results visualized on Leaflet map (polygons) and Recharts (distance/speed charts)
 25. Saved analyses with history, reload, and CSV export
+26. Local data cache for GPS/accelerometer events with cache-first strategy and gap-filling
+27. Force reload from Movebank button in visualization page
+28. Cache statistics endpoint for monitoring cached data
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -77,7 +80,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - GET /api/studies, GET /api/studies/:id, POST /api/studies, PATCH /api/studies/:id, DELETE /api/studies/:id
 - GET/POST /api/studies/:id/users, DELETE /api/studies/:studyId/users/:userId
 - GET /api/studies/:id/individuals, GET /api/studies/:id/deployments
-- GET /api/studies/:id/events?individuals=...&sensor_type=...&timestamp_start=...&timestamp_end=... (GPS: 653, Acc: 2365683)
+- GET /api/studies/:id/events?individuals=...&sensor_type=...&timestamp_start=...&timestamp_end=...&force=true (GPS: 653, Acc: 2365683, cache-first with gap-filling)
 - POST /api/studies/:id/sync (triggers Movebank fetch)
 - GET /api/users (superuser only)
 - GET/POST /api/species-profiles, GET/PATCH/DELETE /api/species-profiles/:id (superuser only)
@@ -93,6 +96,18 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - PATCH /api/alerts/:id/read, /api/alerts/:id/resolve (mark alert read/resolved)
 - POST /api/alerts/mark-read (bulk mark alerts as read)
 - GET /api/studies/:id/export-kml (KML export for Google Earth)
+- GET /api/cache/stats (cache statistics: total GPS/Acc records, per-study breakdown)
+
+## Data Cache
+- GPS and accelerometer data from Movebank is cached locally in `cached_gps_events` and `cached_acc_events` tables
+- Cache-first strategy: queries check local cache, only fetch from Movebank for missing time ranges
+- Explicit range tracking via `cached_fetch_ranges` table: records which time ranges have been fetched per animal/sensor
+- Gap-filling uses range tracking: computes uncovered subranges by comparing requested range against union of fetched ranges, fetches only missing gaps
+- Ranges are merged on insert (overlapping/adjacent ranges are consolidated)
+- Cron job automatically caches data it fetches during event detection
+- Force reload (`force=true` query param) bypasses cache and fetches fresh data from Movebank, updating cache
+- UNIQUE constraint on (study_id, individual_local_identifier, timestamp) prevents duplicates
+- Cache is cascaded on study deletion
 
 ## Environment Variables
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM - Email alert configuration

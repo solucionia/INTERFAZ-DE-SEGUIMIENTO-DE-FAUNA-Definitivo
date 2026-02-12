@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis } from "./geoAnalysis";
@@ -325,7 +325,7 @@ export async function registerRoutes(
       const study = await storage.getStudy(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
-      const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end } = req.query;
+      const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end, force } = req.query;
       if (!individualIds || !sensor_type || !timestamp_start || !timestamp_end) {
         return res.status(400).json({ message: "Parámetros requeridos: individuals, sensor_type, timestamp_start, timestamp_end" });
       }
@@ -334,6 +334,9 @@ export async function registerRoutes(
       const tsStart = parseInt(timestamp_start as string, 10);
       const tsEnd = parseInt(timestamp_end as string, 10);
       const ids = (individualIds as string).split(",");
+      const forceReload = force === "true";
+      const isGps = sensorTypeId === 653;
+      const isAcc = sensorTypeId === 2365683;
 
       const results: Record<string, Record<string, string>[]> = {};
 
@@ -341,16 +344,191 @@ export async function registerRoutes(
         ids.map(async (animalId) => {
           const trimmed = animalId.trim();
           try {
-            const events = await fetchMovebankEvents(
-              study.movebankStudyId,
-              study.movebankUsername,
-              study.movebankPassword,
-              trimmed,
-              sensorTypeId,
-              tsStart,
-              tsEnd
-            );
-            results[trimmed] = events;
+            if (!forceReload && (isGps || isAcc)) {
+              const sensorKey = isGps ? "gps" as const : "acc" as const;
+
+              const gaps = await storage.computeUncoveredGaps(study.id, trimmed, sensorKey, tsStart, tsEnd);
+
+              if (gaps.length === 0) {
+                if (isGps) {
+                  const cached = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
+                  results[trimmed] = cached.map((c) => ({
+                    timestamp: new Date(c.timestamp).toISOString(),
+                    location_lat: String(c.latitude),
+                    location_long: String(c.longitude),
+                    ground_speed: c.groundSpeed != null ? String(c.groundSpeed) : "",
+                    heading: c.heading != null ? String(c.heading) : "",
+                    height_above_ellipsoid: c.heightAboveEllipsoid != null ? String(c.heightAboveEllipsoid) : "",
+                    individual_local_identifier: trimmed,
+                  }));
+                } else {
+                  const cached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
+                  results[trimmed] = cached.map((c) => ({
+                    timestamp: new Date(c.timestamp).toISOString(),
+                    acceleration_x: String(c.xAcceleration),
+                    acceleration_y: String(c.yAcceleration),
+                    acceleration_z: String(c.zAcceleration),
+                    individual_local_identifier: trimmed,
+                    ...(c.rawData ? { accelerations_raw: c.rawData } : {}),
+                  }));
+                }
+                log(`Cache HIT for ${trimmed} (${sensorKey}) - ${results[trimmed].length} records`, "cache");
+                return;
+              }
+
+              let movebankRows: Record<string, string>[] = [];
+              for (const gap of gaps) {
+                const rows = await fetchMovebankEvents(
+                  study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+                  trimmed, sensorTypeId, gap.start, gap.end
+                );
+                movebankRows = movebankRows.concat(rows);
+              }
+
+              if (movebankRows.length > 0) {
+                if (isGps) {
+                  const toCache = movebankRows
+                    .filter((r) => r.location_lat && r.location_long)
+                    .map((r) => ({
+                      studyId: study.id,
+                      individualLocalIdentifier: trimmed,
+                      timestamp: new Date(r.timestamp).getTime(),
+                      latitude: parseFloat(r.location_lat),
+                      longitude: parseFloat(r.location_long),
+                      groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
+                      heading: r.heading ? parseFloat(r.heading) : null,
+                      heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+                    }))
+                    .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
+                  await storage.insertCachedGpsEvents(toCache);
+                } else {
+                  const toCache: { studyId: string; individualLocalIdentifier: string; timestamp: number; xAcceleration: number; yAcceleration: number; zAcceleration: number; rawData: string | null }[] = [];
+                  for (const r of movebankRows) {
+                    const rawAxes = r.accelerations_raw || r.eobs_accelerations_raw || "";
+                    const ts = new Date(r.timestamp).getTime();
+                    if (isNaN(ts)) continue;
+                    if (rawAxes) {
+                      const vals = rawAxes.split(/\s+/).map(Number);
+                      for (let i = 0; i + 2 < vals.length; i += 3) {
+                        if (!isNaN(vals[i]) && !isNaN(vals[i + 1]) && !isNaN(vals[i + 2])) {
+                          toCache.push({
+                            studyId: study.id,
+                            individualLocalIdentifier: trimmed,
+                            timestamp: ts + i * 10,
+                            xAcceleration: vals[i],
+                            yAcceleration: vals[i + 1],
+                            zAcceleration: vals[i + 2],
+                            rawData: i === 0 ? rawAxes : null,
+                          });
+                        }
+                      }
+                    } else {
+                      toCache.push({
+                        studyId: study.id,
+                        individualLocalIdentifier: trimmed,
+                        timestamp: ts,
+                        xAcceleration: parseFloat(r.acceleration_x || "0"),
+                        yAcceleration: parseFloat(r.acceleration_y || "0"),
+                        zAcceleration: parseFloat(r.acceleration_z || "0"),
+                        rawData: null,
+                      });
+                    }
+                  }
+                  await storage.insertCachedAccEvents(toCache);
+                }
+                log(`Cached ${movebankRows.length} new ${sensorKey} records for ${trimmed}`, "cache");
+              }
+
+              for (const gap of gaps) {
+                await storage.recordFetchedRange(study.id, trimmed, sensorKey, gap.start, gap.end);
+              }
+
+              if (isGps) {
+                const allCached = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
+                results[trimmed] = allCached.map((c) => ({
+                  timestamp: new Date(c.timestamp).toISOString(),
+                  location_lat: String(c.latitude),
+                  location_long: String(c.longitude),
+                  ground_speed: c.groundSpeed != null ? String(c.groundSpeed) : "",
+                  heading: c.heading != null ? String(c.heading) : "",
+                  height_above_ellipsoid: c.heightAboveEllipsoid != null ? String(c.heightAboveEllipsoid) : "",
+                  individual_local_identifier: trimmed,
+                }));
+              } else {
+                const allCached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
+                results[trimmed] = allCached.map((c) => ({
+                  timestamp: new Date(c.timestamp).toISOString(),
+                  acceleration_x: String(c.xAcceleration),
+                  acceleration_y: String(c.yAcceleration),
+                  acceleration_z: String(c.zAcceleration),
+                  individual_local_identifier: trimmed,
+                  ...(c.rawData ? { accelerations_raw: c.rawData } : {}),
+                }));
+              }
+            } else {
+              const events = await fetchMovebankEvents(
+                study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+                trimmed, sensorTypeId, tsStart, tsEnd
+              );
+
+              if (forceReload && (isGps || isAcc)) {
+                if (isGps) {
+                  const toCache = events
+                    .filter((r) => r.location_lat && r.location_long)
+                    .map((r) => ({
+                      studyId: study.id,
+                      individualLocalIdentifier: trimmed,
+                      timestamp: new Date(r.timestamp).getTime(),
+                      latitude: parseFloat(r.location_lat),
+                      longitude: parseFloat(r.location_long),
+                      groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
+                      heading: r.heading ? parseFloat(r.heading) : null,
+                      heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+                    }))
+                    .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
+                  await storage.insertCachedGpsEvents(toCache);
+                } else {
+                  const toCache: { studyId: string; individualLocalIdentifier: string; timestamp: number; xAcceleration: number; yAcceleration: number; zAcceleration: number; rawData: string | null }[] = [];
+                  for (const r of events) {
+                    const rawAxes = r.accelerations_raw || r.eobs_accelerations_raw || "";
+                    const ts = new Date(r.timestamp).getTime();
+                    if (isNaN(ts)) continue;
+                    if (rawAxes) {
+                      const vals = rawAxes.split(/\s+/).map(Number);
+                      for (let i = 0; i + 2 < vals.length; i += 3) {
+                        if (!isNaN(vals[i]) && !isNaN(vals[i + 1]) && !isNaN(vals[i + 2])) {
+                          toCache.push({
+                            studyId: study.id,
+                            individualLocalIdentifier: trimmed,
+                            timestamp: ts + i * 10,
+                            xAcceleration: vals[i],
+                            yAcceleration: vals[i + 1],
+                            zAcceleration: vals[i + 2],
+                            rawData: i === 0 ? rawAxes : null,
+                          });
+                        }
+                      }
+                    } else {
+                      toCache.push({
+                        studyId: study.id,
+                        individualLocalIdentifier: trimmed,
+                        timestamp: ts,
+                        xAcceleration: parseFloat(r.acceleration_x || "0"),
+                        yAcceleration: parseFloat(r.acceleration_y || "0"),
+                        zAcceleration: parseFloat(r.acceleration_z || "0"),
+                        rawData: null,
+                      });
+                    }
+                  }
+                  await storage.insertCachedAccEvents(toCache);
+                }
+                log(`Force-cached ${events.length} ${isGps ? "gps" : "acc"} records for ${trimmed}`, "cache");
+                const forceKey = isGps ? "gps" : "acc";
+                await storage.recordFetchedRange(study.id, trimmed, forceKey, tsStart, tsEnd);
+              }
+
+              results[trimmed] = events;
+            }
           } catch (e: any) {
             log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
             results[trimmed] = [];
@@ -777,6 +955,15 @@ export async function registerRoutes(
     }
     await storage.deleteSavedAnalysis(req.params.id);
     return res.json({ ok: true });
+  });
+
+  app.get("/api/cache/stats", requireAuth, async (_req, res) => {
+    try {
+      const stats = await storage.getCacheStats();
+      return res.json(stats);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
   });
 
   return httpServer;

@@ -42,7 +42,26 @@ async function runEventDetection() {
             }))
             .filter((p) => !isNaN(p.lat) && !isNaN(p.lng) && !isNaN(p.timestamp));
 
+          const gpsToCache = gpsRows
+            .filter((r) => r.location_lat && r.location_long)
+            .map((r) => ({
+              studyId: study.id,
+              individualLocalIdentifier: animal.localIdentifier,
+              timestamp: new Date(r.timestamp).getTime(),
+              latitude: parseFloat(r.location_lat),
+              longitude: parseFloat(r.location_long),
+              groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
+              heading: r.heading ? parseFloat(r.heading) : null,
+              heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+            }))
+            .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
+          if (gpsToCache.length > 0) {
+            await storage.insertCachedGpsEvents(gpsToCache);
+            await storage.recordFetchedRange(study.id, animal.localIdentifier, "gps", sixHoursAgo, now);
+          }
+
           const accSamples: { timestamp: number; x: number; y: number; z: number }[] = [];
+          const accToCache: { studyId: string; individualLocalIdentifier: string; timestamp: number; xAcceleration: number; yAcceleration: number; zAcceleration: number; rawData: string | null }[] = [];
           for (const r of accRows) {
             const rawAxes = r.accelerations_raw || r.eobs_accelerations_raw || "";
             const ts = new Date(r.timestamp).getTime();
@@ -52,6 +71,15 @@ async function runEventDetection() {
               for (let i = 0; i + 2 < vals.length; i += 3) {
                 if (!isNaN(vals[i]) && !isNaN(vals[i + 1]) && !isNaN(vals[i + 2])) {
                   accSamples.push({ timestamp: ts + i * 10, x: vals[i], y: vals[i + 1], z: vals[i + 2] });
+                  accToCache.push({
+                    studyId: study.id,
+                    individualLocalIdentifier: animal.localIdentifier,
+                    timestamp: ts + i * 10,
+                    xAcceleration: vals[i],
+                    yAcceleration: vals[i + 1],
+                    zAcceleration: vals[i + 2],
+                    rawData: i === 0 ? rawAxes : null,
+                  });
                 }
               }
             } else {
@@ -61,7 +89,20 @@ async function runEventDetection() {
                 y: parseFloat(r.acceleration_y || "0"),
                 z: parseFloat(r.acceleration_z || "0"),
               });
+              accToCache.push({
+                studyId: study.id,
+                individualLocalIdentifier: animal.localIdentifier,
+                timestamp: ts,
+                xAcceleration: parseFloat(r.acceleration_x || "0"),
+                yAcceleration: parseFloat(r.acceleration_y || "0"),
+                zAcceleration: parseFloat(r.acceleration_z || "0"),
+                rawData: null,
+              });
             }
+          }
+          if (accToCache.length > 0) {
+            await storage.insertCachedAccEvents(accToCache);
+            await storage.recordFetchedRange(study.id, animal.localIdentifier, "acc", sixHoursAgo, now);
           }
 
           if (accSamples.length > 0) {

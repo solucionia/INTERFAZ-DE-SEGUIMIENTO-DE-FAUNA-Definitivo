@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -244,3 +244,45 @@ export const activityLogs = pgTable("activity_logs", {
 export type ActivityLog = typeof activityLogs.$inferSelect;
 export const insertActivityLogSchema = createInsertSchema(activityLogs).omit({ id: true, createdAt: true });
 export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;
+
+export const cachedGpsEvents = pgTable("cached_gps_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  individualLocalIdentifier: text("individual_local_identifier").notNull(),
+  timestamp: bigint("timestamp", { mode: "number" }).notNull(),
+  latitude: doublePrecision("latitude").notNull(),
+  longitude: doublePrecision("longitude").notNull(),
+  groundSpeed: doublePrecision("ground_speed"),
+  heading: doublePrecision("heading"),
+  heightAboveEllipsoid: doublePrecision("height_above_ellipsoid"),
+}, (table) => [
+  uniqueIndex("cached_gps_unique").on(table.studyId, table.individualLocalIdentifier, table.timestamp),
+]);
+
+export type CachedGpsEvent = typeof cachedGpsEvents.$inferSelect;
+
+export const cachedAccEvents = pgTable("cached_acc_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  individualLocalIdentifier: text("individual_local_identifier").notNull(),
+  timestamp: bigint("timestamp", { mode: "number" }).notNull(),
+  xAcceleration: doublePrecision("x_acceleration").notNull(),
+  yAcceleration: doublePrecision("y_acceleration").notNull(),
+  zAcceleration: doublePrecision("z_acceleration").notNull(),
+  rawData: text("raw_data"),
+}, (table) => [
+  uniqueIndex("cached_acc_unique").on(table.studyId, table.individualLocalIdentifier, table.timestamp),
+]);
+
+export type CachedAccEvent = typeof cachedAccEvents.$inferSelect;
+
+export const cachedFetchRanges = pgTable("cached_fetch_ranges", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  individualLocalIdentifier: text("individual_local_identifier").notNull(),
+  sensorType: text("sensor_type").notNull(),
+  rangeStart: bigint("range_start", { mode: "number" }).notNull(),
+  rangeEnd: bigint("range_end", { mode: "number" }).notNull(),
+});
+
+export type CachedFetchRange = typeof cachedFetchRanges.$inferSelect;
