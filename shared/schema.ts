@@ -177,3 +177,24 @@ export const alertLogs = pgTable("alert_logs", {
   email: text("email").notNull(),
   sentAt: timestamp("sent_at").defaultNow(),
 });
+
+export const emissionAlerts = pgTable("emission_alerts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  daysThreshold: integer("days_threshold").notNull().default(3),
+  email: text("email").notNull(),
+  active: boolean("active").notNull().default(true),
+  lastSentAt: timestamp("last_sent_at"),
+});
+
+export const insertEmissionAlertSchema = createInsertSchema(emissionAlerts).omit({ id: true, lastSentAt: true });
+export type InsertEmissionAlert = z.infer<typeof insertEmissionAlertSchema>;
+export type EmissionAlert = typeof emissionAlerts.$inferSelect;
+
+export const cronLogs = pgTable("cron_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskType: text("task_type").notNull(),
+  status: text("status").notNull(),
+  details: text("details"),
+  runAt: timestamp("run_at").defaultNow(),
+});

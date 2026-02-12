@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { log } from "./index";
@@ -344,6 +344,135 @@ export async function registerRoutes(
       log(`Event detection error: ${e.message}`, "events");
       return res.status(500).json({ message: `Error al detectar eventos: ${e.message}` });
     }
+  });
+
+  // Emission monitor - check which active animals have stopped emitting
+  app.get("/api/monitor/emissions", requireAuth, async (req, res) => {
+    try {
+      const user = req.user!;
+      const days = parseInt(req.query.days as string, 10) || 3;
+      const now = Date.now();
+      const cutoffMs = days * 24 * 60 * 60 * 1000;
+
+      const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
+
+      let accessibleStudies = studiesWithAnimals;
+      if (user.role !== "superuser") {
+        const userStudyIds = (await storage.getStudiesForUser(user.id)).map((s) => s.id);
+        accessibleStudies = studiesWithAnimals.filter((s) => userStudyIds.includes(s.study.id));
+      }
+
+      const results: {
+        animalId: string;
+        studyName: string;
+        studyId: string;
+        lastEmission: number | null;
+        daysSilent: number | null;
+        lat: number | null;
+        lng: number | null;
+      }[] = [];
+
+      for (const { study, activeIndividuals } of accessibleStudies) {
+        for (const animal of activeIndividuals) {
+          try {
+            const recentWindow = now - cutoffMs * 2;
+            const gpsEvents = await fetchMovebankEvents(
+              study.movebankStudyId,
+              study.movebankUsername,
+              study.movebankPassword,
+              animal.localIdentifier,
+              653,
+              recentWindow,
+              now
+            );
+
+            let lastTs: number | null = null;
+            let lastLat: number | null = null;
+            let lastLng: number | null = null;
+
+            for (const ev of gpsEvents) {
+              const ts = new Date(ev.timestamp).getTime();
+              if (!isNaN(ts) && (lastTs === null || ts > lastTs)) {
+                lastTs = ts;
+                if (ev.location_lat && ev.location_long) {
+                  const lat = parseFloat(ev.location_lat);
+                  const lng = parseFloat(ev.location_long);
+                  if (!isNaN(lat) && !isNaN(lng)) {
+                    lastLat = lat;
+                    lastLng = lng;
+                  }
+                }
+              }
+            }
+
+            const daysSilent = lastTs ? Math.floor((now - lastTs) / (24 * 60 * 60 * 1000)) : null;
+
+            if (daysSilent === null || daysSilent >= days) {
+              results.push({
+                animalId: animal.localIdentifier,
+                studyName: study.name,
+                studyId: study.id,
+                lastEmission: lastTs,
+                daysSilent,
+                lat: lastLat,
+                lng: lastLng,
+              });
+            }
+          } catch (e: any) {
+            log(`Emission check error for ${animal.localIdentifier}: ${e.message}`, "monitor");
+            results.push({
+              animalId: animal.localIdentifier,
+              studyName: study.name,
+              studyId: study.id,
+              lastEmission: null,
+              daysSilent: null,
+              lat: null,
+              lng: null,
+            });
+          }
+        }
+      }
+
+      results.sort((a, b) => (b.daysSilent ?? 9999) - (a.daysSilent ?? 9999));
+
+      return res.json(results);
+    } catch (e: any) {
+      log(`Emission monitor error: ${e.message}`, "monitor");
+      return res.status(500).json({ message: `Error en monitor de emision: ${e.message}` });
+    }
+  });
+
+  // Emission alerts CRUD
+  app.get("/api/emission-alerts", requireAuth, async (req, res) => {
+    const alerts = await storage.getEmissionAlertsForUser(req.user!.id);
+    return res.json(alerts);
+  });
+
+  app.post("/api/emission-alerts", requireAuth, async (req, res) => {
+    try {
+      const parsed = insertEmissionAlertSchema.safeParse({
+        ...req.body,
+        userId: req.user!.id,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos invalidos" });
+      }
+      const alert = await storage.createEmissionAlert(parsed.data);
+      return res.json(alert);
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/emission-alerts/:id", requireAuth, async (req, res) => {
+    const alert = await storage.updateEmissionAlert(req.params.id, req.body);
+    if (!alert) return res.status(404).json({ message: "Alerta no encontrada" });
+    return res.json(alert);
+  });
+
+  app.delete("/api/emission-alerts/:id", requireAuth, async (req, res) => {
+    await storage.deleteEmissionAlert(req.params.id);
+    return res.json({ ok: true });
   });
 
   app.post("/api/studies/:id/sync", requireStudyAccess, async (req, res) => {

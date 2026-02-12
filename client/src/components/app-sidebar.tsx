@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -90,6 +90,21 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
         )}
+
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/monitor"}>
+                  <Link href="/monitor" data-testid="link-emission-monitor">
+                    <WifiOff className="w-4 h-4" />
+                    <span>Monitor de emision</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
         <SidebarGroup>
           <SidebarGroupLabel>Estudios</SidebarGroupLabel>

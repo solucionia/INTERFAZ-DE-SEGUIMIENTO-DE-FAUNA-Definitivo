@@ -16,6 +16,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `server/movebank.ts` - Movebank API integration (CSV parsing, Basic Auth)
 - `server/eventDetection.ts` - Event detection algorithms (mortality, detachment, fight, feeding, incubation) with configurable thresholds
 - `server/emailService.ts` - Email alert service using Nodemailer with Google Maps links
+- `server/scheduler.ts` - Cron scheduler for automated event detection and emission checks (node-cron)
 - `server/routes.ts` - All API endpoints
 - `server/db.ts` - PostgreSQL pool + Drizzle instance
 - `client/src/lib/auth.tsx` - AuthProvider context with login/register/logout
@@ -27,6 +28,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-studies.tsx` - CRUD for studies with species profile assignment (superuser only)
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
+- `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
 
 ## Key Features
 1. Two roles: superuser (first registered user) and normal user
@@ -47,6 +49,10 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 16. Event overlay bands on accelerometer chart with color-coded event types
 17. Event list panel with click-to-navigate (zooms chart + map to event location)
 18. Google Maps links in event cards for location viewing
+19. Emission monitor: detect animals that stopped transmitting with configurable day threshold
+20. Emission alert system: users configure email alerts for non-transmitting animals with daily deduplication
+21. Automated cron scheduler (node-cron): runs event detection and emission checks every 6 hours
+22. Active/inactive animal indicators on study detail page (green=active, grayed=inactive)
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -69,6 +75,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - GET/POST /api/species-profiles, GET/PATCH/DELETE /api/species-profiles/:id (superuser only)
 - GET /api/studies/:id/detected-events?timestamp_start=...&timestamp_end=...
 - POST /api/studies/:id/detect-events (triggers analysis)
+- GET /api/monitor/emissions?days=N (check non-emitting animals)
+- GET/POST /api/emission-alerts, PATCH/DELETE /api/emission-alerts/:id
 
 ## Environment Variables
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM - Email alert configuration

@@ -16,6 +16,7 @@ import StudyVisualization from "@/pages/study-visualization";
 import AdminStudies from "@/pages/admin-studies";
 import AdminUsers from "@/pages/admin-users";
 import AdminSpeciesProfiles from "@/pages/admin-species-profiles";
+import EmissionMonitor from "@/pages/emission-monitor";
 import { Loader2 } from "lucide-react";
 
 function AuthenticatedRouter() {
@@ -27,6 +28,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/studies" component={AdminStudies} />
       <Route path="/admin/species-profiles" component={AdminSpeciesProfiles} />
       <Route path="/admin/users" component={AdminUsers} />
+      <Route path="/monitor" component={EmissionMonitor} />
       <Route component={NotFound} />
     </Switch>
   );

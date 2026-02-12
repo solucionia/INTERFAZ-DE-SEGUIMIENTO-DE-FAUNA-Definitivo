@@ -59,8 +59,11 @@ app.use((req, res, next) => {
   next();
 });
 
+import { startScheduler } from "./scheduler";
+
 (async () => {
   await registerRoutes(httpServer, app);
+  startScheduler();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

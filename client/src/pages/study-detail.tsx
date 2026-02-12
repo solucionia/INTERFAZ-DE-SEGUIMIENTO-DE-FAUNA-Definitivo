@@ -5,9 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Table,
@@ -18,11 +25,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+type FilterMode = "all" | "active" | "inactive";
+
 export default function StudyDetail() {
   const [, params] = useRoute("/study/:id");
   const studyId = params?.id;
   const { toast } = useToast();
   const [syncing, setSyncing] = useState(false);
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -39,9 +49,25 @@ export default function StudyDetail() {
     enabled: !!studyId,
   });
 
-  const activeDeploymentIndividualIds = new Set(
-    deployments?.filter((d) => !d.deployOff).map((d) => d.individualId) || []
+  const activeDeploymentIndividualIds = useMemo(() =>
+    new Set(deployments?.filter((d) => !d.deployOff).map((d) => d.individualId) || []),
+    [deployments]
   );
+
+  const filteredIndividuals = useMemo(() => {
+    if (!individuals) return [];
+    switch (filterMode) {
+      case "active":
+        return individuals.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId));
+      case "inactive":
+        return individuals.filter((ind) => !activeDeploymentIndividualIds.has(ind.movebankId));
+      default:
+        return individuals;
+    }
+  }, [individuals, filterMode, activeDeploymentIndividualIds]);
+
+  const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId)).length || 0;
+  const inactiveCount = (individuals?.length || 0) - activeCount;
 
   const handleSync = async () => {
     setSyncing(true);
@@ -49,7 +75,7 @@ export default function StudyDetail() {
       await apiRequest("POST", `/api/studies/${studyId}/sync`);
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
-      toast({ title: "Sincronización completada", description: "Los datos se actualizaron desde Movebank" });
+      toast({ title: "Sincronizacion completada", description: "Los datos se actualizaron desde Movebank" });
     } catch (e: any) {
       toast({ title: "Error al sincronizar", description: e.message, variant: "destructive" });
     } finally {
@@ -140,15 +166,11 @@ export default function StudyDetail() {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Con deployment activo</p>
                 <p className="text-2xl font-bold text-emerald-500" data-testid="text-active-deployments">
-                  {individualsLoading ? (
-                    <Skeleton className="h-8 w-12 rounded" />
-                  ) : (
-                    individuals?.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId)).length || 0
-                  )}
+                  {individualsLoading ? <Skeleton className="h-8 w-12 rounded" /> : activeCount}
                 </p>
               </div>
               <div className="p-2 rounded-md bg-emerald-500/10">
-                <Radio className="w-5 h-5 text-emerald-500" />
+                <RadioTower className="w-5 h-5 text-emerald-500" />
               </div>
             </div>
           </CardContent>
@@ -159,15 +181,11 @@ export default function StudyDetail() {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Sin deployment</p>
                 <p className="text-2xl font-bold text-muted-foreground" data-testid="text-inactive-deployments">
-                  {individualsLoading ? (
-                    <Skeleton className="h-8 w-12 rounded" />
-                  ) : (
-                    individuals?.filter((ind) => !activeDeploymentIndividualIds.has(ind.movebankId)).length || 0
-                  )}
+                  {individualsLoading ? <Skeleton className="h-8 w-12 rounded" /> : inactiveCount}
                 </p>
               </div>
               <div className="p-2 rounded-md bg-muted">
-                <Radio className="w-5 h-5 text-muted-foreground" />
+                <WifiOff className="w-5 h-5 text-muted-foreground" />
               </div>
             </div>
           </CardContent>
@@ -176,13 +194,26 @@ export default function StudyDetail() {
 
       <Card>
         <CardContent className="p-0">
+          <div className="flex items-center justify-between gap-3 p-4 pb-0 flex-wrap">
+            <h3 className="text-sm font-semibold">Individuos</h3>
+            <Select value={filterMode} onValueChange={(v) => setFilterMode(v as FilterMode)}>
+              <SelectTrigger className="w-44" data-testid="select-filter-animals">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos ({individuals?.length || 0})</SelectItem>
+                <SelectItem value="active">Solo activos ({activeCount})</SelectItem>
+                <SelectItem value="inactive">Solo inactivos ({inactiveCount})</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {individualsLoading ? (
             <div className="p-5 space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-10 w-full rounded" />
               ))}
             </div>
-          ) : individuals && individuals.length > 0 ? (
+          ) : filteredIndividuals.length > 0 ? (
             <div className="overflow-auto">
               <Table>
                 <TableHeader>
@@ -196,12 +227,23 @@ export default function StudyDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {individuals.map((ind) => {
+                  {filteredIndividuals.map((ind) => {
                     const hasActive = activeDeploymentIndividualIds.has(ind.movebankId);
                     return (
-                      <TableRow key={ind.id} data-testid={`row-individual-${ind.movebankId}`}>
+                      <TableRow
+                        key={ind.id}
+                        className={hasActive ? "" : "opacity-50"}
+                        data-testid={`row-individual-${ind.movebankId}`}
+                      >
                         <TableCell className="font-medium">
-                          {ind.localIdentifier || `ID-${ind.movebankId}`}
+                          <div className="flex items-center gap-2">
+                            {hasActive ? (
+                              <RadioTower className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            ) : (
+                              <WifiOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            )}
+                            {ind.localIdentifier || `ID-${ind.movebankId}`}
+                          </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {ind.nickName || "—"}
@@ -242,11 +284,15 @@ export default function StudyDetail() {
             <div className="py-12 text-center">
               <PawPrint className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground mb-2">
-                No hay individuos cargados
+                {individuals && individuals.length > 0
+                  ? "No hay animales que coincidan con el filtro"
+                  : "No hay individuos cargados"}
               </p>
-              <p className="text-xs text-muted-foreground">
-                Sincroniza con Movebank para obtener los datos
-              </p>
+              {(!individuals || individuals.length === 0) && (
+                <p className="text-xs text-muted-foreground">
+                  Sincroniza con Movebank para obtener los datos
+                </p>
+              )}
             </div>
           )}
         </CardContent>

@@ -2,11 +2,12 @@ import { eq, and, desc, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   users, studies, userStudies, individuals, deployments,
-  speciesProfiles, detectedEvents, alertLogs,
+  speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
   type SpeciesProfile, type InsertSpeciesProfile,
   type DetectedEvent, type InsertDetectedEvent,
+  type EmissionAlert, type InsertEmissionAlert,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -44,6 +45,17 @@ export interface IStorage {
 
   getAlertLog(eventId: string, email: string): Promise<boolean>;
   createAlertLog(eventId: string, email: string): Promise<void>;
+
+  getEmissionAlertsForUser(userId: string): Promise<EmissionAlert[]>;
+  getAllActiveEmissionAlerts(): Promise<EmissionAlert[]>;
+  createEmissionAlert(alert: InsertEmissionAlert): Promise<EmissionAlert>;
+  updateEmissionAlert(id: string, data: Partial<InsertEmissionAlert>): Promise<EmissionAlert | undefined>;
+  deleteEmissionAlert(id: string): Promise<void>;
+  updateEmissionAlertLastSent(id: string): Promise<void>;
+
+  getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]>;
+
+  createCronLog(taskType: string, status: string, details?: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -199,6 +211,58 @@ export class DatabaseStorage implements IStorage {
 
   async createAlertLog(eventId: string, email: string): Promise<void> {
     await db.insert(alertLogs).values({ detectedEventId: eventId, email });
+  }
+
+  async getEmissionAlertsForUser(userId: string): Promise<EmissionAlert[]> {
+    return db.select().from(emissionAlerts).where(eq(emissionAlerts.userId, userId));
+  }
+
+  async getAllActiveEmissionAlerts(): Promise<EmissionAlert[]> {
+    return db.select().from(emissionAlerts).where(eq(emissionAlerts.active, true));
+  }
+
+  async createEmissionAlert(alert: InsertEmissionAlert): Promise<EmissionAlert> {
+    const [created] = await db.insert(emissionAlerts).values(alert).returning();
+    return created;
+  }
+
+  async updateEmissionAlert(id: string, data: Partial<InsertEmissionAlert>): Promise<EmissionAlert | undefined> {
+    const [updated] = await db.update(emissionAlerts).set(data).where(eq(emissionAlerts.id, id)).returning();
+    return updated;
+  }
+
+  async deleteEmissionAlert(id: string): Promise<void> {
+    await db.delete(emissionAlerts).where(eq(emissionAlerts.id, id));
+  }
+
+  async updateEmissionAlertLastSent(id: string): Promise<void> {
+    await db.update(emissionAlerts).set({ lastSentAt: new Date() }).where(eq(emissionAlerts.id, id));
+  }
+
+  async getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]> {
+    const allStudies = await db.select().from(studies).where(eq(studies.active, true));
+    const results: { study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[] = [];
+
+    for (const study of allStudies) {
+      const deps = await db.select().from(deployments).where(eq(deployments.studyId, study.id));
+      const activeDeps = deps.filter((d) => !d.deployOff);
+      const activeIndividualIds = new Set(activeDeps.map((d) => d.individualId).filter(Boolean));
+
+      const inds = await db.select().from(individuals).where(eq(individuals.studyId, study.id));
+      const activeInds = inds
+        .filter((ind) => activeIndividualIds.has(ind.movebankId) && ind.localIdentifier)
+        .map((ind) => ({ localIdentifier: ind.localIdentifier!, movebankId: ind.movebankId }));
+
+      if (activeInds.length > 0) {
+        results.push({ study, activeIndividuals: activeInds });
+      }
+    }
+
+    return results;
+  }
+
+  async createCronLog(taskType: string, status: string, details?: string): Promise<void> {
+    await db.insert(cronLogs).values({ taskType, status, details });
   }
 }
 

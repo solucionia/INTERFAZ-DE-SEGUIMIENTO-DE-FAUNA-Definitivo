@@ -46,6 +46,83 @@ function severityColor(severity: string): string {
   }
 }
 
+interface EmissionAnimal {
+  animalId: string;
+  studyName: string;
+  lastEmission: number | null;
+  daysSilent: number | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+export async function sendEmissionSummaryEmail(
+  toEmail: string,
+  animals: EmissionAnimal[],
+  daysThreshold: number
+): Promise<boolean> {
+  const transport = getTransporter();
+  if (!transport) {
+    log("SMTP no configurado - resumen de emision no enviado", "email");
+    return false;
+  }
+
+  if (animals.length === 0) return false;
+
+  const rows = animals.map((a) => {
+    const lastDate = a.lastEmission
+      ? new Date(a.lastEmission).toLocaleString("es-ES", { timeZone: "UTC" })
+      : "Sin datos";
+    const daysStr = a.daysSilent !== null ? `${a.daysSilent} dias` : "Desconocido";
+    const mapsLink = a.lat && a.lng
+      ? `<a href="https://www.google.com/maps?q=${a.lat},${a.lng}" style="color:#3b82f6;text-decoration:underline" target="_blank">Ver mapa</a>`
+      : "—";
+    return `<tr style="border-bottom:1px solid #e5e7eb">
+      <td style="padding:6px 8px">${a.animalId}</td>
+      <td style="padding:6px 8px">${a.studyName}</td>
+      <td style="padding:6px 8px">${lastDate}</td>
+      <td style="padding:6px 8px;font-weight:bold;color:#ef4444">${daysStr}</td>
+      <td style="padding:6px 8px">${mapsLink}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto">
+      <div style="background:#f97316;color:white;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">Alerta: Animales sin emision (>${daysThreshold} dias)</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 8px 8px">
+        <p style="margin:0 0 16px;color:#374151">${animals.length} animal(es) no han emitido datos en mas de ${daysThreshold} dias:</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px">
+          <thead>
+            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
+              <th style="padding:8px;text-align:left">Animal</th>
+              <th style="padding:8px;text-align:left">Estudio</th>
+              <th style="padding:8px;text-align:left">Ultima emision</th>
+              <th style="padding:8px;text-align:left">Dias sin emitir</th>
+              <th style="padding:8px;text-align:left">Ubicacion</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="margin:0;font-size:12px;color:#9ca3af">WildTrack — Sistema de Seguimiento de Fauna Silvestre</p>
+      </div>
+    </div>`;
+
+  try {
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: `[WildTrack] ${animals.length} animal(es) sin emision (>${daysThreshold} dias)`,
+      html,
+    });
+    log(`Email de resumen de emision enviado a ${toEmail}`, "email");
+    return true;
+  } catch (e: any) {
+    log(`Error enviando resumen de emision: ${e.message}`, "email");
+    return false;
+  }
+}
+
 export async function sendEventAlert(event: DetectedEvent, toEmail: string, studyName: string): Promise<boolean> {
   const transport = getTransporter();
   if (!transport) {
