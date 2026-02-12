@@ -198,3 +198,31 @@ export const cronLogs = pgTable("cron_logs", {
   details: text("details"),
   runAt: timestamp("run_at").defaultNow(),
 });
+
+export const ANALYSIS_TYPES = ["mcp", "kernel", "distance", "speed"] as const;
+export type AnalysisType = typeof ANALYSIS_TYPES[number];
+
+export const ANALYSIS_LABELS: Record<AnalysisType, string> = {
+  mcp: "Home Range (MCP)",
+  kernel: "Home Range (Kernel)",
+  distance: "Distancia recorrida",
+  speed: "Velocidad de movimiento",
+};
+
+export const savedAnalyses = pgTable("saved_analyses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  analysisType: text("analysis_type").notNull().$type<AnalysisType>(),
+  individuals: text("individuals").array().notNull(),
+  timestampStart: bigint("timestamp_start", { mode: "number" }).notNull(),
+  timestampEnd: bigint("timestamp_end", { mode: "number" }).notNull(),
+  params: jsonb("params").$type<Record<string, any>>(),
+  resultData: jsonb("result_data").$type<Record<string, any>>(),
+  resultGeojson: jsonb("result_geojson").$type<any>(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSavedAnalysisSchema = createInsertSchema(savedAnalyses).omit({ id: true, createdAt: true });
+export type InsertSavedAnalysis = z.infer<typeof insertSavedAnalysisSchema>;
+export type SavedAnalysis = typeof savedAnalyses.$inferSelect;

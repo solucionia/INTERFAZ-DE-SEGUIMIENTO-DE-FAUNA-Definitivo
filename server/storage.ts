@@ -2,12 +2,13 @@ import { eq, and, desc, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   users, studies, userStudies, individuals, deployments,
-  speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs,
+  speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
   type SpeciesProfile, type InsertSpeciesProfile,
   type DetectedEvent, type InsertDetectedEvent,
   type EmissionAlert, type InsertEmissionAlert,
+  type SavedAnalysis, type InsertSavedAnalysis,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -56,6 +57,11 @@ export interface IStorage {
   getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]>;
 
   createCronLog(taskType: string, status: string, details?: string): Promise<void>;
+
+  getSavedAnalyses(studyId: string, userId: string): Promise<SavedAnalysis[]>;
+  getSavedAnalysis(id: string): Promise<SavedAnalysis | undefined>;
+  createSavedAnalysis(analysis: InsertSavedAnalysis): Promise<SavedAnalysis>;
+  deleteSavedAnalysis(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -263,6 +269,26 @@ export class DatabaseStorage implements IStorage {
 
   async createCronLog(taskType: string, status: string, details?: string): Promise<void> {
     await db.insert(cronLogs).values({ taskType, status, details });
+  }
+
+  async getSavedAnalyses(studyId: string, userId: string): Promise<SavedAnalysis[]> {
+    return db.select().from(savedAnalyses)
+      .where(and(eq(savedAnalyses.studyId, studyId), eq(savedAnalyses.userId, userId)))
+      .orderBy(desc(savedAnalyses.createdAt));
+  }
+
+  async getSavedAnalysis(id: string): Promise<SavedAnalysis | undefined> {
+    const [analysis] = await db.select().from(savedAnalyses).where(eq(savedAnalyses.id, id));
+    return analysis;
+  }
+
+  async createSavedAnalysis(analysis: InsertSavedAnalysis): Promise<SavedAnalysis> {
+    const [created] = await db.insert(savedAnalyses).values(analysis as any).returning();
+    return created;
+  }
+
+  async deleteSavedAnalysis(id: string): Promise<void> {
+    await db.delete(savedAnalyses).where(eq(savedAnalyses.id, id));
   }
 }
 

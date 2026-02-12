@@ -1,0 +1,72 @@
+Añade la capacidad de ejecutar análisis estadísticos geoespaciales usando R con el paquete adehabitat.
+
+1. **Sección "Análisis Geoespacial":**
+   - El usuario selecciona:
+     - Uno o varios animales
+     - Rango de fechas
+     - Tipo de análisis a ejecutar
+
+2. **Tipos de análisis disponibles (scripts R predefinidos):**
+
+   a) **Home Range (MCP - Minimum Convex Polygon):**
+      - Calcula el área de uso del animal
+      - Muestra el polígono sobre el mapa
+      - Reporta el área en km²
+
+   b) **Home Range (Kernel Density Estimation):**
+      - Calcula el home range con kernel al 50% y 95%
+      - Muestra las isopletas sobre el mapa con diferentes colores
+      - Reporta áreas para cada nivel
+
+   c) **Distancia recorrida:**
+      - Calcula distancia total y diaria
+      - Genera gráfica de distancia por día
+
+   d) **Velocidad de movimiento:**
+      - Calcula velocidades entre puntos consecutivos
+      - Genera gráfica de velocidad en el tiempo
+
+3. **Implementación técnica:**
+   - Instalar R en el entorno de Replit (usar Nix para instalar r-base y los paquetes adehabitatHR, adehabitatLT, sp, rgdal)
+   - Crear scripts R template en el directorio /r-scripts/
+   - Desde Node.js, ejecutar los scripts R usando child_process.exec() pasando los datos como CSV temporal
+   - El script R devuelve los resultados como JSON o como archivos GeoJSON
+   - El frontend recibe los resultados y los muestra en la gráfica y/o el mapa
+
+4. **Visualización de resultados:**
+   - Los polígonos de home range se dibujan sobre el mapa de Leaflet
+   - Las gráficas estadísticas se muestran con Recharts
+   - Opción de exportar los resultados como PDF o CSV
+   - Guardar los análisis ejecutados con sus parámetros para poder repetirlos
+
+5. **Script R base de ejemplo (incluir este template):**
+```r
+library(adehabitatHR)
+library(adehabitatLT)
+library(sp)
+library(jsonlite)
+
+# Leer datos desde CSV temporal
+data <- read.csv("/tmp/tracking_data.csv")
+coordinates(data) <- ~longitude+latitude
+proj4string(data) <- CRS("+proj=longlat +datum=WGS84")
+
+# MCP
+cp <- mcp(data[,"individual_id"], percent=95)
+mcp_area <- mcp.area(data[,"individual_id"], percent=seq(50,100,by=5))
+
+# Kernel
+kud <- kernelUD(data[,"individual_id"], h="href")
+homerange <- getverticeshr(kud, percent=95)
+
+# Exportar como GeoJSON
+writeOGR(homerange, "/tmp/results.geojson", layer="homerange", driver="GeoJSON")
+
+# Exportar áreas como JSON
+areas <- data.frame(
+  id = names(kud),
+  area_95 = kernel.area(kud, percent=95),
+  area_50 = kernel.area(kud, percent=50)
+)
+write(toJSON(areas), "/tmp/areas.json")
+```
