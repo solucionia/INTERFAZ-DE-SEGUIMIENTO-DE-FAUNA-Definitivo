@@ -1,6 +1,29 @@
 import { log } from "./index";
 
 const MOVEBANK_BASE = "https://www.movebank.org/movebank/service/direct-read";
+const MOVEBANK_TIMEOUT_MS = 30000;
+
+export class MovebankError extends Error {
+  public statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "MovebankError";
+    this.statusCode = statusCode;
+  }
+}
+
+function handleMovebankResponse(res: Response, context: string): void {
+  if (res.ok) return;
+
+  const status = res.status;
+  if (status === 401) {
+    throw new MovebankError("Credenciales de Movebank inválidas para este estudio", 401);
+  } else if (status === 403) {
+    throw new MovebankError("No tiene permisos para acceder a este estudio en Movebank", 403);
+  } else {
+    throw new MovebankError(`Error al conectar con Movebank: ${status} ${res.statusText}`, status);
+  }
+}
 
 function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
@@ -51,6 +74,22 @@ function parseCSV(text: string): Record<string, string>[] {
   return rows;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MOVEBANK_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } catch (e: any) {
+    if (e.name === "AbortError") {
+      throw new MovebankError("Movebank no respondió a tiempo. Intente de nuevo", 408);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function fetchMovebankIndividuals(
   studyId: number,
   username: string,
@@ -60,20 +99,16 @@ export async function fetchMovebankIndividuals(
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      log(`Movebank individuals error ${res.status}: ${text}`, "movebank");
-      throw new Error(`Movebank API error: ${res.status}`);
-    }
+    handleMovebankResponse(res, `individuals for study ${studyId}`);
 
     const text = await res.text();
     return parseCSV(text);
   } catch (e: any) {
-    log(`Movebank fetch error: ${e.message}`, "movebank");
+    log(`Movebank fetch error (individuals, study ${studyId}): ${e.message}`, "movebank");
     throw e;
   }
 }
@@ -99,20 +134,16 @@ export async function fetchMovebankEvents(
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      log(`Movebank events error ${res.status}: ${text}`, "movebank");
-      throw new Error(`Movebank API error: ${res.status}`);
-    }
+    handleMovebankResponse(res, `events for ${individualLocalIdentifier}`);
 
     const text = await res.text();
     return parseCSV(text);
   } catch (e: any) {
-    log(`Movebank events fetch error: ${e.message}`, "movebank");
+    log(`Movebank fetch error (events, ${individualLocalIdentifier}): ${e.message}`, "movebank");
     throw e;
   }
 }
@@ -126,20 +157,16 @@ export async function fetchMovebankDeployments(
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      log(`Movebank deployments error ${res.status}: ${text}`, "movebank");
-      throw new Error(`Movebank API error: ${res.status}`);
-    }
+    handleMovebankResponse(res, `deployments for study ${studyId}`);
 
     const text = await res.text();
     return parseCSV(text);
   } catch (e: any) {
-    log(`Movebank fetch error: ${e.message}`, "movebank");
+    log(`Movebank fetch error (deployments, study ${studyId}): ${e.message}`, "movebank");
     throw e;
   }
 }

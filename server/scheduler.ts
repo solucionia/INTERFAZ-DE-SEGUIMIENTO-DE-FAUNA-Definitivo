@@ -10,6 +10,7 @@ import { log } from "./index";
 const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
 
 async function runEventDetection() {
+  const startTime = Date.now();
   log("Cron: Iniciando deteccion automatica de eventos...", "cron");
 
   try {
@@ -18,6 +19,9 @@ async function runEventDetection() {
     let totalEmails = 0;
 
     for (const { study, activeIndividuals } of studiesWithAnimals) {
+      const studyStartTime = Date.now();
+      log(`Cron: Iniciando detección de eventos para estudio: ${study.name}`, "cron");
+
       let thresholds: EventThresholds = DEFAULT_THRESHOLDS;
       if (study.speciesProfileId) {
         const profile = await storage.getSpeciesProfile(study.speciesProfileId);
@@ -26,8 +30,17 @@ async function runEventDetection() {
 
       const now = Date.now();
       const sixHoursAgo = now - 6 * 60 * 60 * 1000;
-      const decryptedUsername = decrypt(study.movebankUsername);
-      const decryptedPassword = decrypt(study.movebankPassword);
+      let studyEvents = 0;
+
+      let decryptedUsername: string;
+      let decryptedPassword: string;
+      try {
+        decryptedUsername = decrypt(study.movebankUsername);
+        decryptedPassword = decrypt(study.movebankPassword);
+      } catch (e: any) {
+        log(`Cron: Error descifrando credenciales para estudio "${study.name}": ${e.message}`, "cron");
+        continue;
+      }
 
       for (const animal of activeIndividuals) {
         try {
@@ -114,6 +127,7 @@ async function runEventDetection() {
             for (const event of detected) {
               const saved = await storage.createDetectedEvent(event);
               totalEvents++;
+              studyEvents++;
 
               if (study.alertEmail && (event.severity === "critical" || event.severity === "high")) {
                 const alreadySent = await storage.getAlertLog(saved.id, study.alertEmail);
@@ -128,25 +142,34 @@ async function runEventDetection() {
             }
           }
         } catch (e: any) {
-          log(`Cron: Error procesando ${animal.localIdentifier}: ${e.message}`, "cron");
+          log(`Cron: Error en Movebank para estudio "${study.name}", animal "${animal.localIdentifier}": ${e.message}`, "cron");
         }
       }
+
+      const studyDuration = ((Date.now() - studyStartTime) / 1000).toFixed(1);
+      log(`Cron: Detección completada para ${study.name}: ${studyEvents} eventos encontrados (${studyDuration}s)`, "cron");
     }
 
-    await storage.createCronLog("event_detection", "success", `${totalEvents} eventos, ${totalEmails} emails`);
-    log(`Cron: Deteccion completada - ${totalEvents} eventos, ${totalEmails} emails`, "cron");
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("event_detection", "success", `${totalEvents} eventos, ${totalEmails} emails, duración: ${totalDuration}s`);
+    log(`Cron: Deteccion completada - ${totalEvents} eventos, ${totalEmails} emails (${totalDuration}s)`, "cron");
   } catch (e: any) {
-    await storage.createCronLog("event_detection", "error", e.message);
-    log(`Cron: Error en deteccion: ${e.message}`, "cron");
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("event_detection", "error", `${e.message} (duración: ${totalDuration}s)`);
+    log(`Cron: Error en deteccion: ${e.message} (${totalDuration}s)`, "cron");
   }
 }
 
 async function runEmissionCheck() {
+  const startTime = Date.now();
   log("Cron: Verificando alertas de emision...", "cron");
 
   try {
     const alerts = await storage.getAllActiveEmissionAlerts();
-    if (alerts.length === 0) return;
+    if (alerts.length === 0) {
+      log("Cron: No hay alertas de emisión activas", "cron");
+      return;
+    }
 
     const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
     const now = Date.now();
@@ -177,8 +200,16 @@ async function runEmissionCheck() {
         : studiesWithAnimals.filter((s) => userStudies.some((us) => us.id === s.study.id));
 
       for (const { study, activeIndividuals } of accessibleStudies) {
-        const emDecryptedUsername = decrypt(study.movebankUsername);
-        const emDecryptedPassword = decrypt(study.movebankPassword);
+        let emDecryptedUsername: string;
+        let emDecryptedPassword: string;
+        try {
+          emDecryptedUsername = decrypt(study.movebankUsername);
+          emDecryptedPassword = decrypt(study.movebankPassword);
+        } catch (e: any) {
+          log(`Cron: Error descifrando credenciales para estudio "${study.name}" en emisión: ${e.message}`, "cron");
+          continue;
+        }
+
         for (const animal of activeIndividuals) {
           try {
             const recentWindow = now - cutoffMs * 2;
@@ -224,7 +255,7 @@ async function runEmissionCheck() {
               });
             }
           } catch (e: any) {
-            log(`Cron: Error comprobando emision de ${animal.localIdentifier}: ${e.message}`, "cron");
+            log(`Cron: Error comprobando emisión de "${animal.localIdentifier}" en estudio "${study.name}": ${e.message}`, "cron");
           }
         }
       }
@@ -238,11 +269,13 @@ async function runEmissionCheck() {
       }
     }
 
-    await storage.createCronLog("emission_check", "success", `${totalAlertsSent} alertas enviadas`);
-    log(`Cron: Verificacion de emision completada - ${totalAlertsSent} alertas`, "cron");
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("emission_check", "success", `${totalAlertsSent} alertas enviadas (${totalDuration}s)`);
+    log(`Cron: Verificacion de emision completada - ${totalAlertsSent} alertas (${totalDuration}s)`, "cron");
   } catch (e: any) {
-    await storage.createCronLog("emission_check", "error", e.message);
-    log(`Cron: Error en verificacion de emision: ${e.message}`, "cron");
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("emission_check", "error", `${e.message} (duración: ${totalDuration}s)`);
+    log(`Cron: Error en verificacion de emision: ${e.message} (${totalDuration}s)`, "cron");
   }
 }
 

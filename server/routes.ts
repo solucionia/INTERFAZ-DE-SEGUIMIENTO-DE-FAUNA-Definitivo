@@ -4,7 +4,7 @@ import passport from "passport";
 import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
-import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents } from "./movebank";
+import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, MovebankError } from "./movebank";
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
@@ -353,6 +353,9 @@ export async function registerRoutes(
       }
 
       const sensorTypeId = parseInt(sensor_type as string, 10);
+      if (sensorTypeId !== 653 && sensorTypeId !== 2365683) {
+        return res.status(400).json({ message: "sensor_type_id inválido. Use 653 para GPS o 2365683 para acelerómetro." });
+      }
       const tsStart = parseInt(timestamp_start as string, 10);
       const tsEnd = parseInt(timestamp_end as string, 10);
       const ids = (individualIds as string).split(",");
@@ -561,6 +564,9 @@ export async function registerRoutes(
       return res.json(results);
     } catch (e: any) {
       log(`Events error: ${e.message}`, "movebank");
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
       return res.status(500).json({ message: `Error al obtener eventos: ${e.message}` });
     }
   });
@@ -701,6 +707,9 @@ export async function registerRoutes(
       return res.json({ totalEvents, emailsSent });
     } catch (e: any) {
       log(`Event detection error: ${e.message}`, "events");
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
       return res.status(500).json({ message: `Error al detectar eventos: ${e.message}` });
     }
   });
@@ -799,6 +808,9 @@ export async function registerRoutes(
       return res.json(results);
     } catch (e: any) {
       log(`Emission monitor error: ${e.message}`, "monitor");
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
       return res.status(500).json({ message: `Error en monitor de emision: ${e.message}` });
     }
   });
@@ -882,6 +894,9 @@ export async function registerRoutes(
       });
     } catch (e: any) {
       log(`Sync error: ${e.message}`, "movebank");
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
       return res.status(500).json({ message: `Error al sincronizar: ${e.message}` });
     }
   });
