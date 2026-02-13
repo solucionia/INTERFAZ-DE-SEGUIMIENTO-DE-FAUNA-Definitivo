@@ -12,8 +12,24 @@ export class MovebankError extends Error {
   }
 }
 
-function handleMovebankResponse(res: Response, context: string): void {
-  if (res.ok) return;
+async function handleMovebankResponse(res: Response, context: string): Promise<string> {
+  log(`Movebank HTTP ${res.status} ${res.statusText} para: ${context}`, "movebank");
+
+  const body = await res.text();
+
+  if (res.ok) {
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      log(`Movebank devolvió HTML en vez de CSV (posible página de términos de licencia): ${body.substring(0, 500)}`, "movebank");
+      if (body.includes("License Terms") || body.includes("license-md5")) {
+        throw new MovebankError("Movebank requiere aceptar los términos de licencia del estudio. Contacte al administrador.", 403);
+      }
+      throw new MovebankError(`Movebank devolvió HTML inesperado en vez de datos CSV`, 502);
+    }
+    return body;
+  }
+
+  log(`Movebank error body: ${body.substring(0, 500)}`, "movebank");
 
   const status = res.status;
   if (status === 401) {
@@ -105,9 +121,7 @@ export async function fetchMovebankIndividuals(
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    handleMovebankResponse(res, `individuals for study ${studyId}`);
-
-    const text = await res.text();
+    const text = await handleMovebankResponse(res, `individuals for study ${studyId}`);
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (individuals, study ${studyId}): ${e.message}`, "movebank");
@@ -140,9 +154,7 @@ export async function fetchMovebankEvents(
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    handleMovebankResponse(res, `events for ${individualLocalIdentifier}`);
-
-    const text = await res.text();
+    const text = await handleMovebankResponse(res, `events for ${individualLocalIdentifier}`);
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (events, ${individualLocalIdentifier}): ${e.message}`, "movebank");
@@ -163,9 +175,7 @@ export async function fetchMovebankDeployments(
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    handleMovebankResponse(res, `deployments for study ${studyId}`);
-
-    const text = await res.text();
+    const text = await handleMovebankResponse(res, `deployments for study ${studyId}`);
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (deployments, study ${studyId}): ${e.message}`, "movebank");

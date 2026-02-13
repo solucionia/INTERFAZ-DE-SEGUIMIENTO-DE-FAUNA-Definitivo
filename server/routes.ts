@@ -856,12 +856,11 @@ export async function registerRoutes(
 
       log(`Conectando con Movebank, study_id: ${study.movebankStudyId}, estudio: ${study.name}`, "movebank");
 
-      const [rawIndividuals, rawDeployments] = await Promise.all([
-        fetchMovebankIndividuals(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
-        fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
-      ]);
+      const rawIndividuals = await fetchMovebankIndividuals(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
+      log(`Movebank respondió individuos: ${rawIndividuals.length}`, "movebank");
 
-      log(`Movebank respondió: individuos: ${rawIndividuals.length}, despliegues: ${rawDeployments.length}`, "movebank");
+      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
+      log(`Movebank respondió despliegues: ${rawDeployments.length}`, "movebank");
 
       const individualsData = rawIndividuals.map((r) => ({
         studyId: study.id,
