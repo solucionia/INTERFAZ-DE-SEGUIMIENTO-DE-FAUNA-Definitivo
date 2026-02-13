@@ -71,6 +71,7 @@ import "leaflet/dist/leaflet.css";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
+import { AnimalSearch } from "@/components/animal-search";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -777,8 +778,6 @@ export default function StudyVisualization() {
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             <Label className="text-xs text-muted-foreground">Animales</Label>
-            <Button variant="ghost" size="sm" onClick={selectAll} className="h-6 text-xs px-2" data-testid="button-select-all">Todos</Button>
-            <Button variant="ghost" size="sm" onClick={deselectAll} className="h-6 text-xs px-2" data-testid="button-deselect-all">Ninguno</Button>
             {dataLoaded && selectedAnimals.length > 1 && (
               <>
                 <span className="text-xs text-muted-foreground mx-1">|</span>
@@ -792,25 +791,17 @@ export default function StudyVisualization() {
               </>
             )}
           </div>
-          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-            {selectableAnimals.map((ind, idx) => {
-              const localId = ind.localIdentifier!;
-              const isSelected = selectedAnimals.includes(localId);
-              const color = ANIMAL_COLORS[idx % ANIMAL_COLORS.length];
-              return (
-                <Badge key={ind.id} variant={isSelected ? "default" : "outline"} className="cursor-pointer select-none gap-1"
-                  style={isSelected ? { backgroundColor: color, borderColor: color, color: "white" } : {}}
-                  onClick={() => toggleAnimal(localId)} data-testid={`badge-animal-${ind.movebankId}`}>
-                  {isSelected ? <Check className="w-3 h-3" /> : <X className="w-3 h-3 opacity-40" />}
-                  {localId}
-                </Badge>
-              );
-            })}
-            {selectableAnimals.length === 0 && individuals && individuals.length > 0 && (
-              <p className="text-xs text-muted-foreground">No hay animales con identificador local. Sincroniza con Movebank primero.</p>
-            )}
-            {!individuals && <Skeleton className="h-6 w-32 rounded" />}
-          </div>
+          {individuals ? (
+            <AnimalSearch
+              individuals={selectableAnimals}
+              selected={selectedAnimals}
+              onChange={setSelectedAnimals}
+              multiple
+              placeholder="Buscar animal por nombre, apodo o especie..."
+            />
+          ) : (
+            <Skeleton className="h-9 w-full rounded" />
+          )}
         </div>
       </div>
 

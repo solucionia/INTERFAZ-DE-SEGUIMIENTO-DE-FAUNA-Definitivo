@@ -336,6 +336,12 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
+  app.get("/api/individuals/all", requireAuth, async (req, res) => {
+    const userId = (req.user as any).id;
+    const allIndividuals = await storage.getAllIndividualsForUser(userId);
+    return res.json(allIndividuals);
+  });
+
   app.get("/api/studies/:id/individuals", requireStudyAccess, async (req, res) => {
     const individuals = await storage.getIndividuals(req.params.id);
     return res.json(individuals);

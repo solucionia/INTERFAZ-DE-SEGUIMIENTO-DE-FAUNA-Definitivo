@@ -35,6 +35,7 @@ export interface IStorage {
   removeUserFromStudy(userId: string, studyId: string): Promise<void>;
 
   getIndividuals(studyId: string): Promise<Individual[]>;
+  getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
@@ -211,6 +212,49 @@ export class DatabaseStorage implements IStorage {
 
   async getIndividuals(studyId: string): Promise<Individual[]> {
     return db.select().from(individuals).where(eq(individuals.studyId, studyId));
+  }
+
+  async getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]> {
+    const user = await this.getUser(userId);
+    if (!user) return [];
+
+    if (user.role === "superuser") {
+      const rows = await db
+        .select({
+          id: individuals.id,
+          studyId: individuals.studyId,
+          movebankId: individuals.movebankId,
+          localIdentifier: individuals.localIdentifier,
+          nickName: individuals.nickName,
+          taxonCanonicalName: individuals.taxonCanonicalName,
+          sex: individuals.sex,
+          animalLifeStage: individuals.animalLifeStage,
+          synced: individuals.synced,
+          studyName: studies.name,
+        })
+        .from(individuals)
+        .innerJoin(studies, eq(individuals.studyId, studies.id));
+      return rows as (Individual & { studyName: string })[];
+    }
+
+    const rows = await db
+      .select({
+        id: individuals.id,
+        studyId: individuals.studyId,
+        movebankId: individuals.movebankId,
+        localIdentifier: individuals.localIdentifier,
+        nickName: individuals.nickName,
+        taxonCanonicalName: individuals.taxonCanonicalName,
+        sex: individuals.sex,
+        animalLifeStage: individuals.animalLifeStage,
+        synced: individuals.synced,
+        studyName: studies.name,
+      })
+      .from(individuals)
+      .innerJoin(studies, eq(individuals.studyId, studies.id))
+      .innerJoin(userStudies, eq(studies.id, userStudies.studyId))
+      .where(eq(userStudies.userId, userId));
+    return rows as (Individual & { studyName: string })[];
   }
 
   async upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void> {

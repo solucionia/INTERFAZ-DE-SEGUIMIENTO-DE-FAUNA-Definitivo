@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
@@ -34,6 +35,7 @@ export default function StudyDetail() {
   const { toast } = useToast();
   const [syncing, setSyncing] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -57,15 +59,30 @@ export default function StudyDetail() {
 
   const filteredIndividuals = useMemo(() => {
     if (!individuals) return [];
+    let result = individuals;
     switch (filterMode) {
       case "active":
-        return individuals.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId));
+        result = result.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId));
+        break;
       case "inactive":
-        return individuals.filter((ind) => !activeDeploymentIndividualIds.has(ind.movebankId));
-      default:
-        return individuals;
+        result = result.filter((ind) => !activeDeploymentIndividualIds.has(ind.movebankId));
+        break;
     }
-  }, [individuals, filterMode, activeDeploymentIndividualIds]);
+    if (searchQuery.trim()) {
+      const norm = searchQuery.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      result = result.filter((ind) => {
+        const fields = [
+          ind.localIdentifier || "",
+          ind.nickName || "",
+          ind.taxonCanonicalName || "",
+        ];
+        return fields.some((f) =>
+          f.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(norm)
+        );
+      });
+    }
+    return result;
+  }, [individuals, filterMode, activeDeploymentIndividualIds, searchQuery]);
 
   const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId)).length || 0;
   const inactiveCount = (individuals?.length || 0) - activeCount;
@@ -235,16 +252,28 @@ export default function StudyDetail() {
         <CardContent className="p-0">
           <div className="flex items-center justify-between gap-3 p-4 pb-0 flex-wrap">
             <h3 className="text-sm font-semibold">Individuos</h3>
-            <Select value={filterMode} onValueChange={(v) => setFilterMode(v as FilterMode)}>
-              <SelectTrigger className="w-44" data-testid="select-filter-animals">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos ({individuals?.length || 0})</SelectItem>
-                <SelectItem value="active">Solo activos ({activeCount})</SelectItem>
-                <SelectItem value="inactive">Solo inactivos ({inactiveCount})</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar por nombre, apodo o especie..."
+                  className="pl-8 w-64"
+                  data-testid="input-search-individuals"
+                />
+              </div>
+              <Select value={filterMode} onValueChange={(v) => setFilterMode(v as FilterMode)}>
+                <SelectTrigger className="w-44" data-testid="select-filter-animals">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos ({individuals?.length || 0})</SelectItem>
+                  <SelectItem value="active">Solo activos ({activeCount})</SelectItem>
+                  <SelectItem value="inactive">Solo inactivos ({inactiveCount})</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {individualsLoading ? (
             <div className="p-5 space-y-3">
@@ -332,7 +361,7 @@ export default function StudyDetail() {
               <PawPrint className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
               <p className="text-sm text-muted-foreground mb-2">
                 {individuals && individuals.length > 0
-                  ? "No hay animales que coincidan con el filtro"
+                  ? `No hay animales que coincidan con ${searchQuery.trim() ? "la busqueda" : "el filtro"}`
                   : "No hay individuos cargados"}
               </p>
               {(!individuals || individuals.length === 0) && (

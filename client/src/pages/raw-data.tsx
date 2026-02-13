@@ -20,6 +20,7 @@ import {
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
+import { AnimalSearch } from "@/components/animal-search";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -192,19 +193,15 @@ export default function RawData() {
             onAutoLoadChange={setAutoLoadEnabled}
           />
           <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-[220px]">
               <Label className="text-xs">Animal</Label>
-              <select
-                className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                value={selectedAnimal}
-                onChange={(e) => setSelectedAnimal(e.target.value)}
-                data-testid="select-animal"
-              >
-                <option value="">Seleccionar...</option>
-                {selectableAnimals.map((ind) => (
-                  <option key={ind.id} value={ind.localIdentifier!}>{ind.localIdentifier}</option>
-                ))}
-              </select>
+              <AnimalSearch
+                individuals={selectableAnimals}
+                selected={selectedAnimal ? [selectedAnimal] : []}
+                onChange={(sel) => setSelectedAnimal(sel[0] || "")}
+                multiple={false}
+                placeholder="Buscar animal..."
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Desde</Label>

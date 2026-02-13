@@ -23,7 +23,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/components/app-sidebar.tsx` - Main sidebar with study list and admin links
 - `client/src/pages/auth-page.tsx` - Login/Register page
 - `client/src/pages/dashboard.tsx` - Main dashboard
-- `client/src/pages/study-detail.tsx` - Study detail with individual animals list
+- `client/src/pages/study-detail.tsx` - Study detail with individual animals list + search filter
+- `client/src/components/animal-search.tsx` - Reusable animal search with autocomplete, multi/single select, accent-insensitive filtering
+- `client/src/components/global-animal-search.tsx` - Global Ctrl+K animal search dialog using cmdk
 - `client/src/pages/study-visualization.tsx` - Data visualization with accelerometer chart + GPS map + event overlay
 - `client/src/pages/admin-studies.tsx` - CRUD for studies with species profile assignment (superuser only)
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
@@ -80,6 +82,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 
 ## API Routes
 - POST /api/auth/register, /api/auth/login, /api/auth/logout, GET /api/auth/me
+- GET /api/individuals/all (all individuals across user-accessible studies with studyName)
 - GET /api/studies, GET /api/studies/:id, POST /api/studies, PATCH /api/studies/:id, DELETE /api/studies/:id
 - GET/POST /api/studies/:id/users, DELETE /api/studies/:studyId/users/:userId
 - GET /api/studies/:id/individuals, GET /api/studies/:id/deployments

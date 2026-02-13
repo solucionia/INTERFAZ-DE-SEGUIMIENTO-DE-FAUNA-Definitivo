@@ -59,6 +59,7 @@ import { es } from "date-fns/locale";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
+import { AnimalSearch } from "@/components/animal-search";
 
 const ANIMAL_COLORS = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6",
@@ -413,42 +414,19 @@ export default function GeoAnalysis() {
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <Label>Animales</Label>
-                <Button variant="ghost" size="sm" onClick={selectAllAnimals} data-testid="button-select-all">
-                  Todos
-                </Button>
-              </div>
+              <Label>Animales</Label>
               {loadingIndividuals ? (
                 <div className="space-y-2">
-                  <Skeleton className="h-6 w-full" />
-                  <Skeleton className="h-6 w-full" />
+                  <Skeleton className="h-9 w-full" />
                 </div>
               ) : (
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {individuals?.filter((i) => i.localIdentifier).map((ind, idx) => (
-                    <label
-                      key={ind.id}
-                      className="flex items-center gap-2 text-sm cursor-pointer p-1.5 rounded hover-elevate"
-                      data-testid={`checkbox-animal-${ind.localIdentifier}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedAnimals.includes(ind.localIdentifier!)}
-                        onChange={() => toggleAnimal(ind.localIdentifier!)}
-                        className="rounded"
-                      />
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: ANIMAL_COLORS[idx % ANIMAL_COLORS.length] }}
-                      />
-                      <span className="truncate">{ind.localIdentifier}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {selectedAnimals.length > 0 && (
-                <p className="text-xs text-muted-foreground">{selectedAnimals.length} seleccionado(s)</p>
+                <AnimalSearch
+                  individuals={individuals?.filter((i) => i.localIdentifier) || []}
+                  selected={selectedAnimals}
+                  onChange={setSelectedAnimals}
+                  multiple
+                  placeholder="Buscar animal..."
+                />
               )}
             </div>
 
