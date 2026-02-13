@@ -1,0 +1,50 @@
+Añade la funcionalidad de importar datos GPS y acelerómetro desde archivos CSV exportados de Movebank. Esto permite cargar datos cuando la API de Movebank tiene rate limiting o para datos históricos ya descargados.
+
+1. Nueva página "Importar datos" accesible desde el sidebar (icono de upload) y también desde la página de detalle del estudio con un botón "Importar CSV".
+
+2. La página debe tener:
+   - Selector del estudio destino
+   - Selector del tipo de datos: "GPS" o "Acelerómetro"
+   - Zona de drag & drop para el archivo CSV (también botón para seleccionar archivo)
+   - Indicador de progreso durante la importación
+   - Resumen al terminar: registros importados, duplicados ignorados, errores
+
+3. Formato CSV de Movebank que debe soportar:
+
+   GPS (sensor_type_id 653) — columnas típicas:
+   - timestamp (formato ISO 8601 o milisegundos epoch)
+   - location-lat (o location_lat)
+   - location-long (o location_long)
+   - individual-local-identifier (o individual_local_identifier)
+   - ground-speed (opcional)
+   - heading (opcional)
+   - height-above-ellipsoid (opcional)
+
+   Acelerómetro (sensor_type_id 2365683) — columnas típicas:
+   - timestamp
+   - individual-local-identifier
+   - acceleration-x (o acceleration_x, o accelerations-raw con formato específico)
+   - acceleration-y
+   - acceleration-z
+
+4. Lógica de importación en el backend:
+   - Endpoint: POST /api/studies/:id/import-csv
+   - Acepta multipart/form-data con el archivo CSV
+   - Parsea el CSV detectando automáticamente el separador (coma o tabulador) y los nombres de columna (con guiones o guiones bajos)
+   - Mapea las columnas a los campos de las tablas cached_gps_events o cached_acc_events
+   - Usa INSERT ... ON CONFLICT DO NOTHING para ignorar duplicados (misma combinación study_id + individual + timestamp)
+   - Procesa en lotes de 1000 registros para no saturar la memoria
+   - Si un individuo del CSV no existe en la tabla individuals, créalo automáticamente
+   - Devuelve: { imported: number, duplicates: number, errors: number, details: string[] }
+
+5. Validaciones:
+   - Máximo tamaño de archivo: 100MB
+   - Debe tener al menos las columnas obligatorias (timestamp, coordenadas/aceleración, identificador del animal)
+   - Si falta una columna obligatoria, mostrar error claro indicando qué columna falta
+   - Preview: antes de importar, mostrar las primeras 5 filas parseadas para que el usuario confirme que el mapeo es correcto
+
+6. En la UI después de importar exitosamente:
+   - Botón "Ver datos importados" que lleva a la visualización con el rango de fechas de los datos importados
+   - Toast de éxito con resumen
+
+Mantén la UI en español. No rompas ninguna funcionalidad existente.
