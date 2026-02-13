@@ -105,6 +105,12 @@ export default function RawData() {
         fetch(`/api/studies/${studyId}/events?${baseParams}&sensor_type=${SENSOR_ACC}`, { credentials: "include" }),
       ]);
 
+      if (gpsRes.status === 429 || accRes.status === 429) {
+        const errBody = await (gpsRes.status === 429 ? gpsRes : accRes).json().catch(() => ({}));
+        toast({ title: "Limite de peticiones", description: errBody.message || "Movebank ha limitado las peticiones temporalmente. Intente de nuevo mas tarde.", variant: "destructive" });
+        return;
+      }
+
       if (!gpsRes.ok || !accRes.ok) throw new Error("Error al obtener datos");
 
       const gpsRaw = await gpsRes.json();

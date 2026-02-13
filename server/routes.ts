@@ -263,6 +263,9 @@ export async function registerRoutes(
       res.setHeader("Content-Disposition", `attachment; filename="${study.name}_tracks.kml"`);
       return res.send(kml);
     } catch (e: any) {
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
       return res.status(500).json({ message: e.message });
     }
   });
@@ -364,6 +367,8 @@ export async function registerRoutes(
       const isAcc = sensorTypeId === 2365683;
 
       const results: Record<string, Record<string, string>[]> = {};
+
+      let rateLimitError: { message: string } | null = null;
 
       await Promise.all(
         ids.map(async (animalId) => {
@@ -556,10 +561,18 @@ export async function registerRoutes(
             }
           } catch (e: any) {
             log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
-            results[trimmed] = [];
+            if (e instanceof MovebankError && e.statusCode === 429) {
+              rateLimitError = e;
+            } else {
+              results[trimmed] = [];
+            }
           }
         })
       );
+
+      if (rateLimitError) {
+        return res.status(429).json({ message: rateLimitError.message });
+      }
 
       return res.json(results);
     } catch (e: any) {
@@ -701,6 +714,9 @@ export async function registerRoutes(
           log(`Detected ${detected.length} events for ${animalId}`, "events");
         } catch (e: any) {
           log(`Event detection error for ${animalId}: ${e.message}`, "events");
+          if (e instanceof MovebankError && e.statusCode === 429) {
+            return res.status(429).json({ message: e.message });
+          }
         }
       }
 
@@ -790,6 +806,9 @@ export async function registerRoutes(
             }
           } catch (e: any) {
             log(`Emission check error for ${animal.localIdentifier}: ${e.message}`, "monitor");
+            if (e instanceof MovebankError && e.statusCode === 429) {
+              return res.status(429).json({ message: e.message });
+            }
             results.push({
               animalId: animal.localIdentifier,
               studyName: study.name,

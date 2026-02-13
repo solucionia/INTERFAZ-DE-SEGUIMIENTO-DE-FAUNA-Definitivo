@@ -113,6 +113,11 @@ export default function EmissionMonitor() {
     setSearching(true);
     try {
       const res = await fetch(`/api/monitor/emissions?days=${d}`, { credentials: "include" });
+      if (res.status === 429) {
+        const errBody = await res.json().catch(() => ({}));
+        toast({ title: "Limite de peticiones", description: errBody.message || "Movebank ha limitado las peticiones temporalmente. Intente de nuevo mas tarde.", variant: "destructive" });
+        return;
+      }
       if (!res.ok) throw new Error("Error al consultar emisiones");
       const data = await res.json();
       setResults(data);
