@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { Study, Individual } from "@shared/schema";
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -68,6 +69,9 @@ export default function RawData() {
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [loading, setLoading] = useState(false);
+  const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
+  const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
+  const pendingAutoLoad = useRef(false);
   const [gpsRows, setGpsRows] = useState<GpsRow[]>([]);
   const [accRows, setAccRows] = useState<AccRow[]>([]);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -132,6 +136,32 @@ export default function RawData() {
     }
   };
 
+  const handleQuickRange = (range: QuickRange, start: string, end: string) => {
+    setDateStart(start);
+    setDateEnd(end);
+    setActiveQuickRange(range);
+    if (autoLoadEnabled && selectedAnimal) {
+      pendingAutoLoad.current = true;
+    }
+  };
+
+  const handleDateStartChange = (val: string) => {
+    setDateStart(val);
+    setActiveQuickRange(null);
+  };
+
+  const handleDateEndChange = (val: string) => {
+    setDateEnd(val);
+    setActiveQuickRange(null);
+  };
+
+  useEffect(() => {
+    if (pendingAutoLoad.current && dateStart && dateEnd && selectedAnimal && !loading) {
+      pendingAutoLoad.current = false;
+      loadData();
+    }
+  }, [dateStart, dateEnd]);
+
   const pagedGps = gpsRows.slice(gpsPage * PAGE_SIZE, (gpsPage + 1) * PAGE_SIZE);
   const gpsTotalPages = Math.ceil(gpsRows.length / PAGE_SIZE);
   const pagedAcc = accRows.slice(accPage * PAGE_SIZE, (accPage + 1) * PAGE_SIZE);
@@ -154,7 +184,13 @@ export default function RawData() {
       </div>
 
       <Card>
-        <CardContent className="pt-5 pb-4 px-5">
+        <CardContent className="pt-5 pb-4 px-5 space-y-3">
+          <QuickDateRange
+            activeRange={activeQuickRange}
+            onRangeSelect={handleQuickRange}
+            autoLoad={autoLoadEnabled}
+            onAutoLoadChange={setAutoLoadEnabled}
+          />
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1">
               <Label className="text-xs">Animal</Label>
@@ -172,11 +208,11 @@ export default function RawData() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Desde</Label>
-              <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="w-40" data-testid="input-raw-date-start" />
+              <Input type="date" value={dateStart} onChange={(e) => handleDateStartChange(e.target.value)} className="w-40" data-testid="input-raw-date-start" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Hasta</Label>
-              <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="w-40" data-testid="input-raw-date-end" />
+              <Input type="date" value={dateEnd} onChange={(e) => handleDateEndChange(e.target.value)} className="w-40" data-testid="input-raw-date-end" />
             </div>
             <Button onClick={loadData} disabled={loading || !selectedAnimal} data-testid="button-load-raw-data">
               {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}

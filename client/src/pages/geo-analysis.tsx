@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -58,6 +58,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 
 const ANIMAL_COLORS = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6",
@@ -90,6 +91,9 @@ export default function GeoAnalysis() {
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [mcpPercent, setMcpPercent] = useState("95");
+  const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
+  const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
+  const pendingAutoLoad = useRef(false);
   const [resultData, setResultData] = useState<any>(null);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -217,6 +221,32 @@ export default function GeoAnalysis() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const handleQuickRange = (range: QuickRange, start: string, end: string) => {
+    setDateStart(start);
+    setDateEnd(end);
+    setActiveQuickRange(range);
+    if (autoLoadEnabled && selectedAnimals.length > 0) {
+      pendingAutoLoad.current = true;
+    }
+  };
+
+  const handleDateStartChange = (val: string) => {
+    setDateStart(val);
+    setActiveQuickRange(null);
+  };
+
+  const handleDateEndChange = (val: string) => {
+    setDateEnd(val);
+    setActiveQuickRange(null);
+  };
+
+  useEffect(() => {
+    if (pendingAutoLoad.current && dateStart && dateEnd && selectedAnimals.length > 0 && !analysisMutation.isPending) {
+      pendingAutoLoad.current = false;
+      analysisMutation.mutate();
+    }
+  }, [dateStart, dateEnd]);
 
   const canExecute = selectedAnimals.length > 0 && dateStart && dateEnd;
 
@@ -353,11 +383,21 @@ export default function GeoAnalysis() {
             )}
 
             <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Rango rapido</Label>
+              <QuickDateRange
+                activeRange={activeQuickRange}
+                onRangeSelect={handleQuickRange}
+                autoLoad={autoLoadEnabled}
+                onAutoLoadChange={setAutoLoadEnabled}
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label>Fecha inicio</Label>
               <Input
                 type="date"
                 value={dateStart}
-                onChange={(e) => setDateStart(e.target.value)}
+                onChange={(e) => handleDateStartChange(e.target.value)}
                 data-testid="input-date-start"
               />
             </div>
@@ -367,7 +407,7 @@ export default function GeoAnalysis() {
               <Input
                 type="date"
                 value={dateEnd}
-                onChange={(e) => setDateEnd(e.target.value)}
+                onChange={(e) => handleDateEndChange(e.target.value)}
                 data-testid="input-date-end"
               />
             </div>

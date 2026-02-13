@@ -70,6 +70,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -190,6 +191,9 @@ export default function StudyVisualization() {
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [loading, setLoading] = useState(false);
+  const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
+  const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
+  const pendingAutoLoad = useRef(false);
 
   const [gpsData, setGpsData] = useState<Record<string, GpsPoint[]>>({});
   const [accData, setAccData] = useState<Record<string, AccPoint[]>>({});
@@ -356,6 +360,32 @@ export default function StudyVisualization() {
       setLoading(false);
       setForceLoading(false);
     }
+  };
+
+  const handleQuickRange = useCallback((range: QuickRange, start: string, end: string) => {
+    setDateStart(start);
+    setDateEnd(end);
+    setActiveQuickRange(range);
+    if (autoLoadEnabled && selectedAnimals.length > 0) {
+      pendingAutoLoad.current = true;
+    }
+  }, [autoLoadEnabled, selectedAnimals]);
+
+  useEffect(() => {
+    if (pendingAutoLoad.current && dateStart && dateEnd && selectedAnimals.length > 0 && !loading) {
+      pendingAutoLoad.current = false;
+      loadData(false);
+    }
+  }, [dateStart, dateEnd]);
+
+  const handleDateStartChange = (val: string) => {
+    setDateStart(val);
+    setActiveQuickRange(null);
+  };
+
+  const handleDateEndChange = (val: string) => {
+    setDateEnd(val);
+    setActiveQuickRange(null);
   };
 
   const findClosestGpsPoint = useCallback(
@@ -662,14 +692,21 @@ export default function StudyVisualization() {
           </div>
         </div>
 
+        <QuickDateRange
+          activeRange={activeQuickRange}
+          onRangeSelect={handleQuickRange}
+          autoLoad={autoLoadEnabled}
+          onAutoLoadChange={setAutoLoadEnabled}
+        />
+
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Fecha inicio</Label>
-            <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="w-40" data-testid="input-date-start" />
+            <Input type="date" value={dateStart} onChange={(e) => handleDateStartChange(e.target.value)} className="w-40" data-testid="input-date-start" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Fecha fin</Label>
-            <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="w-40" data-testid="input-date-end" />
+            <Input type="date" value={dateEnd} onChange={(e) => handleDateEndChange(e.target.value)} className="w-40" data-testid="input-date-end" />
           </div>
           <Button onClick={() => loadData(false)} disabled={loading || selectedAnimals.length === 0} data-testid="button-load-data">
             {loading && !forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
