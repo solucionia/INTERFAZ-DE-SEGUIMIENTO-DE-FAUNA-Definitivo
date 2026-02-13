@@ -850,15 +850,18 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/sync", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
+      log(`Sync iniciado para estudio: ${req.params.id}`, "movebank");
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
-      log(`Syncing study ${study.name} (${study.movebankStudyId})`, "movebank");
+      log(`Conectando con Movebank, study_id: ${study.movebankStudyId}, estudio: ${study.name}`, "movebank");
 
       const [rawIndividuals, rawDeployments] = await Promise.all([
         fetchMovebankIndividuals(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
         fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
       ]);
+
+      log(`Movebank respondió: individuos: ${rawIndividuals.length}, despliegues: ${rawDeployments.length}`, "movebank");
 
       const individualsData = rawIndividuals.map((r) => ({
         studyId: study.id,
@@ -886,14 +889,15 @@ export async function registerRoutes(
         storage.upsertDeployments(study.id, deploymentsData),
       ]);
 
-      log(`Synced: ${individualsData.length} individuals, ${deploymentsData.length} deployments`, "movebank");
+      log(`Sync completado para ${study.name}: ${individualsData.length} individuos, ${deploymentsData.length} despliegues guardados en BD`, "movebank");
 
       return res.json({
         individuals: individualsData.length,
         deployments: deploymentsData.length,
       });
     } catch (e: any) {
-      log(`Sync error: ${e.message}`, "movebank");
+      log(`Sync error para estudio ${req.params.id}: ${e.message}`, "movebank");
+      log(`Stack: ${e.stack}`, "movebank");
       if (e instanceof MovebankError) {
         return res.status(e.statusCode).json({ message: e.message });
       }

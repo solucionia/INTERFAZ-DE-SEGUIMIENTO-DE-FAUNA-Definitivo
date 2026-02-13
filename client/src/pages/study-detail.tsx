@@ -73,12 +73,31 @@ export default function StudyDetail() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await apiRequest("POST", `/api/studies/${studyId}/sync`);
+      const res = await apiRequest("POST", `/api/studies/${studyId}/sync`);
+      let data: { individuals?: number; deployments?: number } = {};
+      try { data = await res.json(); } catch {}
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
-      toast({ title: "Sincronizacion completada", description: "Los datos se actualizaron desde Movebank" });
+      toast({
+        title: "Sincronización completada",
+        description: data.individuals != null
+          ? `Se sincronizaron ${data.individuals} individuos y ${data.deployments} despliegues desde Movebank`
+          : "Los datos se actualizaron desde Movebank",
+      });
     } catch (e: any) {
-      toast({ title: "Error al sincronizar", description: e.message, variant: "destructive" });
+      let errorMsg = "Error desconocido al sincronizar";
+      if (e.message) {
+        const colonIdx = e.message.indexOf(": ");
+        const body = colonIdx >= 0 ? e.message.substring(colonIdx + 2) : e.message;
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed.message) errorMsg = parsed.message;
+          else errorMsg = body;
+        } catch {
+          errorMsg = body;
+        }
+      }
+      toast({ title: "Error al sincronizar", description: errorMsg, variant: "destructive" });
     } finally {
       setSyncing(false);
     }

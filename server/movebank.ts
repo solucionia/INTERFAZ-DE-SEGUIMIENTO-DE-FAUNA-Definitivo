@@ -20,6 +20,8 @@ function handleMovebankResponse(res: Response, context: string): void {
     throw new MovebankError("Credenciales de Movebank inválidas para este estudio", 401);
   } else if (status === 403) {
     throw new MovebankError("No tiene permisos para acceder a este estudio en Movebank", 403);
+  } else if (status === 429) {
+    throw new MovebankError("Movebank ha limitado las peticiones temporalmente. Intente de nuevo en unos minutos.", 429);
   } else {
     throw new MovebankError(`Error al conectar con Movebank: ${status} ${res.statusText}`, status);
   }
