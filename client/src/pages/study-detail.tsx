@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle } from "lucide-react";
+import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState, useMemo } from "react";
@@ -164,6 +164,12 @@ export default function StudyDetail() {
             <Button variant="outline" data-testid="button-raw-data">
               <Database className="w-4 h-4 mr-2" />
               Datos brutos
+            </Button>
+          </Link>
+          <Link href={`/study/${studyId}/import`}>
+            <Button variant="outline" data-testid="button-import-csv">
+              <Upload className="w-4 h-4 mr-2" />
+              Importar CSV
             </Button>
           </Link>
           <Button

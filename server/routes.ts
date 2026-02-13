@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import passport from "passport";
 import bcrypt from "bcryptjs";
+import multer from "multer";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, MovebankError } from "./movebank";
@@ -1020,6 +1021,214 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+  app.post("/api/studies/:id/import-csv", requireStudyAccess, upload.single("file"), async (req, res) => {
+    try {
+      const studyId = req.params.id;
+      const study = await storage.getStudy(studyId);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ message: "No se proporcionó archivo" });
+
+      const dataType = req.body.dataType as string;
+      if (dataType !== "gps" && dataType !== "acc") {
+        return res.status(400).json({ message: "Tipo de datos inválido. Use 'gps' o 'acc'" });
+      }
+
+      const content = file.buffer.toString("utf-8");
+      const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) return res.status(400).json({ message: "El archivo CSV debe tener al menos una cabecera y una fila de datos" });
+
+      const separator = lines[0].includes("\t") ? "\t" : ",";
+      const rawHeaders = lines[0].split(separator).map((h) => h.trim().replace(/^"/, "").replace(/"$/, ""));
+      const headers = rawHeaders.map((h) => h.toLowerCase().replace(/-/g, "_"));
+
+      const colMap: Record<string, number> = {};
+      headers.forEach((h, i) => { colMap[h] = i; });
+
+      const findCol = (...names: string[]): number => {
+        for (const n of names) {
+          if (colMap[n] !== undefined) return colMap[n];
+        }
+        return -1;
+      };
+
+      const tsCol = findCol("timestamp");
+      const indCol = findCol("individual_local_identifier", "individual.local.identifier");
+
+      if (tsCol === -1) return res.status(400).json({ message: "Columna obligatoria no encontrada: timestamp" });
+      if (indCol === -1) return res.status(400).json({ message: "Columna obligatoria no encontrada: individual-local-identifier" });
+
+      if (dataType === "gps") {
+        const latCol = findCol("location_lat", "location.lat");
+        const lonCol = findCol("location_long", "location.long", "location_lon", "location.lon");
+        if (latCol === -1) return res.status(400).json({ message: "Columna obligatoria no encontrada: location-lat" });
+        if (lonCol === -1) return res.status(400).json({ message: "Columna obligatoria no encontrada: location-long" });
+
+        const speedCol = findCol("ground_speed", "ground.speed");
+        const headingCol = findCol("heading");
+        const heightCol = findCol("height_above_ellipsoid", "height.above.ellipsoid");
+
+        let imported = 0, duplicates = 0, errors = 0;
+        const details: string[] = [];
+        const individualsSet = new Set<string>();
+        const batchSize = 1000;
+        let batch: Omit<CachedGpsEvent, "id">[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const vals = parseCsvLine(lines[i], separator);
+            const individual = vals[indCol]?.trim();
+            const rawTs = vals[tsCol]?.trim();
+            const lat = parseFloat(vals[latCol]);
+            const lon = parseFloat(vals[lonCol]);
+
+            if (!individual || !rawTs || isNaN(lat) || isNaN(lon)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: datos inválidos o vacíos`);
+              continue;
+            }
+
+            const ts = parseTimestamp(rawTs);
+            if (isNaN(ts)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: timestamp inválido "${rawTs}"`);
+              continue;
+            }
+
+            individualsSet.add(individual);
+            batch.push({
+              studyId,
+              individualLocalIdentifier: individual,
+              timestamp: ts,
+              latitude: lat,
+              longitude: lon,
+              groundSpeed: speedCol >= 0 ? safeFloat(vals[speedCol]) : null,
+              heading: headingCol >= 0 ? safeFloat(vals[headingCol]) : null,
+              heightAboveEllipsoid: heightCol >= 0 ? safeFloat(vals[heightCol]) : null,
+            });
+
+            if (batch.length >= batchSize) {
+              const result = await storage.insertCachedGpsEventsCounted(batch);
+              imported += result.inserted;
+              duplicates += result.duplicates;
+              batch = [];
+            }
+          } catch (e: any) {
+            errors++;
+            if (errors <= 10) details.push(`Fila ${i + 1}: ${e.message}`);
+          }
+        }
+
+        if (batch.length > 0) {
+          const result = await storage.insertCachedGpsEventsCounted(batch);
+          imported += result.inserted;
+          duplicates += result.duplicates;
+        }
+
+        await ensureIndividualsExist(studyId, individualsSet);
+
+        return res.json({ imported, duplicates, errors, details, dataType: "gps", individuals: individualsSet.size });
+      } else {
+        const xCol = findCol("acceleration_x", "accelerations_raw");
+        const yCol = findCol("acceleration_y");
+        const zCol = findCol("acceleration_z");
+        const rawCol = findCol("accelerations_raw");
+        const hasXyz = xCol >= 0 && yCol >= 0 && zCol >= 0;
+        const hasRaw = rawCol >= 0;
+
+        if (!hasXyz && !hasRaw) {
+          return res.status(400).json({ message: "Columnas obligatorias no encontradas: acceleration-x/y/z o accelerations-raw" });
+        }
+
+        let imported = 0, duplicates = 0, errors = 0;
+        const details: string[] = [];
+        const individualsSet = new Set<string>();
+        const batchSize = 1000;
+        let batch: Omit<CachedAccEvent, "id">[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const vals = parseCsvLine(lines[i], separator);
+            const individual = vals[indCol]?.trim();
+            const rawTs = vals[tsCol]?.trim();
+
+            if (!individual || !rawTs) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: datos inválidos o vacíos`);
+              continue;
+            }
+
+            const ts = parseTimestamp(rawTs);
+            if (isNaN(ts)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: timestamp inválido "${rawTs}"`);
+              continue;
+            }
+
+            let x = 0, y = 0, z = 0;
+            let rawData: string | null = null;
+
+            if (hasXyz) {
+              x = parseFloat(vals[xCol]);
+              y = parseFloat(vals[yCol]);
+              z = parseFloat(vals[zCol]);
+              if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                errors++;
+                if (errors <= 10) details.push(`Fila ${i + 1}: valores de aceleración inválidos`);
+                continue;
+              }
+            } else if (hasRaw) {
+              rawData = vals[rawCol]?.trim() || null;
+              const parts = rawData?.split(/\s+/) || [];
+              if (parts.length >= 3) {
+                x = parseFloat(parts[0]);
+                y = parseFloat(parts[1]);
+                z = parseFloat(parts[2]);
+              }
+            }
+
+            individualsSet.add(individual);
+            batch.push({
+              studyId,
+              individualLocalIdentifier: individual,
+              timestamp: ts,
+              xAcceleration: x,
+              yAcceleration: y,
+              zAcceleration: z,
+              rawData,
+            });
+
+            if (batch.length >= batchSize) {
+              const result = await storage.insertCachedAccEventsCounted(batch);
+              imported += result.inserted;
+              duplicates += result.duplicates;
+              batch = [];
+            }
+          } catch (e: any) {
+            errors++;
+            if (errors <= 10) details.push(`Fila ${i + 1}: ${e.message}`);
+          }
+        }
+
+        if (batch.length > 0) {
+          const result = await storage.insertCachedAccEventsCounted(batch);
+          imported += result.inserted;
+          duplicates += result.duplicates;
+        }
+
+        await ensureIndividualsExist(studyId, individualsSet);
+
+        return res.json({ imported, duplicates, errors, details, dataType: "acc", individuals: individualsSet.size });
+      }
+    } catch (e: any) {
+      log(`CSV import error: ${e.message}`, "express");
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/cache/stats", requireAuth, async (_req, res) => {
     try {
       const stats = await storage.getCacheStats();
@@ -1030,4 +1239,63 @@ export async function registerRoutes(
   });
 
   return httpServer;
+}
+
+function parseCsvLine(line: string, separator: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === separator) {
+        result.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseTimestamp(raw: string): number {
+  const asNum = Number(raw);
+  if (!isNaN(asNum) && raw.length > 8) {
+    return asNum > 1e12 ? asNum : asNum * 1000;
+  }
+  const d = new Date(raw);
+  return d.getTime();
+}
+
+function safeFloat(val: string | undefined): number | null {
+  if (!val || val.trim() === "") return null;
+  const n = parseFloat(val);
+  return isNaN(n) ? null : n;
+}
+
+async function ensureIndividualsExist(studyId: string, names: Set<string>): Promise<void> {
+  const existing = await storage.getIndividuals(studyId);
+  const existingNames = new Set(existing.map((i) => i.localIdentifier));
+  const toCreate: string[] = [];
+  names.forEach((name) => {
+    if (!existingNames.has(name)) toCreate.push(name);
+  });
+  if (toCreate.length > 0) {
+    await storage.createIndividualsByName(studyId, toCreate);
+  }
 }

@@ -103,6 +103,10 @@ export interface IStorage {
   recordFetchedRange(studyId: string, individual: string, sensorType: string, rangeStart: number, rangeEnd: number): Promise<void>;
   getFetchedRanges(studyId: string, individual: string, sensorType: string): Promise<{ rangeStart: number; rangeEnd: number }[]>;
   computeUncoveredGaps(studyId: string, individual: string, sensorType: string, tsStart: number, tsEnd: number): Promise<{ start: number; end: number }[]>;
+
+  insertCachedGpsEventsCounted(events: Omit<CachedGpsEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
+  insertCachedAccEventsCounted(events: Omit<CachedAccEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
+  createIndividualsByName(studyId: string, names: string[]): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -659,6 +663,43 @@ export class DatabaseStorage implements IStorage {
     }
 
     return gaps.filter(g => g.start <= g.end);
+  }
+
+  async insertCachedGpsEventsCounted(events: Omit<CachedGpsEvent, "id">[]): Promise<{ inserted: number; duplicates: number }> {
+    if (events.length === 0) return { inserted: 0, duplicates: 0 };
+    let totalInserted = 0;
+    const batchSize = 500;
+    for (let i = 0; i < events.length; i += batchSize) {
+      const batch = events.slice(i, i + batchSize);
+      const result = await db.insert(cachedGpsEvents).values(batch).onConflictDoNothing();
+      const insertedCount = (result as any).rowCount ?? batch.length;
+      totalInserted += insertedCount;
+    }
+    return { inserted: totalInserted, duplicates: events.length - totalInserted };
+  }
+
+  async insertCachedAccEventsCounted(events: Omit<CachedAccEvent, "id">[]): Promise<{ inserted: number; duplicates: number }> {
+    if (events.length === 0) return { inserted: 0, duplicates: 0 };
+    let totalInserted = 0;
+    const batchSize = 500;
+    for (let i = 0; i < events.length; i += batchSize) {
+      const batch = events.slice(i, i + batchSize);
+      const result = await db.insert(cachedAccEvents).values(batch).onConflictDoNothing();
+      const insertedCount = (result as any).rowCount ?? batch.length;
+      totalInserted += insertedCount;
+    }
+    return { inserted: totalInserted, duplicates: events.length - totalInserted };
+  }
+
+  async createIndividualsByName(studyId: string, names: string[]): Promise<void> {
+    for (const name of names) {
+      await db.insert(individuals).values({
+        studyId,
+        movebankId: 0,
+        localIdentifier: name,
+        synced: false,
+      }).onConflictDoNothing();
+    }
   }
 }
 

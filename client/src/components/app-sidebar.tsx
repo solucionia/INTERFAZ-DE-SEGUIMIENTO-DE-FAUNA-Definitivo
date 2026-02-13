@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -108,6 +108,14 @@ export function AppSidebar() {
                   <Link href="/alerts" data-testid="link-alert-history">
                     <Bell className="w-4 h-4" />
                     <span>Historial de alertas</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/import" || location.endsWith("/import")}>
+                  <Link href="/import" data-testid="link-import-csv">
+                    <Upload className="w-4 h-4" />
+                    <span>Importar datos</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

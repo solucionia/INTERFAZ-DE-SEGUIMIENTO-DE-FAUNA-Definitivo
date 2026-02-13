@@ -35,6 +35,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
 - `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
 - `server/rateLimiter.ts` - Rate limiting middleware (auth: 5/min, API: 100/min, Movebank: 20/min)
+- `client/src/pages/import-csv.tsx` - CSV import page with drag-and-drop, preview, and results summary
 
 ## Key Features
 1. Two roles: superuser (first registered user) and normal user
@@ -65,6 +66,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 26. Local data cache for GPS/accelerometer events with cache-first strategy and gap-filling
 27. Force reload from Movebank button in visualization page
 28. Cache statistics endpoint for monitoring cached data
+29. CSV import: drag-and-drop upload of Movebank CSV files (GPS/accelerometer), auto-detect separator, column mapping, preview, batch insert with duplicate detection, auto-create individuals
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -98,6 +100,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/alerts/mark-read (bulk mark alerts as read)
 - GET /api/studies/:id/export-kml (KML export for Google Earth)
 - GET /api/cache/stats (cache statistics: total GPS/Acc records, per-study breakdown)
+- POST /api/studies/:id/import-csv (multipart/form-data: file + dataType, batch CSV import with duplicate detection)
 
 ## Data Cache
 - GPS and accelerometer data from Movebank is cached locally in `cached_gps_events` and `cached_acc_events` tables
