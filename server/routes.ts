@@ -1146,7 +1146,7 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
   app.post("/api/studies/:id/import-csv", requireStudyAccess, upload.single("file"), async (req, res) => {
     try {
@@ -1162,16 +1162,19 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Tipo de datos inválido. Use 'gps' o 'acc'" });
       }
 
+      let requestedFormat = (req.body.format as string || "auto").toLowerCase();
+
       const content = file.buffer.toString("utf-8");
       const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
       if (lines.length < 2) return res.status(400).json({ message: "El archivo CSV debe tener al menos una cabecera y una fila de datos" });
 
-      const separator = lines[0].includes("\t") ? "\t" : ",";
-      const rawHeaders = lines[0].split(separator).map((h) => h.trim().replace(/^"/, "").replace(/"$/, ""));
-      const headers = rawHeaders.map((h) => h.toLowerCase().replace(/-/g, "_"));
+      const hasSemicolon = lines[0].includes(";");
+      const separator = hasSemicolon ? ";" : (lines[0].includes("\t") ? "\t" : ",");
+      const rawHeaders = parseCsvLine(lines[0], separator).map((h) => h.trim().replace(/^"/, "").replace(/"$/, ""));
+      const headersLower = rawHeaders.map((h) => h.toLowerCase().replace(/-/g, "_"));
 
       const colMap: Record<string, number> = {};
-      headers.forEach((h, i) => { colMap[h] = i; });
+      headersLower.forEach((h, i) => { colMap[h] = i; });
 
       const findCol = (...names: string[]): number => {
         for (const n of names) {
@@ -1179,6 +1182,124 @@ export async function registerRoutes(
         }
         return -1;
       };
+
+      const hasBaseLunarCols = findCol("nombre") >= 0 && findCol("fecha") >= 0 && findCol("hora") >= 0 && findCol("x") >= 0 && findCol("y") >= 0;
+      const hasMovebankCols = findCol("timestamp") >= 0 && findCol("individual_local_identifier", "individual.local.identifier") >= 0;
+
+      let detectedFormat: "movebank" | "baselunar" = "movebank";
+      if (hasBaseLunarCols) {
+        detectedFormat = "baselunar";
+      } else if (hasSemicolon && !hasMovebankCols) {
+        detectedFormat = "baselunar";
+      }
+
+      const format = requestedFormat === "auto" ? detectedFormat : (requestedFormat as "movebank" | "baselunar");
+
+      if (format === "baselunar") {
+        if (dataType !== "gps") {
+          return res.status(400).json({ message: "El formato Base Lunar solo soporta datos GPS" });
+        }
+
+        const nombreCol = findCol("nombre");
+        const nombreComunCol = findCol("nombre_comun");
+        const fechaCol = findCol("fecha");
+        const horaCol = findCol("hora");
+        const xCol = findCol("x");
+        const yCol = findCol("y");
+        const velocidadCol = findCol("velocidad");
+        const cursoCol = findCol("curso");
+        const altitudCol = findCol("altitud");
+        const sexoCol = findCol("sexo");
+
+        if (nombreCol === -1) return res.status(400).json({ message: "Formato Base Lunar: columna obligatoria 'nombre' no encontrada" });
+        if (fechaCol === -1) return res.status(400).json({ message: "Formato Base Lunar: columna obligatoria 'fecha' no encontrada" });
+        if (horaCol === -1) return res.status(400).json({ message: "Formato Base Lunar: columna obligatoria 'hora' no encontrada" });
+        if (xCol === -1) return res.status(400).json({ message: "Formato Base Lunar: columna obligatoria 'x' (longitud) no encontrada" });
+        if (yCol === -1) return res.status(400).json({ message: "Formato Base Lunar: columna obligatoria 'y' (latitud) no encontrada" });
+
+        let imported = 0, duplicates = 0, errors = 0;
+        const details: string[] = [];
+        const individualsMap = new Map<string, { taxon?: string; sex?: string }>();
+        const batchSize = 1000;
+        let batch: Omit<CachedGpsEvent, "id">[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const vals = parseCsvLine(lines[i], separator);
+            const individual = vals[nombreCol]?.trim();
+            const fecha = vals[fechaCol]?.trim();
+            const hora = vals[horaCol]?.trim();
+            const lon = parseFloat(vals[xCol]);
+            const lat = parseFloat(vals[yCol]);
+
+            if (!individual || !fecha || !hora) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: datos obligatorios vacíos (nombre/fecha/hora)`);
+              continue;
+            }
+
+            if (isNaN(lat) || isNaN(lon)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: coordenadas x/y inválidas`);
+              continue;
+            }
+
+            const ts = parseBaseLunarTimestamp(fecha, hora);
+            if (isNaN(ts)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: fecha/hora inválida "${fecha} ${hora}"`);
+              continue;
+            }
+
+            const taxon = nombreComunCol >= 0 ? vals[nombreComunCol]?.trim() || undefined : undefined;
+            const sex = sexoCol >= 0 ? vals[sexoCol]?.trim() || undefined : undefined;
+            const existing = individualsMap.get(individual);
+            if (!existing) {
+              individualsMap.set(individual, { taxon, sex });
+            } else {
+              if (!existing.taxon && taxon) existing.taxon = taxon;
+              if (!existing.sex && sex) existing.sex = sex;
+            }
+
+            batch.push({
+              studyId,
+              individualLocalIdentifier: individual,
+              timestamp: ts,
+              latitude: lat,
+              longitude: lon,
+              groundSpeed: velocidadCol >= 0 ? safeFloat(vals[velocidadCol]) : null,
+              heading: cursoCol >= 0 ? safeFloat(vals[cursoCol]) : null,
+              heightAboveEllipsoid: altitudCol >= 0 ? safeFloat(vals[altitudCol]) : null,
+            });
+
+            if (batch.length >= batchSize) {
+              const result = await storage.insertCachedGpsEventsCounted(batch);
+              imported += result.inserted;
+              duplicates += result.duplicates;
+              batch = [];
+            }
+          } catch (e: any) {
+            errors++;
+            if (errors <= 10) details.push(`Fila ${i + 1}: ${e.message}`);
+          }
+        }
+
+        if (batch.length > 0) {
+          const result = await storage.insertCachedGpsEventsCounted(batch);
+          imported += result.inserted;
+          duplicates += result.duplicates;
+        }
+
+        const metadataEntries = Array.from(individualsMap.entries()).map(([name, meta]) => ({ name, ...meta }));
+        await storage.createIndividualsWithMetadata(studyId, metadataEntries);
+
+        return res.json({
+          imported, duplicates, errors, details, dataType: "gps",
+          individuals: individualsMap.size,
+          individuals_created: metadataEntries.length,
+          format: "baselunar",
+        });
+      }
 
       const tsCol = findCol("timestamp");
       const indCol = findCol("individual_local_identifier", "individual.local.identifier");
@@ -1255,7 +1376,7 @@ export async function registerRoutes(
 
         await ensureIndividualsExist(studyId, individualsSet);
 
-        return res.json({ imported, duplicates, errors, details, dataType: "gps", individuals: individualsSet.size });
+        return res.json({ imported, duplicates, errors, details, dataType: "gps", individuals: individualsSet.size, format: "movebank" });
       } else {
         const xCol = findCol("acceleration_x", "accelerations_raw");
         const yCol = findCol("acceleration_y");
@@ -1346,7 +1467,7 @@ export async function registerRoutes(
 
         await ensureIndividualsExist(studyId, individualsSet);
 
-        return res.json({ imported, duplicates, errors, details, dataType: "acc", individuals: individualsSet.size });
+        return res.json({ imported, duplicates, errors, details, dataType: "acc", individuals: individualsSet.size, format: "movebank" });
       }
     } catch (e: any) {
       log(`CSV import error: ${e.message}`, "express");
@@ -1404,6 +1525,25 @@ function parseTimestamp(raw: string): number {
     return asNum > 1e12 ? asNum : asNum * 1000;
   }
   const d = new Date(raw);
+  return d.getTime();
+}
+
+function parseBaseLunarTimestamp(fecha: string, hora: string): number {
+  const cleaned = fecha.replace(/\//g, "-");
+  const parts = cleaned.split("-");
+  let isoDate: string;
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      isoDate = cleaned;
+    } else if (parts[2].length === 4) {
+      isoDate = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    } else {
+      isoDate = cleaned;
+    }
+  } else {
+    isoDate = cleaned;
+  }
+  const d = new Date(`${isoDate}T${hora}`);
   return d.getTime();
 }
 

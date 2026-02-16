@@ -68,7 +68,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 26. Local data cache for GPS/accelerometer events with cache-first strategy and gap-filling
 27. Force reload from Movebank button in visualization page
 28. Cache statistics endpoint for monitoring cached data
-29. CSV import: drag-and-drop upload of Movebank CSV files (GPS/accelerometer), auto-detect separator, column mapping, preview, batch insert with duplicate detection, auto-create individuals
+29. CSV import: drag-and-drop upload supporting two formats (Movebank and Base Lunar), auto-detect format by separator/columns, preview with column mapping, batch insert with duplicate detection, auto-create individuals with metadata (taxon, sex from Base Lunar)
 30. Comprehensive geospatial analysis: multi-percent MCP (50/75/90/95/100%), multi-percent Kernel (5-95% in 5% steps), dual bandwidth methods (HREF Silverman + LSCV cross-validation), eccentricity (PCA), linearity, full distance statistics, random sampling for >10k points, multi-animal comparison table, graduated map colors with percentage toggles, CSV metrics export
 
 ## Event Detection

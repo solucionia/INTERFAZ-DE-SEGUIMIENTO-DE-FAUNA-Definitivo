@@ -108,6 +108,7 @@ export interface IStorage {
   insertCachedGpsEventsCounted(events: Omit<CachedGpsEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
   insertCachedAccEventsCounted(events: Omit<CachedAccEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
   createIndividualsByName(studyId: string, names: string[]): Promise<void>;
+  createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -743,6 +744,36 @@ export class DatabaseStorage implements IStorage {
         localIdentifier: name,
         synced: false,
       }).onConflictDoNothing();
+    }
+  }
+
+  async createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void> {
+    const existing = await this.getIndividuals(studyId);
+    const existingNames = new Set(existing.map((i) => i.localIdentifier));
+    for (const entry of entries) {
+      if (existingNames.has(entry.name)) {
+        if (entry.taxon || entry.sex) {
+          await db.update(individuals)
+            .set({
+              ...(entry.taxon ? { taxonCanonicalName: entry.taxon } : {}),
+              ...(entry.sex ? { sex: entry.sex } : {}),
+            })
+            .where(and(
+              eq(individuals.studyId, studyId),
+              eq(individuals.localIdentifier, entry.name)
+            ));
+        }
+      } else {
+        await db.insert(individuals).values({
+          studyId,
+          movebankId: 0,
+          localIdentifier: entry.name,
+          taxonCanonicalName: entry.taxon || null,
+          sex: entry.sex || null,
+          synced: false,
+        }).onConflictDoNothing();
+        existingNames.add(entry.name);
+      }
     }
   }
 }

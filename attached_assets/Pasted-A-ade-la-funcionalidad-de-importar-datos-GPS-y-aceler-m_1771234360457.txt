@@ -1,0 +1,73 @@
+Añade la funcionalidad de importar datos GPS y acelerómetro desde archivos CSV. Debe soportar DOS formatos diferentes de datos: Movebank y Base Lunar.
+
+1. Nueva página "Importar datos" accesible desde el sidebar (icono de upload) y también desde la página de detalle del estudio con un botón "Importar CSV".
+
+2. La página debe tener:
+   - Selector del estudio destino
+   - Selector del tipo de datos: "GPS" o "Acelerómetro"
+   - Selector del formato de origen: "Movebank" o "Base Lunar" o "Detectar automáticamente"
+   - Zona de drag & drop para el archivo CSV (también botón para seleccionar archivo)
+   - Preview de las primeras 5 filas parseadas con el mapeo de columnas detectado
+   - Indicador de progreso durante la importación
+   - Resumen al terminar: registros importados, duplicados ignorados, errores
+
+3. FORMATO MOVEBANK — GPS (separador coma, columnas con guiones):
+   - timestamp (ISO 8601 o milisegundos epoch)
+   - location-lat (o location_lat)
+   - location-long (o location_long)
+   - individual-local-identifier (o individual_local_identifier)
+   - ground-speed (opcional)
+   - heading (opcional)
+   - height-above-ellipsoid (opcional)
+
+4. FORMATO MOVEBANK — Acelerómetro:
+   - timestamp
+   - individual-local-identifier
+   - acceleration-x / acceleration-y / acceleration-z
+
+5. FORMATO BASE LUNAR — GPS (separador punto y coma ";", columnas diferentes):
+   Ejemplo de cabecera: nombre;nombre_comun;fecha;hora;velocidad;curso;altitud;punto;sexo;fix;x;y;x_utm;y_utm
+   
+   Mapeo de columnas Base Lunar → campos internos:
+   - "nombre" → individual_local_identifier
+   - "nombre_comun" → se guarda como metadata del individuo (taxon_canonical_name si no existe)
+   - "fecha" + "hora" → timestamp (combinar "2024-02-07" + "07:31:00" → timestamp en milisegundos)
+   - "x" → longitude (coordenada WGS84)
+   - "y" → latitude (coordenada WGS84)
+   - "x_utm" → guardar como campo adicional si la tabla lo soporta, si no ignorar
+   - "y_utm" → igual
+   - "velocidad" → ground_speed
+   - "curso" → heading
+   - "altitud" → height_above_ellipsoid
+   - "sexo" → actualizar el campo sex del individuo si existe
+   - "fix" → ignorar
+
+6. Detección automática de formato:
+   - Si el separador es ";" → probablemente Base Lunar
+   - Si el separador es "," → probablemente Movebank
+   - Si tiene columnas "nombre", "fecha", "hora", "x", "y" → Base Lunar
+   - Si tiene columnas "timestamp", "location-lat", "location-long" → Movebank
+   - Mostrar al usuario el formato detectado y permitir corregirlo
+
+7. Lógica de importación en el backend:
+   - Endpoint: POST /api/studies/:id/import-csv
+   - Acepta multipart/form-data con el archivo CSV y el parámetro "format" (movebank/baselunar/auto)
+   - Parsea el CSV detectando separador y nombres de columna
+   - Mapea las columnas según el formato
+   - Usa INSERT ... ON CONFLICT DO NOTHING para ignorar duplicados
+   - Procesa en lotes de 1000 registros para no saturar la memoria
+   - Si un individuo del CSV no existe en la tabla individuals, créalo automáticamente con los datos disponibles (nombre, especie, sexo)
+   - Devuelve: { imported: number, duplicates: number, errors: number, individuals_created: number, details: string[] }
+
+8. Validaciones:
+   - Máximo tamaño de archivo: 200MB (los CSV de Base Lunar pueden ser grandes, el ejemplo tiene 47.000 filas / 8MB)
+   - Debe tener al menos las columnas obligatorias según el formato
+   - Si falta una columna obligatoria, mostrar error claro indicando qué columna falta y qué formato se esperaba
+   - Preview antes de importar para confirmar mapeo
+
+9. Después de importar:
+   - Toast de éxito con resumen
+   - Botón "Ver datos importados" que lleva a la visualización
+   - Los datos importados quedan en las tablas de caché (cached_gps_events, cached_acc_events) igual que los datos de Movebank
+
+Mantén la UI en español. No rompas ninguna funcionalidad existente.

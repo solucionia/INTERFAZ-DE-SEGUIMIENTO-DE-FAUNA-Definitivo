@@ -22,8 +22,10 @@ import {
 } from "@/components/ui/table";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+
+type ImportFormat = "auto" | "movebank" | "baselunar";
 
 type ImportResult = {
   imported: number;
@@ -32,12 +34,32 @@ type ImportResult = {
   details: string[];
   dataType: string;
   individuals: number;
+  individuals_created?: number;
+  format?: string;
 };
 
 type ParsedPreview = {
   headers: string[];
   rows: string[][];
   totalRows: number;
+  separator: string;
+  detectedFormat: "movebank" | "baselunar" | "unknown";
+};
+
+function detectFormat(headers: string[]): "movebank" | "baselunar" | "unknown" {
+  const lower = headers.map((h) => h.toLowerCase());
+  const hasBaseLunar = lower.includes("nombre") && lower.includes("fecha") && lower.includes("hora") && lower.includes("x") && lower.includes("y");
+  if (hasBaseLunar) return "baselunar";
+  const hasMovebank = lower.includes("timestamp") && (lower.includes("individual-local-identifier") || lower.includes("individual_local_identifier"));
+  if (hasMovebank) return "movebank";
+  return "unknown";
+}
+
+const FORMAT_LABELS: Record<string, string> = {
+  movebank: "Movebank",
+  baselunar: "Base Lunar",
+  auto: "Detectar automaticamente",
+  unknown: "No detectado",
 };
 
 export default function ImportCsv() {
@@ -49,6 +71,11 @@ export default function ImportCsv() {
 
   const [selectedStudyId, setSelectedStudyId] = useState<string>(preselectedStudyId || "");
   const [dataType, setDataType] = useState<"gps" | "acc">("gps");
+  const [format, setFormatRaw] = useState<ImportFormat>("auto");
+  const setFormat = useCallback((f: ImportFormat) => {
+    setFormatRaw(f);
+    if (f === "baselunar") setDataType("gps");
+  }, []);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ParsedPreview | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -66,33 +93,45 @@ export default function ImportCsv() {
     return studies?.find((s) => s.id === activeStudyId);
   }, [studies, activeStudyId]);
 
+  const effectiveFormat = useMemo(() => {
+    if (format !== "auto") return format;
+    if (preview) return preview.detectedFormat === "unknown" ? "movebank" : preview.detectedFormat;
+    return "auto";
+  }, [format, preview]);
+
+
   const parsePreview = useCallback((f: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
       if (lines.length < 2) {
-        toast({ title: "Archivo inválido", description: "El archivo debe tener al menos una cabecera y una fila de datos", variant: "destructive" });
+        toast({ title: "Archivo invalido", description: "El archivo debe tener al menos una cabecera y una fila de datos", variant: "destructive" });
         return;
       }
-      const separator = lines[0].includes("\t") ? "\t" : ",";
+      const hasSemicolon = lines[0].includes(";");
+      const separator = hasSemicolon ? ";" : (lines[0].includes("\t") ? "\t" : ",");
       const headers = lines[0].split(separator).map((h) => h.trim().replace(/^"/, "").replace(/"$/, ""));
       const rows: string[][] = [];
       for (let i = 1; i < Math.min(lines.length, 6); i++) {
         rows.push(lines[i].split(separator).map((v) => v.trim().replace(/^"/, "").replace(/"$/, "")));
       }
-      setPreview({ headers, rows, totalRows: lines.length - 1 });
+      const detectedFormat = detectFormat(headers);
+      setPreview({ headers, rows, totalRows: lines.length - 1, separator, detectedFormat });
+      if (detectedFormat === "baselunar") {
+        setDataType("gps");
+      }
     };
-    reader.readAsText(f.slice(0, 1024 * 100));
+    reader.readAsText(f.slice(0, 1024 * 200));
   }, [toast]);
 
   const handleFileSelect = useCallback((f: File) => {
-    if (f.size > 100 * 1024 * 1024) {
-      toast({ title: "Archivo demasiado grande", description: "El tamaño máximo permitido es 100MB", variant: "destructive" });
+    if (f.size > 200 * 1024 * 1024) {
+      toast({ title: "Archivo demasiado grande", description: "El tamano maximo permitido es 200MB", variant: "destructive" });
       return;
     }
     if (!f.name.toLowerCase().endsWith(".csv") && !f.name.toLowerCase().endsWith(".tsv") && !f.name.toLowerCase().endsWith(".txt")) {
-      toast({ title: "Formato inválido", description: "Solo se aceptan archivos CSV, TSV o TXT", variant: "destructive" });
+      toast({ title: "Formato invalido", description: "Solo se aceptan archivos CSV, TSV o TXT", variant: "destructive" });
       return;
     }
     setFile(f);
@@ -118,6 +157,7 @@ export default function ImportCsv() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("dataType", dataType);
+      formData.append("format", format);
 
       setProgress(30);
 
@@ -139,7 +179,7 @@ export default function ImportCsv() {
       setProgress(100);
 
       toast({
-        title: "Importación completada",
+        title: "Importacion completada",
         description: `${data.imported} registros importados, ${data.duplicates} duplicados ignorados`,
       });
     } catch (e: any) {
@@ -168,13 +208,13 @@ export default function ImportCsv() {
       <div>
         <h1 className="text-2xl font-bold text-foreground" data-testid="text-import-title">Importar datos CSV</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Carga datos GPS o acelerómetro desde archivos CSV exportados de Movebank
+          Carga datos GPS o acelerometro desde archivos CSV de Movebank o Base Lunar
         </p>
       </div>
 
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium text-foreground mb-1.5 block">Estudio destino</label>
               <Select
@@ -200,13 +240,34 @@ export default function ImportCsv() {
               <Select
                 value={dataType}
                 onValueChange={(v) => setDataType(v as "gps" | "acc")}
+                disabled={effectiveFormat === "baselunar"}
               >
                 <SelectTrigger data-testid="select-data-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="gps">GPS (sensor 653)</SelectItem>
-                  <SelectItem value="acc">Acelerómetro (sensor 2365683)</SelectItem>
+                  <SelectItem value="acc">Acelerometro (sensor 2365683)</SelectItem>
+                </SelectContent>
+              </Select>
+              {effectiveFormat === "baselunar" && (
+                <p className="text-xs text-muted-foreground mt-1">Base Lunar solo soporta GPS</p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Formato de origen</label>
+              <Select
+                value={format}
+                onValueChange={(v) => setFormat(v as ImportFormat)}
+              >
+                <SelectTrigger data-testid="select-format">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Detectar automaticamente</SelectItem>
+                  <SelectItem value="movebank">Movebank</SelectItem>
+                  <SelectItem value="baselunar">Base Lunar</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -227,10 +288,10 @@ export default function ImportCsv() {
               >
                 <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground mb-1">
-                  Arrastra un archivo CSV aquí o haz clic para seleccionar
+                  Arrastra un archivo CSV aqui o haz clic para seleccionar
                 </p>
                 <p className="text-xs text-muted-foreground/60">
-                  Máximo 100MB — Separador coma o tabulador
+                  Maximo 200MB — Separador coma, punto y coma o tabulador
                 </p>
                 <input
                   ref={fileInputRef}
@@ -252,6 +313,7 @@ export default function ImportCsv() {
                   <p className="text-xs text-muted-foreground">
                     {(file.size / 1024).toFixed(1)} KB
                     {preview && ` — ${preview.totalRows.toLocaleString()} filas`}
+                    {preview && ` — separador: "${preview.separator === ";" ? ";" : preview.separator === "\t" ? "TAB" : ","}"`}
                   </p>
                 </div>
                 <Button size="icon" variant="ghost" onClick={clearFile} data-testid="button-clear-file">
@@ -260,16 +322,41 @@ export default function ImportCsv() {
               </div>
             )}
           </div>
+
+          {preview && format === "auto" && preview.detectedFormat !== "unknown" && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-muted/30 border">
+              <Info className="w-4 h-4 text-primary shrink-0" />
+              <p className="text-sm text-muted-foreground" data-testid="text-detected-format">
+                Formato detectado: <span className="font-medium text-foreground">{FORMAT_LABELS[preview.detectedFormat]}</span>
+                {preview.detectedFormat === "baselunar" && " (separador punto y coma, columnas nombre/fecha/hora/x/y)"}
+                {preview.detectedFormat === "movebank" && " (separador coma, columnas timestamp/individual-local-identifier)"}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {preview && !result && (
         <Card>
           <CardContent className="pt-6 space-y-3">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <Eye className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-sm font-medium text-foreground">Vista previa (primeras {preview.rows.length} filas)</h3>
+              {effectiveFormat !== "auto" && (
+                <Badge variant="outline" data-testid="badge-format">{FORMAT_LABELS[effectiveFormat]}</Badge>
+              )}
             </div>
+
+            {effectiveFormat === "baselunar" && (
+              <div className="text-xs text-muted-foreground space-y-0.5 p-2 rounded-md bg-muted/30 border">
+                <p className="font-medium text-foreground mb-1">Mapeo Base Lunar:</p>
+                <p>nombre → identificador del individuo | fecha + hora → timestamp</p>
+                <p>x → longitud (WGS84) | y → latitud (WGS84)</p>
+                <p>velocidad → ground_speed | curso → heading | altitud → height</p>
+                <p>nombre_comun → especie | sexo → sexo del individuo</p>
+              </div>
+            )}
+
             <div className="overflow-x-auto border rounded-md">
               <Table>
                 <TableHeader>
@@ -324,9 +411,12 @@ export default function ImportCsv() {
       {result && (
         <Card>
           <CardContent className="pt-6 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-              <h3 className="text-base font-semibold text-foreground">Importación completada</h3>
+              <h3 className="text-base font-semibold text-foreground">Importacion completada</h3>
+              {result.format && (
+                <Badge variant="outline">{FORMAT_LABELS[result.format] || result.format}</Badge>
+              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -355,6 +445,15 @@ export default function ImportCsv() {
                 <p className="text-xs text-muted-foreground">Individuos</p>
               </div>
             </div>
+
+            {result.individuals_created && result.individuals_created > 0 && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border">
+                <Info className="w-4 h-4 text-primary shrink-0" />
+                <p className="text-xs text-muted-foreground">
+                  Se crearon o actualizaron <span className="font-medium text-foreground">{result.individuals_created}</span> individuos con metadatos (especie, sexo)
+                </p>
+              </div>
+            )}
 
             {result.details.length > 0 && (
               <div className="space-y-1">
@@ -392,12 +491,12 @@ export default function ImportCsv() {
 
       <Card>
         <CardContent className="pt-6">
-          <h3 className="text-sm font-medium text-foreground mb-3">Formato CSV esperado</h3>
+          <h3 className="text-sm font-medium text-foreground mb-3">Formatos CSV soportados</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <Badge variant="outline">GPS</Badge>
-                <span className="text-xs text-muted-foreground">sensor_type_id 653</span>
+                <Badge variant="outline">Movebank — GPS</Badge>
+                <span className="text-xs text-muted-foreground">separador coma</span>
               </div>
               <div className="space-y-0.5">
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">timestamp</span> — ISO 8601 o epoch ms</p>
@@ -409,14 +508,27 @@ export default function ImportCsv() {
             </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <Badge variant="outline">Acelerómetro</Badge>
-                <span className="text-xs text-muted-foreground">sensor_type_id 2365683</span>
+                <Badge variant="outline">Movebank — Acelerometro</Badge>
+                <span className="text-xs text-muted-foreground">separador coma</span>
               </div>
               <div className="space-y-0.5">
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">timestamp</span> — ISO 8601 o epoch ms</p>
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">individual-local-identifier</span> — ID del animal</p>
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">acceleration-x/y/z</span> — Valores XYZ</p>
                 <p className="text-xs text-muted-foreground/60">O accelerations-raw (formato texto)</p>
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <div className="flex items-center gap-2 mb-2">
+                <Badge variant="outline">Base Lunar — GPS</Badge>
+                <span className="text-xs text-muted-foreground">separador punto y coma</span>
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">nombre</span> — Identificador del individuo</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">fecha</span> + <span className="font-medium text-foreground">hora</span> — Se combinan para generar el timestamp</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">x</span> — Longitud (WGS84)</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">y</span> — Latitud (WGS84)</p>
+                <p className="text-xs text-muted-foreground/60">velocidad, curso, altitud, nombre_comun, sexo (opcionales)</p>
               </div>
             </div>
           </div>
