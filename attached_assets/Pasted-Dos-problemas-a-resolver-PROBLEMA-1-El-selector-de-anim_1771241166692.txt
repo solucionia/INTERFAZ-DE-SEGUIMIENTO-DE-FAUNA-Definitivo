@@ -1,0 +1,42 @@
+Dos problemas a resolver:
+
+PROBLEMA 1 — El selector de animales en geo-analysis.tsx no permite hacer scroll cuando hay muchos animales. El dropdown se corta y no se pueden ver los animales de más abajo.
+
+Arregla el dropdown/lista de animales para que tenga:
+- Altura máxima de 300px con overflow-y: auto (scroll vertical)
+- El scroll debe funcionar tanto con ratón como con touch
+- Aplica el mismo fix en cualquier otro selector de animales que tenga el mismo problema (study-visualization.tsx, raw-data.tsx)
+
+PROBLEMA 2 — Todos los 214 individuos del estudio de Movebank muestran "Sin dispositivo" y "0 con deployment activo". Necesito verificar si es un problema de datos o de parseo.
+
+1. Ejecuta estas consultas y muéstrame los resultados:
+   SELECT COUNT(*) FROM deployments WHERE study_id = (SELECT id FROM studies LIMIT 1);
+   SELECT * FROM deployments LIMIT 5;
+   SELECT deploy_on_date, deploy_off_date FROM deployments WHERE deploy_off_date IS NULL LIMIT 10;
+   SELECT DISTINCT deploy_off_date FROM deployments LIMIT 20;
+
+2. Revisa en movebank.ts cómo se parsean los deployments:
+   - ¿Se está leyendo correctamente el campo "deploy_off_date" del CSV de Movebank?
+   - Un deployment está "activo" cuando deploy_off_date es NULL o vacío
+   - ¿Se están vinculando correctamente los deployments con los individuos? (el campo individual_id en deployments debe coincidir con movebank_id en individuals)
+
+3. Revisa cómo study-detail.tsx determina si un animal tiene deployment activo:
+   - ¿Cómo cruza individuals con deployments?
+   - ¿Comprueba deploy_off_date IS NULL o comprueba otra cosa?
+
+4. Muéstrame los resultados de las queries para entender si:
+   a) No hay deployments en la DB → problema de sync
+   b) Hay deployments pero todos tienen deploy_off_date → el estudio realmente no tiene activos
+   c) Hay deployments sin deploy_off_date pero la UI no los muestra → bug en el frontend
+
+5. Independientemente del resultado, añade la posibilidad de editar manualmente el estado de un animal desde la UI:
+   - En la tabla de individuos de study-detail.tsx, al hacer clic en un animal, abrir un diálogo de edición con:
+     - Apodo (nick_name)
+     - Sexo
+     - Etapa de vida (animal_life_stage)
+     - Estado del deployment: Activo / Inactivo (con fecha de fin editable)
+   - Solo el superusuario puede editar estos campos
+   - Guardar los cambios en la base de datos
+   - Esto permite que el usuario corrija datos que vengan incompletos de Movebank o de importación CSV
+
+Muéstrame los resultados de las queries SQL antes de hacer los cambios.

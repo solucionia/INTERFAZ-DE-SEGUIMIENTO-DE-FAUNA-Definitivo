@@ -35,10 +35,14 @@ export interface IStorage {
   removeUserFromStudy(userId: string, studyId: string): Promise<void>;
 
   getIndividuals(studyId: string): Promise<Individual[]>;
+  getIndividualById(id: string): Promise<Individual | undefined>;
   getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
+  updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
+  createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
+  updateDeploymentStatus(id: string, data: { deployOff: string | null }): Promise<Deployment | undefined>;
 
   getAllSpeciesProfiles(): Promise<SpeciesProfile[]>;
   getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined>;
@@ -307,6 +311,33 @@ export class DatabaseStorage implements IStorage {
           });
       }
     });
+  }
+
+  async getIndividualById(id: string): Promise<Individual | undefined> {
+    const [ind] = await db.select().from(individuals).where(eq(individuals.id, id));
+    return ind;
+  }
+
+  async updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined> {
+    const [updated] = await db.update(individuals).set(data).where(eq(individuals.id, id)).returning();
+    return updated;
+  }
+
+  async createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment> {
+    const [dep] = await db.insert(deployments).values({
+      studyId: data.studyId,
+      movebankId: data.movebankId,
+      individualId: data.individualId,
+      deployOn: data.deployOn,
+      deployOff: data.deployOff,
+      synced: false,
+    }).returning();
+    return dep;
+  }
+
+  async updateDeploymentStatus(id: string, data: { deployOff: string | null }): Promise<Deployment | undefined> {
+    const [updated] = await db.update(deployments).set(data).where(eq(deployments.id, id)).returning();
+    return updated;
   }
 
   async getAllSpeciesProfiles(): Promise<SpeciesProfile[]> {

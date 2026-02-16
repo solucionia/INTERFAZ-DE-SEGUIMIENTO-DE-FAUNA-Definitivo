@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import type { Individual } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, X, Check } from "lucide-react";
 
 function normalizeText(text: string): string {
@@ -139,14 +138,14 @@ export function AnimalSearch({
 
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md" data-testid="dropdown-animal-results">
-          <ScrollArea className="max-h-64">
+          <div className="max-h-[300px] overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
             {filtered.length === 0 ? (
               <div className="p-3 text-center text-sm text-muted-foreground">
                 Sin resultados
               </div>
             ) : (
               <div className="p-1">
-                {filtered.slice(0, 50).map((ind) => {
+                {filtered.slice(0, 100).map((ind) => {
                   const localId = ind.localIdentifier!;
                   const isSelected = selected.includes(localId);
                   const active = isActive(ind);
@@ -190,14 +189,14 @@ export function AnimalSearch({
                     </button>
                   );
                 })}
-                {filtered.length > 50 && (
+                {filtered.length > 100 && (
                   <div className="p-2 text-center text-xs text-muted-foreground">
-                    +{filtered.length - 50} mas — refina la busqueda
+                    +{filtered.length - 100} mas — refina la busqueda
                   </div>
                 )}
               </div>
             )}
-          </ScrollArea>
+          </div>
           {multiple && (
             <div className="border-t p-1.5 flex items-center justify-between gap-2">
               <span className="text-xs text-muted-foreground pl-1">

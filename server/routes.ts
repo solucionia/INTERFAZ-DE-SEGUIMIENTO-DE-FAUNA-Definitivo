@@ -424,6 +424,53 @@ export async function registerRoutes(
     return res.json(deployments);
   });
 
+  app.patch("/api/individuals/:id", requireSuperuser, async (req, res) => {
+    try {
+      const { nickName, sex, animalLifeStage } = req.body;
+      const updated = await storage.updateIndividual(req.params.id, {
+        ...(nickName !== undefined && { nickName }),
+        ...(sex !== undefined && { sex }),
+        ...(animalLifeStage !== undefined && { animalLifeStage }),
+      });
+      if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
+      return res.json(updated);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/deployments/:id", requireSuperuser, async (req, res) => {
+    try {
+      const { deployOff } = req.body;
+      const updated = await storage.updateDeploymentStatus(req.params.id, {
+        deployOff: deployOff || null,
+      });
+      if (!updated) return res.status(404).json({ message: "Deployment no encontrado" });
+      return res.json(updated);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/studies/:id/deployments", requireSuperuser, requireStudyAccess, async (req, res) => {
+    try {
+      const { individualMovebankId, deployOn, deployOff } = req.body;
+      if (!individualMovebankId || !deployOn) {
+        return res.status(400).json({ message: "individualMovebankId y deployOn son requeridos" });
+      }
+      const dep = await storage.createDeploymentForIndividual({
+        studyId: req.params.id,
+        movebankId: Math.floor(Date.now() + Math.random() * 10000),
+        individualId: individualMovebankId,
+        deployOn,
+        deployOff: deployOff || null,
+      });
+      return res.json(dep);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/studies/:id/events", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
@@ -960,6 +1007,12 @@ export async function registerRoutes(
       const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
       log(`Movebank respondió despliegues: ${rawDeployments.length}`, "movebank");
 
+      if (rawDeployments.length > 0) {
+        const sampleKeys = Object.keys(rawDeployments[0]);
+        log(`Movebank deployment CSV columns: ${sampleKeys.join(", ")}`, "movebank");
+        log(`Movebank deployment sample row: ${JSON.stringify(rawDeployments[0])}`, "movebank");
+      }
+
       const individualsData = rawIndividuals.map((r) => ({
         studyId: study.id,
         movebankId: parseInt(r.id || r.individual_id || "0", 10),
@@ -971,15 +1024,22 @@ export async function registerRoutes(
         synced: true,
       }));
 
-      const deploymentsData = rawDeployments.map((r) => ({
-        studyId: study.id,
-        movebankId: parseInt(r.id || r.deployment_id || "0", 10),
-        individualId: r.individual_id ? parseInt(r.individual_id, 10) : null,
-        localIdentifier: r.local_identifier || null,
-        deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
-        deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
-        synced: true,
-      }));
+      const indIdRaw = (r: Record<string, string>) =>
+        r.individual_id || r["individual.id"] || r.individual_local_identifier || "";
+
+      const deploymentsData = rawDeployments.map((r) => {
+        const rawIndId = indIdRaw(r);
+        const parsedIndId = rawIndId ? parseInt(rawIndId, 10) : null;
+        return {
+          studyId: study.id,
+          movebankId: parseInt(r.id || r.deployment_id || "0", 10),
+          individualId: parsedIndId && !isNaN(parsedIndId) ? parsedIndId : null,
+          localIdentifier: r.local_identifier || r.tag_local_identifier || null,
+          deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
+          deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
+          synced: true,
+        };
+      });
 
       await Promise.all([
         storage.upsertIndividuals(study.id, individualsData),

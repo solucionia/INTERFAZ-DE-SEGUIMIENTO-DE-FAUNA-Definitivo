@@ -12,10 +12,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Radio, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -33,9 +42,16 @@ export default function StudyDetail() {
   const [, params] = useRoute("/study/:id");
   const studyId = params?.id;
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isSuperuser = user?.role === "superuser";
   const [syncing, setSyncing] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingIndividual, setEditingIndividual] = useState<Individual | null>(null);
+  const [editForm, setEditForm] = useState({ nickName: "", sex: "", animalLifeStage: "" });
+  const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
+  const [deployOffDate, setDeployOffDate] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -117,6 +133,66 @@ export default function StudyDetail() {
       toast({ title: "Error al sincronizar", description: errorMsg, variant: "destructive" });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const openEditDialog = (ind: Individual) => {
+    const hasActive = activeDeploymentIndividualIds.has(ind.movebankId);
+    const indDeployments = deployments?.filter(d => d.individualId === ind.movebankId) || [];
+    const activeDep = indDeployments.find(d => !d.deployOff);
+    setEditingIndividual(ind);
+    setEditForm({
+      nickName: ind.nickName || "",
+      sex: ind.sex || "",
+      animalLifeStage: ind.animalLifeStage || "",
+    });
+    setDeploymentStatus(hasActive ? "active" : "inactive");
+    setDeployOffDate(activeDep?.deployOff || "");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingIndividual || !studyId) return;
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/individuals/${editingIndividual.id}`, {
+        nickName: editForm.nickName || null,
+        sex: editForm.sex || null,
+        animalLifeStage: editForm.animalLifeStage || null,
+      });
+
+      const hasActive = activeDeploymentIndividualIds.has(editingIndividual.movebankId);
+      const indDeployments = deployments?.filter(d => d.individualId === editingIndividual.movebankId) || [];
+      const activeDep = indDeployments.find(d => !d.deployOff);
+      const mostRecentInactiveDep = indDeployments.filter(d => d.deployOff).sort((a, b) => (b.deployOff || "").localeCompare(a.deployOff || ""))[0];
+
+      if (hasActive && deploymentStatus === "inactive") {
+        if (activeDep) {
+          await apiRequest("PATCH", `/api/deployments/${activeDep.id}`, {
+            deployOff: deployOffDate || new Date().toISOString().split("T")[0],
+          });
+        }
+      } else if (!hasActive && deploymentStatus === "active") {
+        if (mostRecentInactiveDep) {
+          await apiRequest("PATCH", `/api/deployments/${mostRecentInactiveDep.id}`, {
+            deployOff: null,
+          });
+        } else {
+          await apiRequest("POST", `/api/studies/${studyId}/deployments`, {
+            individualMovebankId: editingIndividual.movebankId,
+            deployOn: new Date().toISOString().split("T")[0],
+            deployOff: null,
+          });
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
+      toast({ title: "Guardado", description: "Los datos del individuo se actualizaron correctamente" });
+      setEditingIndividual(null);
+    } catch (e: any) {
+      toast({ title: "Error", description: "No se pudieron guardar los cambios", variant: "destructive" });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -292,6 +368,7 @@ export default function StudyDetail() {
                     <TableHead>Sexo</TableHead>
                     <TableHead>Etapa</TableHead>
                     <TableHead>Estado</TableHead>
+                    {isSuperuser && <TableHead className="w-10"></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -350,6 +427,18 @@ export default function StudyDetail() {
                             )}
                           </div>
                         </TableCell>
+                        {isSuperuser && (
+                          <TableCell>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => openEditDialog(ind)}
+                              data-testid={`button-edit-individual-${ind.movebankId}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })}
@@ -373,6 +462,88 @@ export default function StudyDetail() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!editingIndividual} onOpenChange={(open) => !open && setEditingIndividual(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Editar: {editingIndividual?.localIdentifier || `ID-${editingIndividual?.movebankId}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-nickname">Apodo (nick name)</Label>
+              <Input
+                id="edit-nickname"
+                value={editForm.nickName}
+                onChange={(e) => setEditForm({ ...editForm, nickName: e.target.value })}
+                placeholder="Nombre descriptivo"
+                data-testid="input-edit-nickname"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-sex">Sexo</Label>
+              <Select value={editForm.sex || "unknown"} onValueChange={(v) => setEditForm({ ...editForm, sex: v === "unknown" ? "" : v })}>
+                <SelectTrigger data-testid="select-edit-sex">
+                  <SelectValue placeholder="Seleccionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unknown">Desconocido</SelectItem>
+                  <SelectItem value="m">Macho</SelectItem>
+                  <SelectItem value="f">Hembra</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-lifestage">Etapa de vida</Label>
+              <Select value={editForm.animalLifeStage || "unknown"} onValueChange={(v) => setEditForm({ ...editForm, animalLifeStage: v === "unknown" ? "" : v })}>
+                <SelectTrigger data-testid="select-edit-lifestage">
+                  <SelectValue placeholder="Seleccionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unknown">Desconocido</SelectItem>
+                  <SelectItem value="juvenile">Juvenil</SelectItem>
+                  <SelectItem value="subadult">Subadulto</SelectItem>
+                  <SelectItem value="adult">Adulto</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Estado del deployment</Label>
+              <Select value={deploymentStatus} onValueChange={(v) => setDeploymentStatus(v as "active" | "inactive")}>
+                <SelectTrigger data-testid="select-edit-deployment-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Activo (rastreando)</SelectItem>
+                  <SelectItem value="inactive">Inactivo (sin dispositivo)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {deploymentStatus === "inactive" && activeDeploymentIndividualIds.has(editingIndividual?.movebankId ?? 0) && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-deploy-off">Fecha fin del deployment</Label>
+                <Input
+                  id="edit-deploy-off"
+                  type="date"
+                  value={deployOffDate}
+                  onChange={(e) => setDeployOffDate(e.target.value)}
+                  data-testid="input-edit-deploy-off"
+                />
+                <p className="text-xs text-muted-foreground">Si se deja vacia, se usara la fecha de hoy</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingIndividual(null)} data-testid="button-cancel-edit">
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={saving} data-testid="button-save-edit">
+              {saving ? "Guardando..." : "Guardar cambios"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
