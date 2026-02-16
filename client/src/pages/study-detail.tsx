@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -52,6 +52,7 @@ export default function StudyDetail() {
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
   const [saving, setSaving] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -102,6 +103,42 @@ export default function StudyDetail() {
 
   const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId)).length || 0;
   const inactiveCount = (individuals?.length || 0) - activeCount;
+
+  const unlinkedActiveCount = useMemo(() =>
+    deployments?.filter((d) => !d.deployOff && !d.individualId).length || 0,
+    [deployments]
+  );
+
+  const handleRepair = async () => {
+    setRepairing(true);
+    try {
+      const res = await apiRequest("POST", `/api/studies/${studyId}/repair-deployments`);
+      let data: { total?: number; linked?: number; unlinked?: number } = {};
+      try { data = await res.json(); } catch {}
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
+      toast({
+        title: "Reparacion completada",
+        description: `${data.linked || 0} deployments vinculados, ${data.unlinked || 0} sin vincular de ${data.total || 0} total`,
+      });
+    } catch (e: any) {
+      let errorMsg = "Error desconocido al reparar";
+      if (e.message) {
+        const colonIdx = e.message.indexOf(": ");
+        const body = colonIdx >= 0 ? e.message.substring(colonIdx + 2) : e.message;
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed.message) errorMsg = parsed.message;
+          else errorMsg = body;
+        } catch {
+          errorMsg = body;
+        }
+      }
+      toast({ title: "Error al reparar", description: errorMsg, variant: "destructive" });
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -265,6 +302,18 @@ export default function StudyDetail() {
               Importar CSV
             </Button>
           </Link>
+          {isSuperuser && unlinkedActiveCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={handleRepair}
+              disabled={repairing}
+              className="border-amber-500/30 text-amber-600 dark:text-amber-400"
+              data-testid="button-repair-deployments"
+            >
+              <Wrench className={`w-4 h-4 mr-2 ${repairing ? "animate-spin" : ""}`} />
+              {repairing ? "Reparando..." : "Reparar vinculos"}
+            </Button>
+          )}
           <Button
             onClick={handleSync}
             disabled={syncing}
@@ -300,6 +349,27 @@ export default function StudyDetail() {
                 <p className="text-2xl font-bold text-emerald-500" data-testid="text-active-deployments">
                   {individualsLoading ? <Skeleton className="h-8 w-12 rounded" /> : activeCount}
                 </p>
+                {unlinkedActiveCount > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-xs" data-testid="badge-unlinked-deployments">
+                      <Link2 className="w-3 h-3 mr-1" />
+                      {unlinkedActiveCount} deployments sin vincular
+                    </Badge>
+                    {isSuperuser && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleRepair}
+                        disabled={repairing}
+                        className="text-xs text-amber-600 dark:text-amber-400"
+                        data-testid="button-repair-card"
+                      >
+                        <Wrench className="w-3 h-3 mr-1" />
+                        Reparar
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="p-2 rounded-md bg-emerald-500/10">
                 <RadioTower className="w-5 h-5 text-emerald-500" />

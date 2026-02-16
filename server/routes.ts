@@ -1062,6 +1062,79 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/studies/:id/repair-deployments", movebankLimiter, requireSuperuser, requireStudyAccess, async (req, res) => {
+    try {
+      log(`Repair-deployments iniciado para estudio: ${req.params.id}`, "movebank");
+      const study = await storage.getStudyDecrypted(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
+      log(`Repair: Movebank respondió ${rawDeployments.length} despliegues`, "movebank");
+
+      if (rawDeployments.length > 0) {
+        const allColumns = Object.keys(rawDeployments[0]);
+        log(`Repair: ALL deployment CSV columns: ${allColumns.join(", ")}`, "movebank");
+
+        const individualColumns = allColumns.filter(col => col.toLowerCase().includes("individual"));
+        log(`Repair: Columns containing 'individual': ${individualColumns.join(", ")}`, "movebank");
+
+        for (const dep of rawDeployments.slice(0, 5)) {
+          const individualValues: Record<string, string> = {};
+          for (const col of individualColumns) {
+            individualValues[col] = dep[col] || "(empty)";
+          }
+          log(`Repair: Deployment ${dep.id || dep.deployment_id || "?"} individual columns: ${JSON.stringify(individualValues)}`, "movebank");
+        }
+      }
+
+      const indIdRaw = (r: Record<string, string>) => {
+        const allColumns = Object.keys(r);
+        const individualColumns = allColumns.filter(col => col.toLowerCase().includes("individual"));
+        for (const col of individualColumns) {
+          const val = r[col];
+          if (val && /^\d+$/.test(val.trim())) {
+            log(`Repair: Using column '${col}' with value '${val}' for individual_id`, "movebank");
+            return val.trim();
+          }
+        }
+        return r.individual_id || r["individual.id"] || r.individual_local_identifier || "";
+      };
+
+      const deploymentsData = rawDeployments.map((r) => {
+        const rawIndId = indIdRaw(r);
+        const parsedIndId = rawIndId ? parseInt(rawIndId, 10) : null;
+        return {
+          studyId: study.id,
+          movebankId: parseInt(r.id || r.deployment_id || "0", 10),
+          individualId: parsedIndId && !isNaN(parsedIndId) ? parsedIndId : null,
+          localIdentifier: r.local_identifier || r.tag_local_identifier || null,
+          deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
+          deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
+          synced: true,
+        };
+      });
+
+      const linked = deploymentsData.filter(d => d.individualId != null).length;
+      const unlinked = deploymentsData.filter(d => d.individualId == null).length;
+
+      await storage.upsertDeployments(study.id, deploymentsData);
+
+      log(`Repair completado para ${study.name}: ${linked} vinculados, ${unlinked} sin vincular de ${deploymentsData.length} total`, "movebank");
+
+      return res.json({
+        total: deploymentsData.length,
+        linked,
+        unlinked,
+      });
+    } catch (e: any) {
+      log(`Repair error para estudio ${req.params.id}: ${e.message}`, "movebank");
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
+      return res.status(500).json({ message: `Error al reparar deployments: ${e.message}` });
+    }
+  });
+
   // Geospatial Analysis
   app.post("/api/studies/:id/analysis", requireStudyAccess, async (req, res) => {
     try {
