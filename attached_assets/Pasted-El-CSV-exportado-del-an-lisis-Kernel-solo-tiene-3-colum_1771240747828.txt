@@ -1,0 +1,35 @@
+El CSV exportado del análisis Kernel solo tiene 3 columnas (individual, area_95_km2, area_50_km2). Debe replicar el formato completo del VALORES.csv del cliente. Arregla el exportar CSV para que incluya TODAS estas columnas:
+
+Formato esperado del CSV (una fila por animal):
+
+"",localizaciones,dias_analisis,total_recorrido_km,distancia_minima_entre_localizaciones_km,distancia_maxima_entre_localizaciones_km,p_fecha,u_fecha,excentricidad,linearidad,minima_distancia_dia_km,maxima_distancia_dia_km,media_distancia_dia_km,h_href,h_lscv,hr_area5,hr_area10,hr_area20,hr_area25,hr_area30,hr_area35,hr_area40,hr_area45,hr_area50,hr_area55,hr_area60,hr_area65,hr_area70,hr_area75,hr_area80,hr_area85,hr_area90,hr_area95,mcp_20,mcp_25,mcp_30,mcp_35,mcp_40,mcp_45,mcp_50,mcp_55,mcp_60,mcp_65,mcp_70,mcp_75,mcp_80,mcp_85,mcp_90,mcp_95,mcp_100
+
+Donde:
+- La primera columna "" es el nombre del animal
+- localizaciones: número de puntos GPS usados
+- dias_analisis: número de días distintos con datos
+- total_recorrido_km: distancia total en km
+- distancia_minima/maxima_entre_localizaciones_km: entre puntos consecutivos
+- p_fecha: primera fecha (formato DD/MM/YYYY)
+- u_fecha: última fecha (formato DD/MM/YYYY)
+- excentricidad: valor 0-1 calculado con PCA
+- linearidad: distancia recta inicio-fin / total recorrido
+- minima/maxima/media_distancia_dia_km: distancias diarias
+- h_href: bandwidth HREF en metros
+- h_lscv: bandwidth LSCV (vacío si no se calculó)
+- hr_area5 a hr_area95: áreas de home range kernel en m² (metros cuadrados, NO km², para compatibilidad con el script R del cliente)
+- mcp_20 a mcp_100: áreas de MCP en m²
+
+Para generar este CSV completo, el análisis debe calcular TODAS las métricas en una sola ejecución, no solo el tipo seleccionado. Es decir, cuando se exporta el CSV completo, debe ejecutar internamente MCP + Kernel + Distancia + métricas estadísticas todo junto.
+
+El botón "Exportar CSV" debe tener dos opciones:
+1. "Exportar métricas del análisis actual" → lo que hace ahora
+2. "Exportar VALORES completo" → el CSV con todas las métricas combinadas (puede tardar más)
+
+Las áreas hr_area en el CSV deben estar en m² (para compatibilidad con R), aunque en la UI se muestren en km².
+
+También crea los endpoints separados:
+- GET /api/analyses/:id/export-hrref → CSV con columnas: porcentaje, hr_area (en m²)
+- GET /api/analyses/:id/export-mpc → CSV con columnas: porcentaje, area (en m²)
+
+Mantén la UI en español.

@@ -259,11 +259,47 @@ export default function GeoAnalysis() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `metricas_${resultData.analysisType}_${format(new Date(), "yyyyMMdd_HHmmss")}.csv`;
+      a.download = `VALORES_${format(new Date(), "yyyyMMdd")}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
       toast({ title: "Error", description: "No se pudo exportar el CSV", variant: "destructive" });
+    }
+  };
+
+  const [exportingValores, setExportingValores] = useState(false);
+
+  const exportValoresOnTheFly = async () => {
+    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) return;
+    setExportingValores(true);
+    try {
+      const body = {
+        individuals: selectedAnimals,
+        timestampStart: new Date(dateStart).getTime(),
+        timestampEnd: new Date(dateEnd + "T23:59:59.999").getTime(),
+      };
+      const res = await fetch(`/api/studies/${studyId}/export-valores`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || "Error exportando");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `VALORES_${format(new Date(), "yyyyMMdd")}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Exportación completada", description: "VALORES.csv generado con todas las métricas" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message || "No se pudo exportar el CSV", variant: "destructive" });
+    } finally {
+      setExportingValores(false);
     }
   };
 
@@ -383,9 +419,30 @@ export default function GeoAnalysis() {
             </DropdownMenu>
           )}
           {resultData && resultData.analysisType !== "comprehensive" && (
-            <Button variant="outline" onClick={exportCsvLegacy} data-testid="button-export-csv">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="button-export-csv">
+                  <Download className="w-4 h-4 mr-2" />
+                  Exportar
+                  <ChevronDown className="w-3 h-3 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportCsvLegacy} data-testid="menu-export-current">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Métricas del análisis actual
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportValoresOnTheFly} disabled={exportingValores} data-testid="menu-export-valores-full">
+                  <FileText className="w-4 h-4 mr-2" />
+                  {exportingValores ? "Generando VALORES..." : "VALORES completo (todas las métricas)"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {!resultData && selectedAnimals.length > 0 && dateStart && dateEnd && (
+            <Button variant="outline" onClick={exportValoresOnTheFly} disabled={exportingValores} data-testid="button-export-valores-direct">
               <Download className="w-4 h-4 mr-2" />
-              Exportar CSV
+              {exportingValores ? "Generando..." : "Exportar VALORES"}
             </Button>
           )}
           <Button

@@ -14,6 +14,78 @@ import { decrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 
+function fmtDate(isoStr: string): string {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function buildValoresCsv(resultData: any): string {
+  if (!resultData?.perIndividual) return "";
+
+  const headers = [
+    '""',
+    "localizaciones",
+    "dias_analisis",
+    "total_recorrido_km",
+    "distancia_minima_entre_localizaciones_km",
+    "distancia_maxima_entre_localizaciones_km",
+    "p_fecha",
+    "u_fecha",
+    "excentricidad",
+    "linearidad",
+    "minima_distancia_dia_km",
+    "maxima_distancia_dia_km",
+    "media_distancia_dia_km",
+    "h_href",
+    "h_lscv",
+  ];
+
+  for (const pct of KERNEL_PERCENTAGES) {
+    headers.push(`hr_area${pct}`);
+  }
+
+  for (const pct of MCP_PERCENTAGES) {
+    headers.push(`mcp_${pct}`);
+  }
+
+  let csv = headers.join(",") + "\n";
+
+  for (const ind of resultData.perIndividual) {
+    const row: (string | number)[] = [
+      `"${ind.individual}"`,
+      ind.locations,
+      ind.analysisDays,
+      ind.totalDistanceKm,
+      ind.minConsecutiveDistKm,
+      ind.maxConsecutiveDistKm,
+      fmtDate(ind.firstDate),
+      fmtDate(ind.lastDate),
+      ind.eccentricity,
+      ind.linearity,
+      ind.minDailyDistKm,
+      ind.maxDailyDistKm,
+      ind.avgDailyDistKm,
+      ind.hHref != null ? Math.round(ind.hHref * 1000 * 1000) / 1000 : "",
+      ind.hLscv != null ? Math.round(ind.hLscv * 1000 * 1000) / 1000 : "",
+    ];
+
+    for (const pct of KERNEL_PERCENTAGES) {
+      const km2 = ind.kernelHrefAreas?.[`${pct}`];
+      row.push(km2 != null ? Math.round(km2 * 1e6 * 1000) / 1000 : "");
+    }
+
+    for (const pct of MCP_PERCENTAGES) {
+      const km2 = ind.mcpAreas?.[`${pct}`];
+      row.push(km2 != null ? Math.round(km2 * 1e6 * 1000) / 1000 : "");
+    }
+
+    csv += row.join(",") + "\n";
+  }
+
+  return csv;
+}
+
 function maskStudyCredentials(study: Study): Study {
   return {
     ...study,
@@ -1066,6 +1138,88 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/studies/:id/export-valores", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudyDecrypted(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { individuals: animalIds, timestampStart, timestampEnd } = req.body;
+
+      if (!animalIds || !Array.isArray(animalIds) || animalIds.length === 0) {
+        return res.status(400).json({ message: "Seleccione al menos un animal" });
+      }
+      if (!timestampStart || !timestampEnd) {
+        return res.status(400).json({ message: "Rango de fechas requerido" });
+      }
+
+      const allGpsRows: { individual_id: string; timestamp: number; latitude: number; longitude: number }[] = [];
+
+      for (const animalId of animalIds) {
+        const cachedEvents = await storage.getCachedGpsEvents(study.id, animalId, timestampStart, timestampEnd);
+
+        if (cachedEvents.length > 0) {
+          for (const ev of cachedEvents) {
+            if (ev.latitude != null && ev.longitude != null) {
+              allGpsRows.push({ individual_id: animalId, timestamp: ev.timestamp, latitude: ev.latitude, longitude: ev.longitude });
+            }
+          }
+        } else {
+          try {
+            const gpsEvents = await fetchMovebankEvents(
+              study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+              animalId, 653, timestampStart, timestampEnd
+            );
+            for (const ev of gpsEvents) {
+              if (ev.location_lat && ev.location_long) {
+                const lat = parseFloat(ev.location_lat);
+                const lng = parseFloat(ev.location_long);
+                const ts = new Date(ev.timestamp).getTime();
+                if (!isNaN(lat) && !isNaN(lng) && !isNaN(ts)) {
+                  allGpsRows.push({ individual_id: animalId, timestamp: ts, latitude: lat, longitude: lng });
+                }
+              }
+            }
+          } catch (mbErr: any) {
+            log(`VALORES export: Movebank fetch failed for ${animalId}: ${mbErr.message}`, "analysis");
+          }
+        }
+      }
+
+      if (allGpsRows.length < 2) {
+        return res.status(400).json({ message: "No se encontraron datos GPS suficientes" });
+      }
+
+      const ANALYSIS_TIMEOUT_MS = 120000;
+      const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {
+        try {
+          resolve(runAnalysis("comprehensive", allGpsRows, { bandwidthMethod: "both" }));
+        } catch (err) { reject(err); }
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("ANALYSIS_TIMEOUT")), ANALYSIS_TIMEOUT_MS);
+      });
+
+      let resultData: AnalysisResult;
+      try {
+        resultData = await Promise.race([analysisPromise, timeoutPromise]);
+      } catch (timeoutErr: any) {
+        if (timeoutErr.message === "ANALYSIS_TIMEOUT") {
+          return res.status(408).json({ message: "El cálculo tardó demasiado. Intente con menos animales o un rango menor." });
+        }
+        throw timeoutErr;
+      }
+
+      const csv = buildValoresCsv(resultData as any);
+      const dateStr = new Date().toISOString().split("T")[0].replace(/-/g, "");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="VALORES_${dateStr}.csv"`);
+      return res.send("\uFEFF" + csv);
+    } catch (e: any) {
+      log(`VALORES export error: ${e.message}`, "analysis");
+      return res.status(500).json({ message: `Error exportando VALORES: ${e.message}` });
+    }
+  });
+
   app.get("/api/studies/:id/analyses", requireStudyAccess, async (req, res) => {
     const analyses = await storage.getSavedAnalyses(req.params.id, req.user!.id);
     return res.json(analyses);
@@ -1094,77 +1248,7 @@ export async function registerRoutes(
       let csv = "";
 
       if (resultData?.analysisType === "comprehensive" && resultData.perIndividual) {
-        const headers = [
-          "",
-          "localizaciones",
-          "dias_analisis",
-          "total_recorrido",
-          "distancia_minima_entre_localizaciones",
-          "distancia_maxima_entre_localizaciones",
-          "p_fecha",
-          "u_fecha",
-          "escentricidad",
-          "Linearity",
-          "minima_distancia_dia",
-          "maxima_distancia_dia",
-          "media_distancia_dia",
-          "h",
-        ];
-
-        if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
-          headers.push("h_lscv");
-        }
-
-        for (const pct of KERNEL_PERCENTAGES) {
-          headers.push(`hr_area${pct}`);
-        }
-
-        for (const pct of MCP_PERCENTAGES) {
-          headers.push(`mcp_area${pct}`);
-        }
-
-        csv = headers.join(",") + "\n";
-
-        for (const ind of resultData.perIndividual) {
-          const fmtDate = (isoStr: string) => {
-            if (!isoStr) return "";
-            const d = new Date(isoStr);
-            return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-          };
-
-          const row: any[] = [
-            ind.individual,
-            ind.locations,
-            ind.analysisDays,
-            ind.totalDistanceKm,
-            ind.minConsecutiveDistKm,
-            ind.maxConsecutiveDistKm,
-            fmtDate(ind.firstDate),
-            fmtDate(ind.lastDate),
-            ind.eccentricity,
-            ind.linearity,
-            ind.minDailyDistKm,
-            ind.maxDailyDistKm,
-            ind.avgDailyDistKm,
-            ind.hHref,
-          ];
-
-          if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
-            row.push(ind.hLscv ?? "");
-          }
-
-          for (const pct of KERNEL_PERCENTAGES) {
-            const km2 = ind.kernelHrefAreas?.[`${pct}`];
-            row.push(km2 != null ? km2 * 1e6 : "");
-          }
-
-          for (const pct of MCP_PERCENTAGES) {
-            const km2 = ind.mcpAreas?.[`${pct}`];
-            row.push(km2 != null ? km2 * 1e6 : "");
-          }
-
-          csv += row.join(",") + "\n";
-        }
+        csv = buildValoresCsv(resultData);
       } else if (resultData?.analysisType === "mcp") {
         csv = "Animal,Area_km2\n";
         for (const a of resultData.areas || []) {
