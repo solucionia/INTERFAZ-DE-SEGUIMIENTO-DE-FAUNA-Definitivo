@@ -146,7 +146,7 @@ export default function GeoAnalysis() {
   const analysisMutation = useMutation({
     mutationFn: async () => {
       const tsStart = new Date(dateStart).getTime();
-      const tsEnd = new Date(dateEnd).getTime();
+      const tsEnd = new Date(dateEnd + "T23:59:59.999").getTime();
       if (isNaN(tsStart) || isNaN(tsEnd)) throw new Error("Fechas invalidas");
 
       const body: any = {

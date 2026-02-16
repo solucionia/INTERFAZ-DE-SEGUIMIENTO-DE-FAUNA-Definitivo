@@ -951,24 +951,65 @@ export async function registerRoutes(
       const allGpsRows: { individual_id: string; timestamp: number; latitude: number; longitude: number }[] = [];
 
       for (const animalId of animalIds) {
-        const gpsEvents = await fetchMovebankEvents(
-          study.movebankStudyId,
-          study.movebankUsername,
-          study.movebankPassword,
+        const cachedEvents = await storage.getCachedGpsEvents(
+          study.id,
           animalId,
-          653,
           timestampStart,
           timestampEnd
         );
 
-        for (const ev of gpsEvents) {
-          if (ev.location_lat && ev.location_long) {
-            const lat = parseFloat(ev.location_lat);
-            const lng = parseFloat(ev.location_long);
-            const ts = new Date(ev.timestamp).getTime();
-            if (!isNaN(lat) && !isNaN(lng) && !isNaN(ts)) {
-              allGpsRows.push({ individual_id: animalId, timestamp: ts, latitude: lat, longitude: lng });
+        if (cachedEvents.length > 0) {
+          for (const ev of cachedEvents) {
+            if (ev.latitude != null && ev.longitude != null) {
+              allGpsRows.push({
+                individual_id: animalId,
+                timestamp: ev.timestamp,
+                latitude: ev.latitude,
+                longitude: ev.longitude,
+              });
             }
+          }
+          log(`Analysis: used ${cachedEvents.length} cached GPS events for ${animalId}`, "analysis");
+        } else {
+          try {
+            const gpsEvents = await fetchMovebankEvents(
+              study.movebankStudyId,
+              study.movebankUsername,
+              study.movebankPassword,
+              animalId,
+              653,
+              timestampStart,
+              timestampEnd
+            );
+
+            const newCachedEvents: Omit<CachedGpsEvent, "id">[] = [];
+            for (const ev of gpsEvents) {
+              if (ev.location_lat && ev.location_long) {
+                const lat = parseFloat(ev.location_lat);
+                const lng = parseFloat(ev.location_long);
+                const ts = new Date(ev.timestamp).getTime();
+                if (!isNaN(lat) && !isNaN(lng) && !isNaN(ts)) {
+                  allGpsRows.push({ individual_id: animalId, timestamp: ts, latitude: lat, longitude: lng });
+                  newCachedEvents.push({
+                    studyId: study.id,
+                    individualLocalIdentifier: animalId,
+                    timestamp: ts,
+                    latitude: lat,
+                    longitude: lng,
+                    groundSpeed: ev.ground_speed ? parseFloat(ev.ground_speed) : null,
+                    heading: ev.heading ? parseFloat(ev.heading) : null,
+                    heightAboveEllipsoid: ev.height_above_ellipsoid ? parseFloat(ev.height_above_ellipsoid) : null,
+                  });
+                }
+              }
+            }
+
+            if (newCachedEvents.length > 0) {
+              await storage.insertCachedGpsEvents(newCachedEvents);
+              log(`Analysis: fetched and cached ${newCachedEvents.length} GPS events from Movebank for ${animalId}`, "analysis");
+            }
+          } catch (mbErr: any) {
+            log(`Analysis: Movebank fetch failed for ${animalId}: ${mbErr.message}, continuing with cached data only`, "analysis");
           }
         }
       }
