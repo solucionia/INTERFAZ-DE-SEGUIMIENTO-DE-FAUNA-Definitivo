@@ -55,7 +55,10 @@ export function decrypt(encryptedText: string): string {
   try {
     const iv = Buffer.from(ivHex, "hex");
     const authTag = Buffer.from(authTagHex, "hex");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey, iv);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey, iv, { authTagLength: 16 });
+    if (authTag.length !== 16) {
+      throw new Error("Invalid authentication tag length.");
+    }
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(ciphertext, "hex", "utf8");
     decrypted += decipher.final("utf8");
