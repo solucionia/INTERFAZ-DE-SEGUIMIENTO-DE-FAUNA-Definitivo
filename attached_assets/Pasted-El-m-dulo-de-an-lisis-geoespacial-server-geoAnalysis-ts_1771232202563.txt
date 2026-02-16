@@ -1,0 +1,109 @@
+El módulo de análisis geoespacial (server/geoAnalysis.ts y client/src/pages/geo-analysis.tsx) necesita ampliarse significativamente para incluir todas las métricas científicas requeridas. Actualmente solo calcula MCP básico, Kernel al 50%/95%, distancia total y velocidad. Hay que añadir muchas más métricas y opciones.
+
+CAMBIOS EN EL BACKEND — server/geoAnalysis.ts:
+
+1. **Muestreo aleatorio cuando hay muchos datos:**
+   - Si el dataset tiene más de 10.000 puntos GPS, tomar una muestra aleatoria de 10.000 puntos antes de hacer los cálculos
+   - Mantener el primer y último punto siempre (para no perder el rango temporal)
+   - Mostrar un aviso al usuario: "Se han muestreado 10.000 de {N} puntos para optimizar el cálculo"
+
+2. **Home Range Kernel con múltiples porcentajes:**
+   - Actualmente solo calcula al 50% y 95%. Cambiar para calcular en estos porcentajes: 5%, 10%, 15%, 20%, 25%, 30%, 35%, 40%, 45%, 50%, 55%, 60%, 65%, 70%, 75%, 80%, 85%, 90%, 95%
+   - Cada porcentaje genera un polígono y su área en km²
+   - Implementar DOS métodos de cálculo del bandwidth (h):
+     a) **HREF** (Reference bandwidth / regla de Silverman) — el que ya existe
+     b) **LSCV** (Least Squares Cross Validation) — implementar nuevo:
+        - LSCV minimiza la función de error cuadrático integrado mediante validación cruzada
+        - Implementación: probar valores de h en un rango (h_min a h_max), para cada h calcular el score LSCV, elegir el h que minimice el score
+        - h_min = 0.1 * href, h_max = 2 * href, probar al menos 50 valores
+        - Score LSCV(h) = integral de f²(x) - (2/n) * Σ f_{-i}(x_i), donde f_{-i} es la densidad estimada sin el punto i
+        - Si LSCV no converge (es común), usar HREF como fallback y avisar al usuario
+   - El usuario elige qué método usar: HREF o LSCV
+   - Devolver el valor de h utilizado en los resultados
+
+3. **MCP con múltiples porcentajes:**
+   - Calcular MCP también a varios porcentajes: 50%, 75%, 90%, 95%, 100%
+   - Para MCP al X%: calcular el centroide de todos los puntos, ordenar los puntos por distancia al centroide, tomar el X% más cercano, calcular el convex hull de esos puntos
+   - Devolver polígono y área para cada porcentaje
+
+4. **Métricas estadísticas completas:**
+   Añadir el cálculo de todas estas métricas y devolverlas en result_data:
+
+   a) **Localizaciones:** número total de puntos GPS
+   b) **Días de análisis:** número de días distintos con posiciones GPS
+   c) **Primera fecha:** timestamp del primer dato
+   d) **Última fecha:** timestamp del último dato
+   e) **Distancia total recorrida:** en km (verificar que esté en km, no metros)
+   f) **Distancia mínima entre localizaciones:** distancia más corta entre dos puntos consecutivos, en km
+   g) **Distancia máxima entre localizaciones:** distancia más larga entre dos puntos consecutivos, en km
+   h) **Distancia mínima diaria:** el día con menor distancia recorrida, en km
+   i) **Distancia máxima diaria:** el día con mayor distancia recorrida, en km
+   j) **Distancia media diaria:** promedio de distancia por día, en km
+   k) **Excentricidad:** mide la elongación del home range. Calcular como: ajustar una elipse a los puntos (usando PCA de las coordenadas), excentricidad = sqrt(1 - (b²/a²)) donde a = semi-eje mayor, b = semi-eje menor. Valor entre 0 (circular) y 1 (muy elongado)
+   l) **Linearidad:** mide cuán lineal es el movimiento. Calcular como: distancia en línea recta entre primer y último punto / distancia total recorrida. Valor entre 0 (muy sinuoso) y 1 (perfectamente lineal)
+   m) **Valor H (HREF):** el bandwidth calculado con método de referencia
+   n) **Valor H (LSCV):** el bandwidth calculado con LSCV (si se usó)
+   o) **Áreas de Home Range:** para cada porcentaje, el área en km² (tanto para HREF como LSCV si aplica)
+
+5. **Exportar resultados como CSV:**
+   - Crear un endpoint GET /api/analyses/:id/export-csv que exporte todas las métricas en formato CSV
+   - El CSV debe tener una fila por individuo analizado con todas las columnas de métricas
+   - Nombres de columnas descriptivos en español:
+     Localizaciones, Dias_analisis, Total_recorrido_km, Distancia_min_entre_loc_km, Distancia_max_entre_loc_km, Primera_fecha, Ultima_fecha, Excentricidad, Linearidad, Distancia_min_dia_km, Distancia_max_dia_km, Distancia_media_dia_km, H_HREF, H_LSCV, HR_HREF_5, HR_HREF_10, HR_HREF_15, ..., HR_HREF_95, HR_LSCV_5, ..., HR_LSCV_95, MCP_50, MCP_75, MCP_90, MCP_95, MCP_100
+
+CAMBIOS EN EL FRONTEND — geo-analysis.tsx:
+
+1. **Selector de método de bandwidth:**
+   - Añadir un selector: "Método de cálculo: HREF / LSCV / Ambos"
+   - Cuando se selecciona "Ambos", ejecutar los dos y mostrar resultados comparados
+
+2. **Panel de métricas completo:**
+   - Mostrar todas las métricas del punto 4 en un panel organizado en secciones:
+     
+     Sección "Datos":
+     - Localizaciones: {N}
+     - Días de análisis: {N}
+     - Periodo: {primera fecha} — {última fecha}
+     - (Si hubo muestreo): "Muestra aleatoria de 10.000 de {N} puntos"
+     
+     Sección "Distancias":
+     - Total recorrido: {X} km
+     - Entre localizaciones: mín {X} km / máx {X} km
+     - Por día: mín {X} km / máx {X} km / media {X} km
+     
+     Sección "Forma del movimiento":
+     - Excentricidad: {X} (0=circular, 1=elongado)
+     - Linearidad: {X} (0=sinuoso, 1=lineal)
+     
+     Sección "Home Range (HREF)":
+     - Valor H: {X}
+     - Tabla con columnas: Porcentaje | Área (km²)
+     - Filas: 5%, 10%, 15%... 95%
+     
+     Sección "Home Range (LSCV)" (si se calculó):
+     - Valor H: {X}
+     - Misma tabla
+     - Si no convergió: mensaje "LSCV no convergió, se usó HREF como fallback"
+     
+     Sección "MCP":
+     - Tabla: Porcentaje | Área (km²)
+     - Filas: 50%, 75%, 90%, 95%, 100%
+
+3. **Visualización en el mapa mejorada:**
+   - Mostrar los polígonos de Home Range con colores graduales (más oscuro = porcentaje menor = core area)
+   - Selector para elegir qué porcentajes mostrar en el mapa (checkboxes)
+   - Poder alternar entre ver HREF y LSCV en el mapa
+   - MCP en color azul semitransparente
+   - Leyenda en el mapa indicando qué color es qué porcentaje
+
+4. **Botón "Exportar CSV de métricas":**
+   - Llama al endpoint de exportación
+   - Descarga el archivo como {estudio}_{animal}_{fecha}_metricas.csv
+
+5. **Comparación multi-animal:**
+   - Si se seleccionan varios animales, mostrar las métricas en una tabla comparativa
+   - Columnas: una por animal
+   - Filas: cada métrica
+   - Los polígonos de cada animal en el mapa con colores diferentes
+
+Mantén toda la UI en español. No rompas ninguna funcionalidad existente. Todas las distancias deben estar en kilómetros.

@@ -31,8 +31,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
-- `server/geoAnalysis.ts` - Geospatial analysis engine using Turf.js (MCP, Kernel density, distance, speed)
-- `client/src/pages/geo-analysis.tsx` - Geospatial analysis UI with map visualization, charts, and metrics
+- `server/geoAnalysis.ts` - Geospatial analysis engine using Turf.js (comprehensive: multi-percent MCP/Kernel with HREF+LSCV bandwidth, eccentricity, linearity, distance stats, sampling)
+- `client/src/pages/geo-analysis.tsx` - Geospatial analysis UI with comprehensive metrics panels, graduated map colors, percentage toggles, multi-animal comparison table
 - `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
 - `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
 - `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
@@ -69,6 +69,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 27. Force reload from Movebank button in visualization page
 28. Cache statistics endpoint for monitoring cached data
 29. CSV import: drag-and-drop upload of Movebank CSV files (GPS/accelerometer), auto-detect separator, column mapping, preview, batch insert with duplicate detection, auto-create individuals
+30. Comprehensive geospatial analysis: multi-percent MCP (50/75/90/95/100%), multi-percent Kernel (5-95% in 5% steps), dual bandwidth methods (HREF Silverman + LSCV cross-validation), eccentricity (PCA), linearity, full distance statistics, random sampling for >10k points, multi-animal comparison table, graduated map colors with percentage toggles, CSV metrics export
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -97,6 +98,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/analysis (execute Turf.js geospatial analysis)
 - GET /api/studies/:id/analyses (list saved analyses for study)
 - GET /api/analyses/:id, DELETE /api/analyses/:id (get/delete saved analysis)
+- GET /api/analyses/:id/export-csv (export analysis metrics as CSV)
 - GET /api/dashboard/summary (dashboard statistics)
 - GET /api/alerts/history?studyId=...&eventType=...&readStatus=...&resolvedStatus=...&dateStart=...&dateEnd=...&page=... (alert history with filtering/pagination)
 - PATCH /api/alerts/:id/read, /api/alerts/:id/resolve (mark alert read/resolved)

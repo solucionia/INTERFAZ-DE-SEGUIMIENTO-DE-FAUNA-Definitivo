@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -40,6 +40,7 @@ import {
   Ruler,
   Gauge,
   Activity,
+  Info,
 } from "lucide-react";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import {
@@ -66,6 +67,17 @@ const ANIMAL_COLORS = [
   "#ec4899", "#06b6d4", "#f97316", "#14b8a6", "#6366f1",
 ];
 
+const KERNEL_PCTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+const MCP_PCTS = [50, 75, 90, 95, 100];
+
+function kernelColor(pct: number): string {
+  const t = pct / 95;
+  const r = Math.round(220 - t * 140);
+  const g = Math.round(40 + t * 80);
+  const b = Math.round(40 + t * 40);
+  return `rgb(${r},${g},${b})`;
+}
+
 function FitBounds({ geojson }: { geojson: any }) {
   const map = useMap();
   useEffect(() => {
@@ -88,15 +100,20 @@ export default function GeoAnalysis() {
   const { toast } = useToast();
 
   const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
-  const [analysisType, setAnalysisType] = useState<AnalysisType>("mcp");
+  const [analysisType, setAnalysisType] = useState<AnalysisType>("comprehensive");
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [mcpPercent, setMcpPercent] = useState("95");
+  const [bandwidthMethod, setBandwidthMethod] = useState("href");
   const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
   const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
   const pendingAutoLoad = useRef(false);
   const [resultData, setResultData] = useState<any>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [mapMethod, setMapMethod] = useState<"href" | "lscv">("href");
+  const [showKernelPcts, setShowKernelPcts] = useState<number[]>([50, 95]);
+  const [showMcpPcts, setShowMcpPcts] = useState<number[]>([95, 100]);
+  const [mapLayer, setMapLayer] = useState<"kernel" | "mcp">("kernel");
 
   const { data: individuals, isLoading: loadingIndividuals } = useQuery<Individual[]>({
     queryKey: ["/api/studies", studyId, "individuals"],
@@ -133,6 +150,9 @@ export default function GeoAnalysis() {
       if (analysisType === "mcp") {
         body.params = { percent: parseInt(mcpPercent, 10) };
       }
+      if (analysisType === "comprehensive") {
+        body.params = { bandwidthMethod };
+      }
 
       const res = await apiRequest("POST", `/api/studies/${studyId}/analysis`, body);
       return res.json();
@@ -157,22 +177,11 @@ export default function GeoAnalysis() {
     },
   });
 
-  const toggleAnimal = (localId: string) => {
-    setSelectedAnimals((prev) =>
-      prev.includes(localId) ? prev.filter((a) => a !== localId) : [...prev, localId]
-    );
-  };
-
-  const selectAllAnimals = () => {
-    if (!individuals) return;
-    const all = individuals.filter((i) => i.localIdentifier).map((i) => i.localIdentifier!);
-    setSelectedAnimals(all);
-  };
-
   const loadSavedResult = async (analysis: SavedAnalysis) => {
     const saved = analysis.resultData as any;
     setResultData({
       ...saved,
+      id: analysis.id,
       geojson: analysis.resultGeojson,
     });
     setAnalysisType(analysis.analysisType as AnalysisType);
@@ -184,7 +193,7 @@ export default function GeoAnalysis() {
     toast({ title: "Analisis cargado" });
   };
 
-  const exportCsv = () => {
+  const exportCsvLegacy = () => {
     if (!resultData) return;
     let csv = "";
 
@@ -223,6 +232,26 @@ export default function GeoAnalysis() {
     URL.revokeObjectURL(url);
   };
 
+  const exportCsvComprehensive = async () => {
+    if (!resultData?.id) {
+      exportCsvLegacy();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/analyses/${resultData.id}/export-csv`, { credentials: "include" });
+      if (!res.ok) throw new Error("Error exportando");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `metricas_${resultData.analysisType}_${format(new Date(), "yyyyMMdd_HHmmss")}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Error", description: "No se pudo exportar el CSV", variant: "destructive" });
+    }
+  };
+
   const handleQuickRange = (range: QuickRange, start: string, end: string) => {
     setDateStart(start);
     setDateEnd(end);
@@ -249,6 +278,27 @@ export default function GeoAnalysis() {
     }
   }, [dateStart, dateEnd]);
 
+  const filteredGeojson = useMemo(() => {
+    if (!resultData?.geojson?.features) return null;
+    if (resultData.analysisType !== "comprehensive") return resultData.geojson;
+
+    const filtered = resultData.geojson.features.filter((f: any) => {
+      const props = f.properties || {};
+      if (props.type === "kernel") {
+        if (props.method !== mapMethod) return false;
+        if (mapLayer !== "kernel") return false;
+        return showKernelPcts.includes(props.percent);
+      }
+      if (props.type === "mcp") {
+        if (mapLayer !== "mcp") return false;
+        return showMcpPcts.includes(props.percent);
+      }
+      return true;
+    });
+
+    return { type: "FeatureCollection", features: filtered };
+  }, [resultData, mapMethod, showKernelPcts, showMcpPcts, mapLayer]);
+
   const canExecute = selectedAnimals.length > 0 && dateStart && dateEnd;
 
   return (
@@ -264,7 +314,7 @@ export default function GeoAnalysis() {
         </div>
         <div className="flex gap-2">
           {resultData && (
-            <Button variant="outline" onClick={exportCsv} data-testid="button-export-csv">
+            <Button variant="outline" onClick={resultData.analysisType === "comprehensive" ? exportCsvComprehensive : exportCsvLegacy} data-testid="button-export-csv">
               <Download className="w-4 h-4 mr-2" />
               Exportar CSV
             </Button>
@@ -360,6 +410,7 @@ export default function GeoAnalysis() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="comprehensive">Analisis completo</SelectItem>
                   <SelectItem value="mcp">Home Range (MCP)</SelectItem>
                   <SelectItem value="kernel">Home Range (Kernel)</SelectItem>
                   <SelectItem value="distance">Distancia recorrida</SelectItem>
@@ -367,6 +418,27 @@ export default function GeoAnalysis() {
                 </SelectContent>
               </Select>
             </div>
+
+            {analysisType === "comprehensive" && (
+              <div className="space-y-2">
+                <Label>Metodo de bandwidth</Label>
+                <Select value={bandwidthMethod} onValueChange={setBandwidthMethod}>
+                  <SelectTrigger data-testid="select-bandwidth-method">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="href">HREF (Silverman)</SelectItem>
+                    <SelectItem value="lscv">LSCV (Cross Validation)</SelectItem>
+                    <SelectItem value="both">Ambos (HREF + LSCV)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {bandwidthMethod === "href" && "Regla de referencia de Silverman — rapido y robusto"}
+                  {bandwidthMethod === "lscv" && "Validacion cruzada — puede no converger, usa HREF como fallback"}
+                  {bandwidthMethod === "both" && "Calcula ambos metodos para comparar"}
+                </p>
+              </div>
+            )}
 
             {analysisType === "mcp" && (
               <div className="space-y-2">
@@ -466,120 +538,87 @@ export default function GeoAnalysis() {
 
           {resultData && !analysisMutation.isPending && (
             <>
-              <MetricsPanel data={resultData} />
+              {resultData.analysisType === "comprehensive" ? (
+                <ComprehensiveResults
+                  data={resultData}
+                  filteredGeojson={filteredGeojson}
+                  mapMethod={mapMethod}
+                  setMapMethod={setMapMethod}
+                  showKernelPcts={showKernelPcts}
+                  setShowKernelPcts={setShowKernelPcts}
+                  showMcpPcts={showMcpPcts}
+                  setShowMcpPcts={setShowMcpPcts}
+                  mapLayer={mapLayer}
+                  setMapLayer={setMapLayer}
+                />
+              ) : (
+                <>
+                  <MetricsPanel data={resultData} />
 
-              {resultData.geojson && resultData.geojson.features?.length > 0 && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <MapIcon className="w-4 h-4" />
-                      Mapa
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="h-[400px] rounded-md overflow-hidden border">
-                      <MapContainer
-                        center={[0, 0]}
-                        zoom={2}
-                        style={{ height: "100%", width: "100%" }}
-                        key={JSON.stringify(resultData.geojson).slice(0, 100)}
-                      >
-                        <TileLayer
-                          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-                          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                        />
-                        <GeoJSON
-                          data={resultData.geojson}
-                          style={(feature: any) => {
-                            const props = feature?.properties || {};
-                            if (props.type === "mcp") {
-                              return {
-                                color: "#3b82f6",
-                                weight: 2,
-                                opacity: 0.8,
-                                fillColor: "#3b82f6",
-                                fillOpacity: 0.3,
-                              };
-                            }
-                            if (props.type === "kernel") {
-                              if (props.level === "50%") {
-                                return {
-                                  color: "#ef4444",
-                                  weight: 2,
-                                  opacity: 0.8,
-                                  fillColor: "#ef4444",
-                                  fillOpacity: 0.3,
-                                };
-                              }
-                              return {
-                                color: "#22c55e",
-                                weight: 2,
-                                opacity: 0.8,
-                                fillColor: "#22c55e",
-                                fillOpacity: 0.2,
-                              };
-                            }
-                            const idx = resultData.geojson.features.indexOf(feature) || 0;
-                            const color = ANIMAL_COLORS[idx % ANIMAL_COLORS.length];
-                            return {
-                              color,
-                              weight: 2,
-                              opacity: 0.8,
-                              fillColor: color,
-                              fillOpacity: 0.2,
-                            };
-                          }}
-                          onEachFeature={(feature: any, layer: any) => {
-                            const props = feature.properties || {};
-                            let popup = `<b>${props.id || "Animal"}</b>`;
-                            if (props.type === "mcp") {
-                              popup += `<br/>MCP ${props.percent || 95}%`;
-                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
-                            } else if (props.type === "kernel") {
-                              popup += `<br/>Kernel ${props.level}`;
-                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
-                            } else if (props.area_km2 !== undefined) {
-                              popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
-                            }
-                            layer.bindPopup(popup);
-                          }}
-                        />
-                        <FitBounds geojson={resultData.geojson} />
-                      </MapContainer>
-                    </div>
-                    {resultData.analysisType === "kernel" && (
-                      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#22c55e", opacity: 0.6 }} />
-                          Home Range (95%)
+                  {resultData.geojson && resultData.geojson.features?.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <MapIcon className="w-4 h-4" />
+                          Mapa
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="h-[400px] rounded-md overflow-hidden border">
+                          <MapContainer
+                            center={[0, 0]}
+                            zoom={2}
+                            style={{ height: "100%", width: "100%" }}
+                            key={JSON.stringify(resultData.geojson).slice(0, 100)}
+                          >
+                            <TileLayer
+                              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                            />
+                            <GeoJSON
+                              data={resultData.geojson}
+                              style={(feature: any) => {
+                                const props = feature?.properties || {};
+                                if (props.type === "mcp") {
+                                  return { color: "#3b82f6", weight: 2, opacity: 0.8, fillColor: "#3b82f6", fillOpacity: 0.3 };
+                                }
+                                if (props.type === "kernel") {
+                                  if (props.level === "50%") {
+                                    return { color: "#ef4444", weight: 2, opacity: 0.8, fillColor: "#ef4444", fillOpacity: 0.3 };
+                                  }
+                                  return { color: "#22c55e", weight: 2, opacity: 0.8, fillColor: "#22c55e", fillOpacity: 0.2 };
+                                }
+                                const idx = resultData.geojson.features.indexOf(feature) || 0;
+                                const color = ANIMAL_COLORS[idx % ANIMAL_COLORS.length];
+                                return { color, weight: 2, opacity: 0.8, fillColor: color, fillOpacity: 0.2 };
+                              }}
+                              onEachFeature={(feature: any, layer: any) => {
+                                const props = feature.properties || {};
+                                let popup = `<b>${props.id || "Animal"}</b>`;
+                                if (props.type === "mcp") {
+                                  popup += `<br/>MCP ${props.percent || 95}%`;
+                                  popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                                } else if (props.type === "kernel") {
+                                  popup += `<br/>Kernel ${props.level}`;
+                                  popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                                } else if (props.area_km2 !== undefined) {
+                                  popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                                }
+                                layer.bindPopup(popup);
+                              }}
+                            />
+                            <FitBounds geojson={resultData.geojson} />
+                          </MapContainer>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#ef4444", opacity: 0.6 }} />
-                          Core Area (50%)
-                        </div>
-                      </div>
-                    )}
-                    {resultData.analysisType === "mcp" && (
-                      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#3b82f6", opacity: 0.6 }} />
-                          MCP ({resultData.areas?.[0]?.percent || 95}%)
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
+                      </CardContent>
+                    </Card>
+                  )}
 
-              {resultData.analysisType === "distance" && (
-                <DistanceChart data={resultData} />
+                  {resultData.analysisType === "distance" && <DistanceChart data={resultData} />}
+                  {resultData.analysisType === "speed" && <SpeedChart data={resultData} />}
+                  <AnalysisResultTable data={resultData} />
+                </>
               )}
-
-              {resultData.analysisType === "speed" && (
-                <SpeedChart data={resultData} />
-              )}
-
-              <AnalysisResultTable data={resultData} />
             </>
           )}
 
@@ -596,6 +635,493 @@ export default function GeoAnalysis() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ComprehensiveResults({
+  data,
+  filteredGeojson,
+  mapMethod,
+  setMapMethod,
+  showKernelPcts,
+  setShowKernelPcts,
+  showMcpPcts,
+  setShowMcpPcts,
+  mapLayer,
+  setMapLayer,
+}: {
+  data: any;
+  filteredGeojson: any;
+  mapMethod: "href" | "lscv";
+  setMapMethod: (v: "href" | "lscv") => void;
+  showKernelPcts: number[];
+  setShowKernelPcts: (v: number[]) => void;
+  showMcpPcts: number[];
+  setShowMcpPcts: (v: number[]) => void;
+  mapLayer: "kernel" | "mcp";
+  setMapLayer: (v: "kernel" | "mcp") => void;
+}) {
+  const perInd = data.perIndividual || [];
+  const isMulti = perInd.length > 1;
+  const hasBoth = data.bandwidthMethod === "both";
+  const hasLscv = data.bandwidthMethod === "lscv" || hasBoth;
+
+  const toggleKernelPct = (pct: number) => {
+    setShowKernelPcts(
+      showKernelPcts.includes(pct)
+        ? showKernelPcts.filter((p) => p !== pct)
+        : [...showKernelPcts, pct]
+    );
+  };
+
+  const toggleMcpPct = (pct: number) => {
+    setShowMcpPcts(
+      showMcpPcts.includes(pct)
+        ? showMcpPcts.filter((p) => p !== pct)
+        : [...showMcpPcts, pct]
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      {data.sampled && (
+        <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-sm text-amber-400">
+          <Info className="w-4 h-4 shrink-0" />
+          Se han muestreado {data.sampleSize.toLocaleString()} de {data.totalPoints.toLocaleString()} puntos para optimizar el calculo
+        </div>
+      )}
+
+      {isMulti ? (
+        <ComparisonTable data={data} />
+      ) : perInd.length === 1 ? (
+        <SingleAnimalMetrics ind={perInd[0]} bandwidthMethod={data.bandwidthMethod} />
+      ) : null}
+
+      {filteredGeojson && filteredGeojson.features?.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <MapIcon className="w-4 h-4" />
+              Mapa
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={mapLayer === "kernel" ? "default" : "outline"}
+                  onClick={() => setMapLayer("kernel")}
+                  data-testid="button-map-kernel"
+                >
+                  Kernel
+                </Button>
+                <Button
+                  size="sm"
+                  variant={mapLayer === "mcp" ? "default" : "outline"}
+                  onClick={() => setMapLayer("mcp")}
+                  data-testid="button-map-mcp"
+                >
+                  MCP
+                </Button>
+              </div>
+
+              {mapLayer === "kernel" && hasBoth && (
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant={mapMethod === "href" ? "default" : "outline"}
+                    onClick={() => setMapMethod("href")}
+                    data-testid="button-map-href"
+                  >
+                    HREF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={mapMethod === "lscv" ? "default" : "outline"}
+                    onClick={() => setMapMethod("lscv")}
+                    data-testid="button-map-lscv"
+                  >
+                    LSCV
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {mapLayer === "kernel" && (
+              <div className="flex flex-wrap gap-1">
+                {KERNEL_PCTS.map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => toggleKernelPct(pct)}
+                    className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
+                      showKernelPcts.includes(pct)
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                    data-testid={`toggle-kernel-${pct}`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mapLayer === "mcp" && (
+              <div className="flex flex-wrap gap-1">
+                {MCP_PCTS.map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => toggleMcpPct(pct)}
+                    className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
+                      showMcpPcts.includes(pct)
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                    data-testid={`toggle-mcp-${pct}`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="h-[450px] rounded-md overflow-hidden border">
+              <MapContainer
+                center={[0, 0]}
+                zoom={2}
+                style={{ height: "100%", width: "100%" }}
+                key={`${mapLayer}-${mapMethod}-${showKernelPcts.join(",")}-${showMcpPcts.join(",")}`}
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                <GeoJSON
+                  data={filteredGeojson}
+                  style={(feature: any) => {
+                    const props = feature?.properties || {};
+                    if (props.type === "kernel") {
+                      const pct = props.percent || 95;
+                      const color = kernelColor(pct);
+                      const fillOpacity = 0.15 + (1 - pct / 95) * 0.3;
+                      return { color, weight: 1.5, opacity: 0.7, fillColor: color, fillOpacity };
+                    }
+                    if (props.type === "mcp") {
+                      const pct = props.percent || 100;
+                      const opacity = 0.15 + (1 - pct / 100) * 0.3;
+                      return { color: "#3b82f6", weight: 1.5, opacity: 0.7, fillColor: "#3b82f6", fillOpacity: opacity };
+                    }
+                    return { color: "#888", weight: 1, fillOpacity: 0.1 };
+                  }}
+                  onEachFeature={(feature: any, layer: any) => {
+                    const props = feature.properties || {};
+                    let popup = `<b>${props.id || "Animal"}</b>`;
+                    if (props.type === "kernel") {
+                      popup += `<br/>Kernel ${props.level} (${props.method?.toUpperCase() || "HREF"})`;
+                    } else if (props.type === "mcp") {
+                      popup += `<br/>MCP ${props.percent}%`;
+                    }
+                    if (props.area_km2 !== undefined) {
+                      popup += `<br/>Area: ${props.area_km2?.toFixed(3)} km\u00B2`;
+                    }
+                    layer.bindPopup(popup);
+                  }}
+                />
+                <FitBounds geojson={filteredGeojson} />
+              </MapContainer>
+            </div>
+
+            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+              {mapLayer === "kernel" && showKernelPcts.sort((a, b) => a - b).map((pct) => (
+                <div key={pct} className="flex items-center gap-1.5">
+                  <span
+                    className="w-3 h-3 rounded-sm"
+                    style={{ backgroundColor: kernelColor(pct), opacity: 0.7 }}
+                  />
+                  Kernel {pct}%
+                </div>
+              ))}
+              {mapLayer === "mcp" && showMcpPcts.sort((a, b) => a - b).map((pct) => (
+                <div key={pct} className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#3b82f6", opacity: 0.3 + (1 - pct / 100) * 0.5 }} />
+                  MCP {pct}%
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMethod: string }) {
+  const hasBoth = bandwidthMethod === "both";
+  const hasLscv = bandwidthMethod === "lscv" || hasBoth;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Datos</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+            <div>
+              <span className="text-muted-foreground">Localizaciones:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-locations">{ind.locations?.toLocaleString()}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Dias de analisis:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-days">{ind.analysisDays}</span>
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <span className="text-muted-foreground">Periodo:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-period">
+                {ind.firstDate ? format(new Date(ind.firstDate), "dd/MM/yy") : "—"} — {ind.lastDate ? format(new Date(ind.lastDate), "dd/MM/yy") : "—"}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Distancias</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+            <div>
+              <span className="text-muted-foreground">Total recorrido:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-total-dist">{ind.totalDistanceKm} km</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Entre loc. min:</span>{" "}
+              <span className="font-medium">{ind.minConsecutiveDistKm} km</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Entre loc. max:</span>{" "}
+              <span className="font-medium">{ind.maxConsecutiveDistKm} km</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Diaria min:</span>{" "}
+              <span className="font-medium">{ind.minDailyDistKm} km</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Diaria max:</span>{" "}
+              <span className="font-medium">{ind.maxDailyDistKm} km</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Diaria media:</span>{" "}
+              <span className="font-medium">{ind.avgDailyDistKm} km</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Forma del movimiento</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div>
+              <span className="text-muted-foreground">Excentricidad:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-eccentricity">{ind.eccentricity}</span>
+              <span className="text-xs text-muted-foreground ml-1">(0=circular, 1=elongado)</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Linearidad:</span>{" "}
+              <span className="font-medium" data-testid="text-metric-linearity">{ind.linearity}</span>
+              <span className="text-xs text-muted-foreground ml-1">(0=sinuoso, 1=lineal)</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            Home Range (HREF) — H = {ind.hHref}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Porcentaje</TableHead>
+                  <TableHead>Area (km²)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {KERNEL_PCTS.map((pct) => (
+                  <TableRow key={pct}>
+                    <TableCell>{pct}%</TableCell>
+                    <TableCell>{ind.kernelHrefAreas?.[`${pct}`] ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {hasLscv && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Home Range (LSCV) — H = {ind.hLscv ?? "—"}
+              {ind.lscvConverged === false && (
+                <span className="text-xs text-amber-500 ml-2 font-normal">LSCV no convergio, se uso HREF como fallback</span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Porcentaje</TableHead>
+                    <TableHead>Area (km²)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {KERNEL_PCTS.map((pct) => (
+                    <TableRow key={pct}>
+                      <TableCell>{pct}%</TableCell>
+                      <TableCell>{ind.kernelLscvAreas?.[`${pct}`] ?? ind.kernelHrefAreas?.[`${pct}`] ?? "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">MCP</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Porcentaje</TableHead>
+                  <TableHead>Area (km²)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {MCP_PCTS.map((pct) => (
+                  <TableRow key={pct}>
+                    <TableCell>{pct}%</TableCell>
+                    <TableCell>{ind.mcpAreas?.[`${pct}`] ?? "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ComparisonTable({ data }: { data: any }) {
+  const perInd = data.perIndividual || [];
+  const hasBoth = data.bandwidthMethod === "both";
+  const hasLscv = data.bandwidthMethod === "lscv" || hasBoth;
+
+  const metrics: { label: string; key: string; format?: (v: any) => string }[] = [
+    { label: "Localizaciones", key: "locations" },
+    { label: "Dias de analisis", key: "analysisDays" },
+    { label: "Periodo", key: "_period", format: (ind: any) => {
+      const s = ind.firstDate ? format(new Date(ind.firstDate), "dd/MM/yy") : "—";
+      const e = ind.lastDate ? format(new Date(ind.lastDate), "dd/MM/yy") : "—";
+      return `${s} — ${e}`;
+    }},
+    { label: "Distancia total (km)", key: "totalDistanceKm" },
+    { label: "Dist. min entre loc. (km)", key: "minConsecutiveDistKm" },
+    { label: "Dist. max entre loc. (km)", key: "maxConsecutiveDistKm" },
+    { label: "Dist. min diaria (km)", key: "minDailyDistKm" },
+    { label: "Dist. max diaria (km)", key: "maxDailyDistKm" },
+    { label: "Dist. media diaria (km)", key: "avgDailyDistKm" },
+    { label: "Excentricidad", key: "eccentricity" },
+    { label: "Linearidad", key: "linearity" },
+    { label: "H (HREF)", key: "hHref" },
+  ];
+
+  if (hasLscv) {
+    metrics.push({ label: "H (LSCV)", key: "hLscv", format: (ind: any) => ind.hLscv ?? "—" });
+    metrics.push({ label: "LSCV convergido", key: "lscvConverged", format: (ind: any) => ind.lscvConverged ? "Si" : "No" });
+  }
+
+  for (const pct of KERNEL_PCTS) {
+    metrics.push({
+      label: `HR HREF ${pct}% (km²)`,
+      key: `_hr_href_${pct}`,
+      format: (ind: any) => ind.kernelHrefAreas?.[`${pct}`] ?? "—",
+    });
+  }
+
+  if (hasBoth) {
+    for (const pct of KERNEL_PCTS) {
+      metrics.push({
+        label: `HR LSCV ${pct}% (km²)`,
+        key: `_hr_lscv_${pct}`,
+        format: (ind: any) => ind.kernelLscvAreas?.[`${pct}`] ?? "—",
+      });
+    }
+  }
+
+  for (const pct of MCP_PCTS) {
+    metrics.push({
+      label: `MCP ${pct}% (km²)`,
+      key: `_mcp_${pct}`,
+      format: (ind: any) => ind.mcpAreas?.[`${pct}`] ?? "—",
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="w-4 h-4" />
+          Comparacion multi-animal
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-auto max-h-[600px]">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="sticky left-0 bg-card z-10 min-w-[180px]">Metrica</TableHead>
+                {perInd.map((ind: any) => (
+                  <TableHead key={ind.individual} className="min-w-[120px] text-center">
+                    {ind.individual}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {metrics.map((m) => (
+                <TableRow key={m.key}>
+                  <TableCell className="sticky left-0 bg-card z-10 text-xs font-medium">{m.label}</TableCell>
+                  {perInd.map((ind: any) => (
+                    <TableCell key={ind.individual} className="text-center text-xs">
+                      {m.format ? m.format(ind) : ind[m.key] ?? "—"}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -620,7 +1146,7 @@ function MetricsPanel({ data }: { data: any }) {
               <Ruler className="w-3.5 h-3.5" />
               <span className="text-xs">Area total</span>
             </div>
-            <p className="text-xl font-bold" data-testid="text-metric-total-area">{totalArea.toFixed(3)} km\u00B2</p>
+            <p className="text-xl font-bold" data-testid="text-metric-total-area">{totalArea.toFixed(3)} km²</p>
           </CardContent>
         </Card>
         <Card>
@@ -630,7 +1156,7 @@ function MetricsPanel({ data }: { data: any }) {
               <span className="text-xs">Promedio</span>
             </div>
             <p className="text-xl font-bold" data-testid="text-metric-avg-area">
-              {areas.length > 0 ? (totalArea / areas.length).toFixed(3) : "0"} km\u00B2
+              {areas.length > 0 ? (totalArea / areas.length).toFixed(3) : "0"} km²
             </p>
           </CardContent>
         </Card>
@@ -659,7 +1185,7 @@ function MetricsPanel({ data }: { data: any }) {
               <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
               <span className="text-xs">Area 95%</span>
             </div>
-            <p className="text-xl font-bold" data-testid="text-metric-area-95">{total95.toFixed(3)} km\u00B2</p>
+            <p className="text-xl font-bold" data-testid="text-metric-area-95">{total95.toFixed(3)} km²</p>
           </CardContent>
         </Card>
         <Card>
@@ -668,7 +1194,7 @@ function MetricsPanel({ data }: { data: any }) {
               <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
               <span className="text-xs">Area 50%</span>
             </div>
-            <p className="text-xl font-bold" data-testid="text-metric-area-50">{total50.toFixed(3)} km\u00B2</p>
+            <p className="text-xl font-bold" data-testid="text-metric-area-50">{total50.toFixed(3)} km²</p>
           </CardContent>
         </Card>
         <Card>
@@ -778,7 +1304,7 @@ function AnalysisResultTable({ data }: { data: any }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Animal</TableHead>
-                  <TableHead>Area (km\u00B2)</TableHead>
+                  <TableHead>Area (km²)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -810,8 +1336,8 @@ function AnalysisResultTable({ data }: { data: any }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Animal</TableHead>
-                  <TableHead>Area 95% (km\u00B2)</TableHead>
-                  <TableHead>Area 50% (km\u00B2)</TableHead>
+                  <TableHead>Area 95% (km²)</TableHead>
+                  <TableHead>Area 50% (km²)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

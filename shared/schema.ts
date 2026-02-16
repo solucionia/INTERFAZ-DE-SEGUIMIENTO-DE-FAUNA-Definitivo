@@ -209,7 +209,7 @@ export const cronLogs = pgTable("cron_logs", {
   runAt: timestamp("run_at").defaultNow(),
 });
 
-export const ANALYSIS_TYPES = ["mcp", "kernel", "distance", "speed"] as const;
+export const ANALYSIS_TYPES = ["mcp", "kernel", "distance", "speed", "comprehensive"] as const;
 export type AnalysisType = typeof ANALYSIS_TYPES[number];
 
 export const ANALYSIS_LABELS: Record<AnalysisType, string> = {
@@ -217,6 +217,7 @@ export const ANALYSIS_LABELS: Record<AnalysisType, string> = {
   kernel: "Home Range (Kernel)",
   distance: "Distancia recorrida",
   speed: "Velocidad de movimiento",
+  comprehensive: "Analisis completo",
 };
 
 export const savedAnalyses = pgTable("saved_analyses", {

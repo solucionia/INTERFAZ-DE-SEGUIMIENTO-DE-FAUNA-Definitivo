@@ -1016,6 +1016,125 @@ export async function registerRoutes(
     return res.json(analysis);
   });
 
+  app.get("/api/analyses/:id/export-csv", requireAuth, async (req, res) => {
+    try {
+      const analysis = await storage.getSavedAnalysis(req.params.id);
+      if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+      const user = req.user!;
+      if (user.role !== "superuser" && analysis.userId !== user.id) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+
+      const resultData = analysis.resultData as any;
+      let csv = "";
+
+      if (resultData?.analysisType === "comprehensive" && resultData.perIndividual) {
+        const kernelPcts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+        const mcpPcts = [50, 75, 90, 95, 100];
+
+        const headers = [
+          "Animal", "Localizaciones", "Dias_analisis", "Primera_fecha", "Ultima_fecha",
+          "Total_recorrido_km", "Distancia_min_entre_loc_km", "Distancia_max_entre_loc_km",
+          "Distancia_min_dia_km", "Distancia_max_dia_km", "Distancia_media_dia_km",
+          "Excentricidad", "Linearidad", "H_HREF",
+        ];
+
+        if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
+          headers.push("H_LSCV", "LSCV_convergido");
+        }
+
+        for (const pct of kernelPcts) {
+          headers.push(`HR_HREF_${pct}`);
+        }
+
+        if (resultData.bandwidthMethod === "both") {
+          for (const pct of kernelPcts) {
+            headers.push(`HR_LSCV_${pct}`);
+          }
+        }
+
+        for (const pct of mcpPcts) {
+          headers.push(`MCP_${pct}`);
+        }
+
+        csv = headers.join(",") + "\n";
+
+        for (const ind of resultData.perIndividual) {
+          const row = [
+            ind.individual,
+            ind.locations,
+            ind.analysisDays,
+            ind.firstDate ? new Date(ind.firstDate).toISOString().split("T")[0] : "",
+            ind.lastDate ? new Date(ind.lastDate).toISOString().split("T")[0] : "",
+            ind.totalDistanceKm,
+            ind.minConsecutiveDistKm,
+            ind.maxConsecutiveDistKm,
+            ind.minDailyDistKm,
+            ind.maxDailyDistKm,
+            ind.avgDailyDistKm,
+            ind.eccentricity,
+            ind.linearity,
+            ind.hHref,
+          ];
+
+          if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
+            row.push(ind.hLscv ?? "", ind.lscvConverged ? "Si" : "No");
+          }
+
+          for (const pct of kernelPcts) {
+            row.push(ind.kernelHrefAreas?.[`${pct}`] ?? "");
+          }
+
+          if (resultData.bandwidthMethod === "both") {
+            for (const pct of kernelPcts) {
+              row.push(ind.kernelLscvAreas?.[`${pct}`] ?? "");
+            }
+          }
+
+          for (const pct of mcpPcts) {
+            row.push(ind.mcpAreas?.[`${pct}`] ?? "");
+          }
+
+          csv += row.join(",") + "\n";
+        }
+      } else if (resultData?.analysisType === "mcp") {
+        csv = "Animal,Area_km2\n";
+        for (const a of resultData.areas || []) {
+          csv += `${a.individual},${a.area_km2}\n`;
+        }
+      } else if (resultData?.analysisType === "kernel") {
+        csv = "Animal,Area_95_km2,Area_50_km2\n";
+        for (const a of resultData.areas || []) {
+          csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
+        }
+      } else if (resultData?.analysisType === "distance") {
+        csv = "Animal,Fecha,Distancia_km\n";
+        for (const ind of resultData.individuals || []) {
+          for (const d of ind.daily || []) {
+            csv += `${ind.individual},${d.date},${d.distance_km}\n`;
+          }
+        }
+      } else if (resultData?.analysisType === "speed") {
+        csv = "Animal,Timestamp,Velocidad_kmh\n";
+        for (const ind of resultData.individuals || []) {
+          for (const s of ind.speeds || []) {
+            csv += `${ind.individual},${new Date(s.timestamp).toISOString()},${s.speed_kmh}\n`;
+          }
+        }
+      }
+
+      const studyName = analysis.studyId || "estudio";
+      const dateStr = new Date().toISOString().split("T")[0].replace(/-/g, "");
+      const fileName = `metricas_${resultData?.analysisType || "analisis"}_${dateStr}.csv`;
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      return res.send("\uFEFF" + csv);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error exportando CSV: ${e.message}` });
+    }
+  });
+
   app.delete("/api/analyses/:id", requireAuth, async (req, res) => {
     const analysis = await storage.getSavedAnalysis(req.params.id);
     if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
