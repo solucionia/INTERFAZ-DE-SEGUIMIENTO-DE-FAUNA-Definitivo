@@ -1,7 +1,7 @@
 import { log } from "./index";
 
 const MOVEBANK_BASE = "https://www.movebank.org/movebank/service/direct-read";
-const MOVEBANK_TIMEOUT_MS = 30000;
+const MOVEBANK_TIMEOUT_MS = 60000;
 
 export class MovebankError extends Error {
   public statusCode: number;
@@ -179,6 +179,47 @@ export async function fetchMovebankDeployments(
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (deployments, study ${studyId}): ${e.message}`, "movebank");
+    throw e;
+  }
+}
+
+export async function fetchMovebankDeploymentIndividualMap(
+  studyId: number,
+  username: string,
+  password: string
+): Promise<Map<string, { individualId: string; individualLocalIdentifier: string }>> {
+  const params = new URLSearchParams({
+    entity_type: "event",
+    study_id: studyId.toString(),
+    sensor_type_id: "653",
+    max_events_per_individual: "1",
+    attributes: "individual_id,individual_local_identifier,deployment_id",
+  });
+  const url = `${MOVEBANK_BASE}?${params.toString()}`;
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
+
+  try {
+    const res = await fetchWithTimeout(url, {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+
+    const text = await handleMovebankResponse(res, `deployment-individual map for study ${studyId}`);
+    const rows = parseCSV(text);
+
+    const map = new Map<string, { individualId: string; individualLocalIdentifier: string }>();
+    for (const row of rows) {
+      const depId = row.deployment_id;
+      if (depId && !map.has(depId)) {
+        map.set(depId, {
+          individualId: row.individual_id || "",
+          individualLocalIdentifier: row.individual_local_identifier || "",
+        });
+      }
+    }
+    log(`Movebank deployment-individual map: ${map.size} unique deployment→individual mappings from ${rows.length} event rows`, "movebank");
+    return map;
+  } catch (e: any) {
+    log(`Movebank fetch error (deployment-individual map, study ${studyId}): ${e.message}`, "movebank");
     throw e;
   }
 }

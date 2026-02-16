@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
-import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, MovebankError } from "./movebank";
+import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
@@ -1004,14 +1004,11 @@ export async function registerRoutes(
       const rawIndividuals = await fetchMovebankIndividuals(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
       log(`Movebank respondió individuos: ${rawIndividuals.length}`, "movebank");
 
-      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
-      log(`Movebank respondió despliegues: ${rawDeployments.length}`, "movebank");
-
-      if (rawDeployments.length > 0) {
-        const sampleKeys = Object.keys(rawDeployments[0]);
-        log(`Movebank deployment CSV columns: ${sampleKeys.join(", ")}`, "movebank");
-        log(`Movebank deployment sample row: ${JSON.stringify(rawDeployments[0])}`, "movebank");
-      }
+      const [rawDeployments, depIndMap] = await Promise.all([
+        fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+        fetchMovebankDeploymentIndividualMap(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+      ]);
+      log(`Movebank respondió despliegues: ${rawDeployments.length}, mappings evento→individuo: ${depIndMap.size}`, "movebank");
 
       const individualsData = rawIndividuals.map((r) => ({
         studyId: study.id,
@@ -1024,17 +1021,15 @@ export async function registerRoutes(
         synced: true,
       }));
 
-      const indIdRaw = (r: Record<string, string>) =>
-        r.individual_id || r["individual.id"] || r.individual_local_identifier || "";
-
       const deploymentsData = rawDeployments.map((r) => {
-        const rawIndId = indIdRaw(r);
-        const parsedIndId = rawIndId ? parseInt(rawIndId, 10) : null;
+        const depMovebankId = r.id || r.deployment_id || "0";
+        const mapping = depIndMap.get(depMovebankId);
+        const individualId = mapping ? parseInt(mapping.individualId, 10) : null;
         return {
           studyId: study.id,
-          movebankId: parseInt(r.id || r.deployment_id || "0", 10),
-          individualId: parsedIndId && !isNaN(parsedIndId) ? parsedIndId : null,
-          localIdentifier: r.local_identifier || r.tag_local_identifier || null,
+          movebankId: parseInt(depMovebankId, 10),
+          individualId: individualId && !isNaN(individualId) ? individualId : null,
+          localIdentifier: r.local_identifier || r.tag_local_identifier || mapping?.individualLocalIdentifier || null,
           deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
           deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
           synced: true,
@@ -1068,46 +1063,33 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
-      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
-      log(`Repair: Movebank respondió ${rawDeployments.length} despliegues`, "movebank");
+      const [rawDeployments, depIndMap] = await Promise.all([
+        fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+        fetchMovebankDeploymentIndividualMap(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+      ]);
+
+      log(`Repair: ${rawDeployments.length} deployments from Movebank, ${depIndMap.size} deployment→individual mappings from events`, "movebank");
 
       if (rawDeployments.length > 0) {
         const allColumns = Object.keys(rawDeployments[0]);
-        log(`Repair: ALL deployment CSV columns: ${allColumns.join(", ")}`, "movebank");
-
-        const individualColumns = allColumns.filter(col => col.toLowerCase().includes("individual"));
-        log(`Repair: Columns containing 'individual': ${individualColumns.join(", ")}`, "movebank");
-
-        for (const dep of rawDeployments.slice(0, 5)) {
-          const individualValues: Record<string, string> = {};
-          for (const col of individualColumns) {
-            individualValues[col] = dep[col] || "(empty)";
-          }
-          log(`Repair: Deployment ${dep.id || dep.deployment_id || "?"} individual columns: ${JSON.stringify(individualValues)}`, "movebank");
-        }
+        log(`Repair: Deployment CSV columns: ${allColumns.join(", ")}`, "movebank");
       }
 
-      const indIdRaw = (r: Record<string, string>) => {
-        const allColumns = Object.keys(r);
-        const individualColumns = allColumns.filter(col => col.toLowerCase().includes("individual"));
-        for (const col of individualColumns) {
-          const val = r[col];
-          if (val && /^\d+$/.test(val.trim())) {
-            log(`Repair: Using column '${col}' with value '${val}' for individual_id`, "movebank");
-            return val.trim();
-          }
-        }
-        return r.individual_id || r["individual.id"] || r.individual_local_identifier || "";
-      };
+      for (const [depId, info] of Array.from(depIndMap.entries()).slice(0, 5)) {
+        log(`Repair: mapping deployment ${depId} → individual ${info.individualId} (${info.individualLocalIdentifier})`, "movebank");
+      }
 
       const deploymentsData = rawDeployments.map((r) => {
-        const rawIndId = indIdRaw(r);
-        const parsedIndId = rawIndId ? parseInt(rawIndId, 10) : null;
+        const depMovebankId = r.id || r.deployment_id || "0";
+        const mapping = depIndMap.get(depMovebankId);
+        const individualId = mapping ? parseInt(mapping.individualId, 10) : null;
+        const localId = r.local_identifier || r.tag_local_identifier || mapping?.individualLocalIdentifier || null;
+
         return {
           studyId: study.id,
-          movebankId: parseInt(r.id || r.deployment_id || "0", 10),
-          individualId: parsedIndId && !isNaN(parsedIndId) ? parsedIndId : null,
-          localIdentifier: r.local_identifier || r.tag_local_identifier || null,
+          movebankId: parseInt(depMovebankId, 10),
+          individualId: individualId && !isNaN(individualId) ? individualId : null,
+          localIdentifier: localId,
           deployOn: r.deploy_on_timestamp || r.deploy_on_date || null,
           deployOff: r.deploy_off_timestamp || r.deploy_off_date || null,
           synced: true,
