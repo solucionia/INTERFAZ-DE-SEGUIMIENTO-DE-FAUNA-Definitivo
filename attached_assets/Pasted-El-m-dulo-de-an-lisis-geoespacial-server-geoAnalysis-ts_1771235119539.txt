@@ -1,0 +1,119 @@
+El módulo de análisis geoespacial (server/geoAnalysis.ts y client/src/pages/geo-analysis.tsx) necesita ampliarse para replicar exactamente las métricas que genera el script R del cliente. Tengo los archivos de ejemplo de lo que debe producir.
+
+CAMBIOS EN EL BACKEND — server/geoAnalysis.ts:
+
+1. **Muestreo aleatorio cuando hay muchos datos:**
+   - Si el dataset tiene más de 10.000 puntos GPS, tomar una muestra aleatoria de 10.000 puntos
+   - Mantener el primer y último punto siempre
+   - Mostrar aviso: "Se han muestreado 10.000 de {N} puntos para optimizar el cálculo"
+
+2. **Home Range Kernel a múltiples porcentajes:**
+   - Calcular para estos porcentajes: 5%, 10%, 20%, 25%, 30%, 35%, 40%, 45%, 50%, 55%, 60%, 65%, 70%, 75%, 80%, 85%, 90%, 95%
+   - Implementar DOS métodos de bandwidth (h):
+     a) **HREF** (Reference bandwidth / Silverman) — el que ya existe
+     b) **LSCV** (Least Squares Cross Validation):
+        - Probar valores de h en rango: h_min = 0.1 * href, h_max = 2 * href, 50 valores
+        - Para cada h, calcular score LSCV minimizando el error cuadrático integrado
+        - Elegir h que minimice el score
+        - Si no converge, usar HREF como fallback y avisar
+   - El usuario elige: HREF, LSCV, o Ambos
+   - Devolver el valor de h en los resultados
+   - Generar polígono para cada porcentaje
+
+3. **MCP a múltiples porcentajes:**
+   - Porcentajes: 20%, 25%, 30%, 35%, 40%, 45%, 50%, 55%, 60%, 65%, 70%, 75%, 80%, 85%, 90%, 95%, 100%
+   - Para MCP al X%: centroide → ordenar por distancia al centroide → tomar X% más cercanos → convex hull
+
+4. **Métricas estadísticas completas (replicando VALORES.csv):**
+   Calcular y devolver TODAS estas métricas:
+   
+   - localizaciones: número total de puntos GPS usados
+   - dias_analisis: número de días distintos con datos
+   - total_recorrido: distancia total en km (el script R la da en metros, convertir a km)
+   - distancia_minima_entre_localizaciones: en km
+   - distancia_maxima_entre_localizaciones: en km
+   - p_fecha: primera fecha (formato DD/MM/YYYY)
+   - u_fecha: última fecha (formato DD/MM/YYYY)
+   - excentricidad: ajustar elipse con PCA, excentricidad = sqrt(1 - b²/a²)
+   - linearidad: distancia_recta_inicio_fin / total_recorrido
+   - minima_distancia_dia: en km
+   - maxima_distancia_dia: en km
+   - media_distancia_dia: en km
+   - h: valor HREF del bandwidth
+   - h_lscv: valor LSCV del bandwidth (si se calculó)
+   - hr_area para cada porcentaje: en m² (para compatibilidad con el script R) Y en km² (para la UI)
+
+5. **Exportar resultados como CSV (formato compatible con VALORES.csv):**
+   - Endpoint: GET /api/analyses/:id/export-csv
+   - Genera un CSV con una fila por individuo y estas columnas:
+     "",localizaciones,dias_analisis,total_recorrido,distancia_minima_entre_localizaciones,distancia_maxima_entre_localizaciones,p_fecha,u_fecha,escentricidad,Linearity,minima_distancia_dia,maxima_distancia_dia,media_distancia_dia,h,hr_area5,hr_area10,hr_area50,hr_area75,hr_area95
+   - Los valores numéricos con la misma precisión que el script R (sin redondear)
+
+6. **Exportar HRREF.csv y MPC.csv por separado:**
+   - Endpoint: GET /api/analyses/:id/export-hrref → CSV con columnas: porcentaje, hr_area (en m²)
+   - Endpoint: GET /api/analyses/:id/export-mpc → CSV con columnas: porcentaje, area (en m²)
+
+7. **Exportar Shapefiles (si es posible con Turf.js):**
+   - Si no se pueden generar shapefiles nativos, exportar como GeoJSON descargable
+   - Un archivo por cada nivel de home range: home_range_50.geojson, home_range_75.geojson, etc.
+   - También la trayectoria como GeoJSON
+
+CAMBIOS EN EL FRONTEND — geo-analysis.tsx:
+
+1. **Selector de método:**
+   - Radio buttons: "HREF" / "LSCV" / "Ambos"
+
+2. **Panel de métricas organizado en secciones:**
+   
+   Sección "Datos generales":
+   - Localizaciones: {N}
+   - Días de análisis: {N}
+   - Periodo: {primera fecha} — {última fecha}
+   - (Si hubo muestreo): aviso en amarillo
+   
+   Sección "Distancias":
+   - Total recorrido: {X} km
+   - Entre localizaciones: mín {X} km / máx {X} km
+   - Por día: mín {X} km / máx {X} km / media {X} km
+   
+   Sección "Forma del movimiento":
+   - Excentricidad: {X} (con barra visual 0-1)
+   - Linearidad: {X} (con barra visual 0-1)
+   
+   Sección "Home Range (HREF)":
+   - Valor H: {X}
+   - Tabla: Porcentaje | Área (m²) | Área (km²)
+   
+   Sección "Home Range (LSCV)" (si se calculó):
+   - Valor H: {X}
+   - Misma tabla
+   - Si no convergió: mensaje amarillo
+   
+   Sección "MCP":
+   - Tabla: Porcentaje | Área (m²) | Área (km²)
+
+3. **Gráficas (replicando las imágenes del script R):**
+   - Gráfica de área HREF vs porcentaje (como la imagen HRREF.jpg): gráfica de dispersión con porcentaje en eje X y área en eje Y
+   - Gráfica de área MPC vs porcentaje (como grafico_mpc.jpg): gráfica de línea con "Home-range level" en eje X y "Home-range size" en eje Y
+   - Mapa de densidad kernel (heatmap como homerange.jpg): representación visual de la densidad sobre el mapa
+
+4. **Visualización en mapa:**
+   - Polígonos de Home Range con colores graduales (más oscuro = menor porcentaje)
+   - Checkboxes para elegir qué porcentajes mostrar
+   - Alternar entre HREF y LSCV
+   - MCP con borde diferente (punteado)
+   - Trayectoria del animal como línea
+   - Leyenda
+
+5. **Botones de exportación:**
+   - "Exportar VALORES.csv" → métricas completas
+   - "Exportar HRREF.csv" → áreas home range
+   - "Exportar MPC.csv" → áreas MCP
+   - "Exportar GeoJSON" → polígonos descargables
+   - Todos en un menú desplegable "Exportar"
+
+6. **Comparación multi-animal:**
+   - Con varios animales: tabla comparativa con una columna por animal
+   - Polígonos de cada animal en diferente color
+
+Mantén toda la UI en español. Las áreas deben mostrarse en m² Y en km² (doble columna). Las distancias siempre en km. No rompas nada existente.

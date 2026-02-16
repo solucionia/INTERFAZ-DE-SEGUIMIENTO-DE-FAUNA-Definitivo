@@ -73,8 +73,8 @@ interface ComprehensiveResult {
 
 export type AnalysisResult = McpResult | KernelResult | DistanceResult | SpeedResult | ComprehensiveResult;
 
-const KERNEL_PERCENTAGES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const MCP_PERCENTAGES = [50, 75, 90, 95, 100];
+export const KERNEL_PERCENTAGES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+export const MCP_PERCENTAGES = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
 const MAX_SAMPLE_SIZE = 10000;
 
 function groupByIndividual(points: GpsPoint[]): Record<string, GpsPoint[]> {
@@ -623,6 +623,16 @@ function computeDistanceMetrics(pts: GpsPoint[]): {
   };
 }
 
+function buildTrajectoryFeature(pts: GpsPoint[], id: string): GeoJSON.Feature | null {
+  if (pts.length < 2) return null;
+  const coords = pts.map((p) => [p.lng, p.lat]);
+  return {
+    type: "Feature",
+    properties: { id, type: "trajectory" },
+    geometry: { type: "LineString", coordinates: coords },
+  };
+}
+
 export function computeComprehensive(
   points: GpsPoint[],
   params?: { bandwidthMethod?: string }
@@ -657,6 +667,9 @@ export function computeComprehensive(
     let hLscv: number | null = null;
     let lscvConverged = false;
     let kernelLscvAreas: Record<string, number> | null = null;
+
+    const trajectory = buildTrajectoryFeature(pts, id);
+    if (trajectory) allFeatures.push(trajectory);
 
     if (bandwidthMethod === "href" || bandwidthMethod === "both") {
       const kernelHref = computeKernelMultiPercent(pts, id, hHref, "href");

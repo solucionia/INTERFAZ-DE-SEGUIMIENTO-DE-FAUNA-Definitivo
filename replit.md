@@ -69,7 +69,9 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 27. Force reload from Movebank button in visualization page
 28. Cache statistics endpoint for monitoring cached data
 29. CSV import: drag-and-drop upload supporting two formats (Movebank and Base Lunar), auto-detect format by separator/columns, preview with column mapping, batch insert with duplicate detection, auto-create individuals with metadata (taxon, sex from Base Lunar)
-30. Comprehensive geospatial analysis: multi-percent MCP (50/75/90/95/100%), multi-percent Kernel (5-95% in 5% steps), dual bandwidth methods (HREF Silverman + LSCV cross-validation), eccentricity (PCA), linearity, full distance statistics, random sampling for >10k points, multi-animal comparison table, graduated map colors with percentage toggles, CSV metrics export
+30. Comprehensive geospatial analysis: multi-percent MCP (20-100% in 5% steps), multi-percent Kernel (5-95% in 5% steps), dual bandwidth methods (HREF Silverman + LSCV cross-validation), eccentricity (PCA), linearity, full distance statistics, random sampling for >10k points, multi-animal comparison table, graduated map colors with percentage toggles, CSV metrics export
+31. R-compatible CSV exports: VALORES.csv (metrics with m² areas), HRREF.csv (Kernel areas), MPC.csv (MCP areas), GeoJSON (polygons + trajectory)
+32. Area-vs-percentage charts for HRREF and MPC, visual bars for eccentricity/linearity, trajectory overlay on map, export dropdown menu
 
 ## Event Detection
 - **Mortality**: Detects prolonged stationary accelerometer (low variance across all axes)
@@ -98,7 +100,10 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/analysis (execute Turf.js geospatial analysis)
 - GET /api/studies/:id/analyses (list saved analyses for study)
 - GET /api/analyses/:id, DELETE /api/analyses/:id (get/delete saved analysis)
-- GET /api/analyses/:id/export-csv (export analysis metrics as CSV)
+- GET /api/analyses/:id/export-csv (export analysis metrics as VALORES.csv with m² areas)
+- GET /api/analyses/:id/export-hrref (export Kernel HREF/LSCV areas as HRREF.csv)
+- GET /api/analyses/:id/export-mpc (export MCP areas as MPC.csv)
+- GET /api/analyses/:id/export-geojson (export full GeoJSON with polygons + trajectory)
 - GET /api/dashboard/summary (dashboard statistics)
 - GET /api/alerts/history?studyId=...&eventType=...&readStatus=...&resolvedStatus=...&dateStart=...&dateEnd=...&page=... (alert history with filtering/pagination)
 - PATCH /api/alerts/:id/read, /api/alerts/:id/resolve (mark alert read/resolved)

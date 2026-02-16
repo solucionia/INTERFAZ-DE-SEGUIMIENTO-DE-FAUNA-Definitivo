@@ -9,7 +9,7 @@ import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
-import { runAnalysis } from "./geoAnalysis";
+import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES } from "./geoAnalysis";
 import { decrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
@@ -1029,70 +1029,73 @@ export async function registerRoutes(
       let csv = "";
 
       if (resultData?.analysisType === "comprehensive" && resultData.perIndividual) {
-        const kernelPcts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-        const mcpPcts = [50, 75, 90, 95, 100];
-
         const headers = [
-          "Animal", "Localizaciones", "Dias_analisis", "Primera_fecha", "Ultima_fecha",
-          "Total_recorrido_km", "Distancia_min_entre_loc_km", "Distancia_max_entre_loc_km",
-          "Distancia_min_dia_km", "Distancia_max_dia_km", "Distancia_media_dia_km",
-          "Excentricidad", "Linearidad", "H_HREF",
+          "",
+          "localizaciones",
+          "dias_analisis",
+          "total_recorrido",
+          "distancia_minima_entre_localizaciones",
+          "distancia_maxima_entre_localizaciones",
+          "p_fecha",
+          "u_fecha",
+          "escentricidad",
+          "Linearity",
+          "minima_distancia_dia",
+          "maxima_distancia_dia",
+          "media_distancia_dia",
+          "h",
         ];
 
         if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
-          headers.push("H_LSCV", "LSCV_convergido");
+          headers.push("h_lscv");
         }
 
-        for (const pct of kernelPcts) {
-          headers.push(`HR_HREF_${pct}`);
+        for (const pct of KERNEL_PERCENTAGES) {
+          headers.push(`hr_area${pct}`);
         }
 
-        if (resultData.bandwidthMethod === "both") {
-          for (const pct of kernelPcts) {
-            headers.push(`HR_LSCV_${pct}`);
-          }
-        }
-
-        for (const pct of mcpPcts) {
-          headers.push(`MCP_${pct}`);
+        for (const pct of MCP_PERCENTAGES) {
+          headers.push(`mcp_area${pct}`);
         }
 
         csv = headers.join(",") + "\n";
 
         for (const ind of resultData.perIndividual) {
-          const row = [
+          const fmtDate = (isoStr: string) => {
+            if (!isoStr) return "";
+            const d = new Date(isoStr);
+            return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+          };
+
+          const row: any[] = [
             ind.individual,
             ind.locations,
             ind.analysisDays,
-            ind.firstDate ? new Date(ind.firstDate).toISOString().split("T")[0] : "",
-            ind.lastDate ? new Date(ind.lastDate).toISOString().split("T")[0] : "",
             ind.totalDistanceKm,
             ind.minConsecutiveDistKm,
             ind.maxConsecutiveDistKm,
+            fmtDate(ind.firstDate),
+            fmtDate(ind.lastDate),
+            ind.eccentricity,
+            ind.linearity,
             ind.minDailyDistKm,
             ind.maxDailyDistKm,
             ind.avgDailyDistKm,
-            ind.eccentricity,
-            ind.linearity,
             ind.hHref,
           ];
 
           if (resultData.bandwidthMethod === "lscv" || resultData.bandwidthMethod === "both") {
-            row.push(ind.hLscv ?? "", ind.lscvConverged ? "Si" : "No");
+            row.push(ind.hLscv ?? "");
           }
 
-          for (const pct of kernelPcts) {
-            row.push(ind.kernelHrefAreas?.[`${pct}`] ?? "");
+          for (const pct of KERNEL_PERCENTAGES) {
+            const km2 = ind.kernelHrefAreas?.[`${pct}`];
+            row.push(km2 != null ? km2 * 1e6 : "");
           }
 
-          if (resultData.bandwidthMethod === "both") {
-            for (const pct of kernelPcts) {
-              row.push(ind.kernelLscvAreas?.[`${pct}`] ?? "");
-            }
-          }
-
-          for (const pct of mcpPcts) {
-            row.push(ind.mcpAreas?.[`${pct}`] ?? "");
+          for (const pct of MCP_PERCENTAGES) {
+            const km2 = ind.mcpAreas?.[`${pct}`];
+            row.push(km2 != null ? km2 * 1e6 : "");
           }
 
           csv += row.join(",") + "\n";
@@ -1123,15 +1126,98 @@ export async function registerRoutes(
         }
       }
 
-      const studyName = analysis.studyId || "estudio";
       const dateStr = new Date().toISOString().split("T")[0].replace(/-/g, "");
-      const fileName = `metricas_${resultData?.analysisType || "analisis"}_${dateStr}.csv`;
+      const fileName = `VALORES_${dateStr}.csv`;
 
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
       return res.send("\uFEFF" + csv);
     } catch (e: any) {
       return res.status(500).json({ message: `Error exportando CSV: ${e.message}` });
+    }
+  });
+
+  app.get("/api/analyses/:id/export-hrref", requireAuth, async (req, res) => {
+    try {
+      const analysis = await storage.getSavedAnalysis(req.params.id);
+      if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+      const user = req.user!;
+      if (user.role !== "superuser" && analysis.userId !== user.id) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+      const resultData = analysis.resultData as any;
+      if (resultData?.analysisType !== "comprehensive" || !resultData.perIndividual) {
+        return res.status(400).json({ message: "Solo disponible para analisis completo" });
+      }
+
+      let csv = "Animal,porcentaje,hr_area_m2,hr_area_km2\n";
+      for (const ind of resultData.perIndividual) {
+        for (const pct of KERNEL_PERCENTAGES) {
+          const km2 = ind.kernelHrefAreas?.[`${pct}`];
+          if (km2 != null) {
+            csv += `${ind.individual},${pct},${km2 * 1e6},${km2}\n`;
+          }
+        }
+      }
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="HRREF.csv"`);
+      return res.send("\uFEFF" + csv);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error exportando HRREF: ${e.message}` });
+    }
+  });
+
+  app.get("/api/analyses/:id/export-mpc", requireAuth, async (req, res) => {
+    try {
+      const analysis = await storage.getSavedAnalysis(req.params.id);
+      if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+      const user = req.user!;
+      if (user.role !== "superuser" && analysis.userId !== user.id) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+      const resultData = analysis.resultData as any;
+      if (resultData?.analysisType !== "comprehensive" || !resultData.perIndividual) {
+        return res.status(400).json({ message: "Solo disponible para analisis completo" });
+      }
+
+      let csv = "Animal,porcentaje,area_m2,area_km2\n";
+      for (const ind of resultData.perIndividual) {
+        for (const pct of MCP_PERCENTAGES) {
+          const km2 = ind.mcpAreas?.[`${pct}`];
+          if (km2 != null) {
+            csv += `${ind.individual},${pct},${km2 * 1e6},${km2}\n`;
+          }
+        }
+      }
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="MPC.csv"`);
+      return res.send("\uFEFF" + csv);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error exportando MPC: ${e.message}` });
+    }
+  });
+
+  app.get("/api/analyses/:id/export-geojson", requireAuth, async (req, res) => {
+    try {
+      const analysis = await storage.getSavedAnalysis(req.params.id);
+      if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
+      const user = req.user!;
+      if (user.role !== "superuser" && analysis.userId !== user.id) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+
+      const geojson = analysis.resultGeojson;
+      if (!geojson) {
+        return res.status(400).json({ message: "No hay datos geoespaciales para exportar" });
+      }
+
+      res.setHeader("Content-Type", "application/geo+json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="analisis_geoespacial.geojson"`);
+      return res.send(JSON.stringify(geojson, null, 2));
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error exportando GeoJSON: ${e.message}` });
     }
   });
 

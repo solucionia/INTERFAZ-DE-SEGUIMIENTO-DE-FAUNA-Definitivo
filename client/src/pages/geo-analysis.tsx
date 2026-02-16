@@ -27,6 +27,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Loader2,
   Play,
   Download,
@@ -41,6 +47,8 @@ import {
   Gauge,
   Activity,
   Info,
+  FileText,
+  FileJson,
 } from "lucide-react";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import {
@@ -68,7 +76,7 @@ const ANIMAL_COLORS = [
 ];
 
 const KERNEL_PCTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
-const MCP_PCTS = [50, 75, 90, 95, 100];
+const MCP_PCTS = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
 
 function kernelColor(pct: number): string {
   const t = pct / 95;
@@ -252,6 +260,26 @@ export default function GeoAnalysis() {
     }
   };
 
+  const downloadExport = async (type: "hrref" | "mpc" | "geojson") => {
+    if (!resultData?.id) return;
+    try {
+      const endpoint = `/api/analyses/${resultData.id}/export-${type}`;
+      const res = await fetch(endpoint, { credentials: "include" });
+      if (!res.ok) throw new Error("Error exportando");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ext = type === "geojson" ? "geojson" : "csv";
+      const name = type === "hrref" ? "HRREF" : type === "mpc" ? "MPC" : "analisis_geoespacial";
+      a.download = `${name}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Error", description: "No se pudo exportar", variant: "destructive" });
+    }
+  };
+
   const handleQuickRange = (range: QuickRange, start: string, end: string) => {
     setDateStart(start);
     setDateEnd(end);
@@ -284,6 +312,7 @@ export default function GeoAnalysis() {
 
     const filtered = resultData.geojson.features.filter((f: any) => {
       const props = f.properties || {};
+      if (props.type === "trajectory") return true;
       if (props.type === "kernel") {
         if (props.method !== mapMethod) return false;
         if (mapLayer !== "kernel") return false;
@@ -313,8 +342,41 @@ export default function GeoAnalysis() {
           </p>
         </div>
         <div className="flex gap-2">
-          {resultData && (
-            <Button variant="outline" onClick={resultData.analysisType === "comprehensive" ? exportCsvComprehensive : exportCsvLegacy} data-testid="button-export-csv">
+          {resultData && resultData.analysisType === "comprehensive" && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="button-export-dropdown">
+                  <Download className="w-4 h-4 mr-2" />
+                  Exportar
+                  <ChevronDown className="w-3 h-3 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportCsvComprehensive} data-testid="menu-export-valores">
+                  <FileText className="w-4 h-4 mr-2" />
+                  VALORES.csv
+                </DropdownMenuItem>
+                {resultData.id && (
+                  <>
+                    <DropdownMenuItem onClick={() => downloadExport("hrref")} data-testid="menu-export-hrref">
+                      <FileText className="w-4 h-4 mr-2" />
+                      HRREF.csv
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => downloadExport("mpc")} data-testid="menu-export-mpc">
+                      <FileText className="w-4 h-4 mr-2" />
+                      MPC.csv
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => downloadExport("geojson")} data-testid="menu-export-geojson">
+                      <FileJson className="w-4 h-4 mr-2" />
+                      GeoJSON
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {resultData && resultData.analysisType !== "comprehensive" && (
+            <Button variant="outline" onClick={exportCsvLegacy} data-testid="button-export-csv">
               <Download className="w-4 h-4 mr-2" />
               Exportar CSV
             </Button>
@@ -692,7 +754,20 @@ function ComprehensiveResults({
       )}
 
       {isMulti ? (
-        <ComparisonTable data={data} />
+        <>
+          <ComparisonTable data={data} />
+          {perInd.map((ind: any, idx: number) => (
+            <div key={ind.individual} className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground mt-2" style={{ color: ANIMAL_COLORS[idx % ANIMAL_COLORS.length] }}>
+                {ind.individual}
+              </h3>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <HrrefChart ind={ind} />
+                <McpChart ind={ind} />
+              </div>
+            </div>
+          ))}
+        </>
       ) : perInd.length === 1 ? (
         <SingleAnimalMetrics ind={perInd[0]} bandwidthMethod={data.bandwidthMethod} />
       ) : null}
@@ -801,6 +876,9 @@ function ComprehensiveResults({
                   data={filteredGeojson}
                   style={(feature: any) => {
                     const props = feature?.properties || {};
+                    if (props.type === "trajectory") {
+                      return { color: "#f59e0b", weight: 1.5, opacity: 0.6, dashArray: "4 4", fillOpacity: 0 };
+                    }
                     if (props.type === "kernel") {
                       const pct = props.percent || 95;
                       const color = kernelColor(pct);
@@ -810,14 +888,16 @@ function ComprehensiveResults({
                     if (props.type === "mcp") {
                       const pct = props.percent || 100;
                       const opacity = 0.15 + (1 - pct / 100) * 0.3;
-                      return { color: "#3b82f6", weight: 1.5, opacity: 0.7, fillColor: "#3b82f6", fillOpacity: opacity };
+                      return { color: "#3b82f6", weight: 1.5, opacity: 0.7, fillColor: "#3b82f6", fillOpacity: opacity, dashArray: "6 3" };
                     }
                     return { color: "#888", weight: 1, fillOpacity: 0.1 };
                   }}
                   onEachFeature={(feature: any, layer: any) => {
                     const props = feature.properties || {};
                     let popup = `<b>${props.id || "Animal"}</b>`;
-                    if (props.type === "kernel") {
+                    if (props.type === "trajectory") {
+                      popup += `<br/>Trayectoria`;
+                    } else if (props.type === "kernel") {
                       popup += `<br/>Kernel ${props.level} (${props.method?.toUpperCase() || "HREF"})`;
                     } else if (props.type === "mcp") {
                       popup += `<br/>MCP ${props.percent}%`;
@@ -833,7 +913,11 @@ function ComprehensiveResults({
             </div>
 
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-              {mapLayer === "kernel" && showKernelPcts.sort((a, b) => a - b).map((pct) => (
+              <div className="flex items-center gap-1.5">
+                <span className="w-4 h-0.5" style={{ backgroundColor: "#f59e0b", borderTop: "2px dashed #f59e0b" }} />
+                Trayectoria
+              </div>
+              {mapLayer === "kernel" && [...showKernelPcts].sort((a, b) => a - b).map((pct) => (
                 <div key={pct} className="flex items-center gap-1.5">
                   <span
                     className="w-3 h-3 rounded-sm"
@@ -842,7 +926,7 @@ function ComprehensiveResults({
                   Kernel {pct}%
                 </div>
               ))}
-              {mapLayer === "mcp" && showMcpPcts.sort((a, b) => a - b).map((pct) => (
+              {mapLayer === "mcp" && [...showMcpPcts].sort((a, b) => a - b).map((pct) => (
                 <div key={pct} className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#3b82f6", opacity: 0.3 + (1 - pct / 100) * 0.5 }} />
                   MCP {pct}%
@@ -856,6 +940,123 @@ function ComprehensiveResults({
   );
 }
 
+function VisualBar({ value, max = 1, label }: { value: number | null | undefined; max?: number; label: string }) {
+  const safeVal = typeof value === "number" && isFinite(value) ? value : 0;
+  const pct = Math.min(100, Math.max(0, (safeVal / max) * 100));
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium">{value != null && isFinite(value as number) ? (value as number).toFixed(4) : "—"}</span>
+      </div>
+      <div className="h-2 rounded-full bg-muted overflow-hidden">
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function AreaTable({ areas, pcts, title }: { areas: Record<string, number> | null; pcts: number[]; title: string }) {
+  if (!areas) return null;
+  return (
+    <div className="overflow-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Porcentaje</TableHead>
+            <TableHead>Area (m²)</TableHead>
+            <TableHead>Area (km²)</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {pcts.map((pct) => {
+            const km2 = areas[`${pct}`];
+            return (
+              <TableRow key={pct}>
+                <TableCell>{pct}%</TableCell>
+                <TableCell>{km2 != null ? (km2 * 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—"}</TableCell>
+                <TableCell>{km2 ?? "—"}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function HrrefChart({ ind }: { ind: any }) {
+  const data = KERNEL_PCTS.map((pct) => ({
+    pct,
+    area: ind.kernelHrefAreas?.[`${pct}`] != null ? ind.kernelHrefAreas[`${pct}`] * 1e6 : 0,
+  })).filter((d) => d.area > 0);
+  if (data.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="w-4 h-4" />
+          HRREF — Area vs Porcentaje
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis dataKey="pct" label={{ value: "Porcentaje (%)", position: "insideBottom", offset: -5, fontSize: 11 }} tick={{ fontSize: 10 }} />
+              <YAxis label={{ value: "Area (m²)", angle: -90, position: "insideLeft", fontSize: 11 }} tick={{ fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
+                formatter={(v: number) => [v.toLocaleString("es-ES", { maximumFractionDigits: 2 }), "Area (m²)"]}
+                labelFormatter={(l) => `${l}%`}
+              />
+              <Line type="monotone" dataKey="area" stroke="#3b82f6" strokeWidth={2} dot={{ fill: "#3b82f6", r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function McpChart({ ind }: { ind: any }) {
+  const data = MCP_PCTS.map((pct) => ({
+    pct,
+    area: ind.mcpAreas?.[`${pct}`] != null ? ind.mcpAreas[`${pct}`] * 1e6 : 0,
+  })).filter((d) => d.area > 0);
+  if (data.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="w-4 h-4" />
+          MPC — Area vs Porcentaje
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis dataKey="pct" label={{ value: "Home-range level (%)", position: "insideBottom", offset: -5, fontSize: 11 }} tick={{ fontSize: 10 }} />
+              <YAxis label={{ value: "Home-range size (m²)", angle: -90, position: "insideLeft", fontSize: 11 }} tick={{ fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
+                formatter={(v: number) => [v.toLocaleString("es-ES", { maximumFractionDigits: 2 }), "Area (m²)"]}
+                labelFormatter={(l) => `${l}%`}
+              />
+              <Line type="monotone" dataKey="area" stroke="#22c55e" strokeWidth={2} dot={{ fill: "#22c55e", r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMethod: string }) {
   const hasBoth = bandwidthMethod === "both";
   const hasLscv = bandwidthMethod === "lscv" || hasBoth;
@@ -864,7 +1065,7 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Datos</CardTitle>
+          <CardTitle className="text-base">Datos generales</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
@@ -879,7 +1080,7 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
             <div className="col-span-2 sm:col-span-1">
               <span className="text-muted-foreground">Periodo:</span>{" "}
               <span className="font-medium" data-testid="text-metric-period">
-                {ind.firstDate ? format(new Date(ind.firstDate), "dd/MM/yy") : "—"} — {ind.lastDate ? format(new Date(ind.lastDate), "dd/MM/yy") : "—"}
+                {ind.firstDate ? format(new Date(ind.firstDate), "dd/MM/yyyy") : "—"} — {ind.lastDate ? format(new Date(ind.lastDate), "dd/MM/yyyy") : "—"}
               </span>
             </div>
           </div>
@@ -924,19 +1125,9 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Forma del movimiento</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-            <div>
-              <span className="text-muted-foreground">Excentricidad:</span>{" "}
-              <span className="font-medium" data-testid="text-metric-eccentricity">{ind.eccentricity}</span>
-              <span className="text-xs text-muted-foreground ml-1">(0=circular, 1=elongado)</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Linearidad:</span>{" "}
-              <span className="font-medium" data-testid="text-metric-linearity">{ind.linearity}</span>
-              <span className="text-xs text-muted-foreground ml-1">(0=sinuoso, 1=lineal)</span>
-            </div>
-          </div>
+        <CardContent className="space-y-3">
+          <VisualBar value={ind.eccentricity} label="Excentricidad (0=circular, 1=elongado)" />
+          <VisualBar value={ind.linearity} label="Linearidad (0=sinuoso, 1=lineal)" />
         </CardContent>
       </Card>
 
@@ -947,26 +1138,11 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Porcentaje</TableHead>
-                  <TableHead>Area (km²)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {KERNEL_PCTS.map((pct) => (
-                  <TableRow key={pct}>
-                    <TableCell>{pct}%</TableCell>
-                    <TableCell>{ind.kernelHrefAreas?.[`${pct}`] ?? "—"}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <AreaTable areas={ind.kernelHrefAreas} pcts={KERNEL_PCTS} title="HREF" />
         </CardContent>
       </Card>
+
+      <HrrefChart ind={ind} />
 
       {hasLscv && (
         <Card>
@@ -979,24 +1155,7 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Porcentaje</TableHead>
-                    <TableHead>Area (km²)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {KERNEL_PCTS.map((pct) => (
-                    <TableRow key={pct}>
-                      <TableCell>{pct}%</TableCell>
-                      <TableCell>{ind.kernelLscvAreas?.[`${pct}`] ?? ind.kernelHrefAreas?.[`${pct}`] ?? "—"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <AreaTable areas={ind.kernelLscvAreas || ind.kernelHrefAreas} pcts={KERNEL_PCTS} title="LSCV" />
           </CardContent>
         </Card>
       )}
@@ -1006,26 +1165,11 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
           <CardTitle className="text-base">MCP</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Porcentaje</TableHead>
-                  <TableHead>Area (km²)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {MCP_PCTS.map((pct) => (
-                  <TableRow key={pct}>
-                    <TableCell>{pct}%</TableCell>
-                    <TableCell>{ind.mcpAreas?.[`${pct}`] ?? "—"}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <AreaTable areas={ind.mcpAreas} pcts={MCP_PCTS} title="MCP" />
         </CardContent>
       </Card>
+
+      <McpChart ind={ind} />
     </div>
   );
 }
@@ -1061,6 +1205,14 @@ function ComparisonTable({ data }: { data: any }) {
 
   for (const pct of KERNEL_PCTS) {
     metrics.push({
+      label: `HR HREF ${pct}% (m²)`,
+      key: `_hr_href_m2_${pct}`,
+      format: (ind: any) => {
+        const km2 = ind.kernelHrefAreas?.[`${pct}`];
+        return km2 != null ? (km2 * 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—";
+      },
+    });
+    metrics.push({
       label: `HR HREF ${pct}% (km²)`,
       key: `_hr_href_${pct}`,
       format: (ind: any) => ind.kernelHrefAreas?.[`${pct}`] ?? "—",
@@ -1070,6 +1222,14 @@ function ComparisonTable({ data }: { data: any }) {
   if (hasBoth) {
     for (const pct of KERNEL_PCTS) {
       metrics.push({
+        label: `HR LSCV ${pct}% (m²)`,
+        key: `_hr_lscv_m2_${pct}`,
+        format: (ind: any) => {
+          const km2 = ind.kernelLscvAreas?.[`${pct}`];
+          return km2 != null ? (km2 * 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—";
+        },
+      });
+      metrics.push({
         label: `HR LSCV ${pct}% (km²)`,
         key: `_hr_lscv_${pct}`,
         format: (ind: any) => ind.kernelLscvAreas?.[`${pct}`] ?? "—",
@@ -1078,6 +1238,14 @@ function ComparisonTable({ data }: { data: any }) {
   }
 
   for (const pct of MCP_PCTS) {
+    metrics.push({
+      label: `MCP ${pct}% (m²)`,
+      key: `_mcp_m2_${pct}`,
+      format: (ind: any) => {
+        const km2 = ind.mcpAreas?.[`${pct}`];
+        return km2 != null ? (km2 * 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—";
+      },
+    });
     metrics.push({
       label: `MCP ${pct}% (km²)`,
       key: `_mcp_${pct}`,
