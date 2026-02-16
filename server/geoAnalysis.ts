@@ -205,22 +205,23 @@ function computeMCPMultiPercent(pts: GpsPoint[], id: string): { areas: Record<st
   return { areas, features };
 }
 
+function gaussianKernel2D(dx: number, dy: number, bandwidth: number): number {
+  const u2 = (dx * dx + dy * dy) / (bandwidth * bandwidth);
+  return Math.exp(-0.5 * u2) / (2 * Math.PI * bandwidth * bandwidth);
+}
+
 function gaussianKernel(distance: number, bandwidth: number): number {
   const u = distance / bandwidth;
   return Math.exp(-0.5 * u * u) / (bandwidth * Math.sqrt(2 * Math.PI));
 }
 
-function silvermanBandwidth(points: GpsPoint[]): number {
-  if (points.length < 2) return 1;
-  const lats = points.map((p: GpsPoint) => p.lat);
-  const lngs = points.map((p: GpsPoint) => p.lng);
-  const stdLat = stdDev(lats);
-  const stdLng = stdDev(lngs);
-  const sigma = Math.max((stdLat + stdLng) / 2, 0.001);
-  const n = points.length;
-  const h = sigma * Math.pow((4 / (3 * n)), 0.2);
-  const approxKm = h * 111;
-  return Math.max(approxKm, 0.1);
+function projectToMeters(points: GpsPoint[]): { x: number[]; y: number[]; meanLat: number; meanLng: number } {
+  const meanLat = points.reduce((s, p) => s + p.lat, 0) / points.length;
+  const meanLng = points.reduce((s, p) => s + p.lng, 0) / points.length;
+  const cosLat = Math.cos((meanLat * Math.PI) / 180);
+  const x = points.map((p) => (p.lng - meanLng) * 111320 * cosLat);
+  const y = points.map((p) => (p.lat - meanLat) * 111320);
+  return { x, y, meanLat, meanLng };
 }
 
 function stdDev(values: number[]): number {
@@ -229,6 +230,38 @@ function stdDev(values: number[]): number {
   const mean = values.reduce((s: number, v: number) => s + v, 0) / n;
   const variance = values.reduce((s: number, v: number) => s + (v - mean) ** 2, 0) / (n - 1);
   return Math.sqrt(variance);
+}
+
+function iqr(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  if (n < 4) return stdDev(values) * 1.34;
+  const q1Idx = Math.floor(n * 0.25);
+  const q3Idx = Math.floor(n * 0.75);
+  return sorted[q3Idx] - sorted[q1Idx];
+}
+
+function silvermanBandwidth(points: GpsPoint[]): number {
+  if (points.length < 2) return 1;
+  const n = points.length;
+
+  const { x, y } = projectToMeters(points);
+
+  const sdX = stdDev(x);
+  const sdY = stdDev(y);
+  const iqrX = iqr(x);
+  const iqrY = iqr(y);
+
+  const sd = Math.sqrt((sdX * sdX + sdY * sdY) / 2);
+  const iqrCombined = Math.sqrt((iqrX * iqrX + iqrY * iqrY) / 2);
+
+  const sigma = Math.min(sd, iqrCombined / 1.34);
+  const h_meters = 0.9 * sigma * Math.pow(n, -1 / 6);
+  const h_km = h_meters / 1000;
+
+  console.log(`[HREF] n=${n}, sdX=${sdX.toFixed(1)}m, sdY=${sdY.toFixed(1)}m, iqrX=${iqrX.toFixed(1)}m, iqrY=${iqrY.toFixed(1)}m, sd=${sd.toFixed(1)}m, iqr/1.34=${(iqrCombined / 1.34).toFixed(1)}m, sigma=${sigma.toFixed(1)}m, h=${h_km.toFixed(3)}km`);
+
+  return Math.max(h_km, 0.05);
 }
 
 function computeLSCVBandwidth(points: GpsPoint[], href: number): { h: number; converged: boolean } {
@@ -303,7 +336,7 @@ function computeLSCVBandwidth(points: GpsPoint[], href: number): { h: number; co
   return { h: Math.round(bestH * 1000) / 1000, converged };
 }
 
-const MAX_GRID_SIDE = 50;
+const MAX_GRID_SIDE = 80;
 
 function computeKernelMultiPercent(
   pts: GpsPoint[],
@@ -323,7 +356,7 @@ function computeKernelMultiPercent(
   const fc = turf.featureCollection(turfPoints);
   const bboxArr = turf.bbox(fc);
 
-  const padDeg = (bandwidth / 111) * 2;
+  const padDeg = (bandwidth / 111) * 3;
   const paddedBbox: [number, number, number, number] = [
     bboxArr[0] - padDeg,
     bboxArr[1] - padDeg,
@@ -343,28 +376,32 @@ function computeKernelMultiPercent(
   );
 
   const minCellSize = Math.max(bboxWidthKm, bboxHeightKm) / MAX_GRID_SIDE;
-  const cellSizeKm = Math.max(bandwidth / 3, minCellSize, 0.05);
+  const cellSizeKm = Math.max(bandwidth / 4, minCellSize, 0.05);
   const grid = turf.pointGrid(paddedBbox, cellSizeKm, { units: "kilometers" });
+  const cellAreaKm2 = cellSizeKm * cellSizeKm;
 
-  console.log(`KDE [${id}]: Grid generado con ${grid.features.length} celdas (cellSize=${cellSizeKm.toFixed(3)} km)`);
+  console.log(`KDE [${id}]: Grid generado con ${grid.features.length} celdas (cellSize=${cellSizeKm.toFixed(3)} km, cellArea=${cellAreaKm2.toFixed(4)} km²)`);
 
   const cutoffDist = 3 * bandwidth;
+  const h_km = bandwidth;
 
   const ptsCoords = pts.map((p) => ({ lng: p.lng, lat: p.lat }));
+  const n = pts.length;
 
   const densities: number[] = [];
   for (const gridPt of grid.features) {
     let density = 0;
     const gCoords = gridPt.geometry.coordinates;
+    const cosLat = Math.cos((gCoords[1] * Math.PI) / 180);
     for (const p of ptsCoords) {
-      const dLng = Math.abs(gCoords[0] - p.lng) * 111 * Math.cos((gCoords[1] * Math.PI) / 180);
-      const dLat = Math.abs(gCoords[1] - p.lat) * 111;
-      if (dLng > cutoffDist || dLat > cutoffDist) continue;
-      const dist = Math.sqrt(dLng * dLng + dLat * dLat);
-      if (dist > cutoffDist) continue;
-      density += gaussianKernel(dist, bandwidth);
+      const dxKm = (gCoords[0] - p.lng) * 111.32 * cosLat;
+      const dyKm = (gCoords[1] - p.lat) * 111.32;
+      if (Math.abs(dxKm) > cutoffDist || Math.abs(dyKm) > cutoffDist) continue;
+      const dist2 = dxKm * dxKm + dyKm * dyKm;
+      if (dist2 > cutoffDist * cutoffDist) continue;
+      density += gaussianKernel2D(dxKm, dyKm, h_km);
     }
-    density /= pts.length;
+    density /= n;
     densities.push(density);
     gridPt.properties = gridPt.properties || {};
     gridPt.properties.density = density;
@@ -374,19 +411,22 @@ function computeKernelMultiPercent(
 
   if (densities.length === 0) return { areas, features };
 
-  const sortedDensities = densities.filter((d) => d > 0).sort((a, b) => b - a);
-  if (sortedDensities.length === 0) return { areas, features };
+  const cellVolumes = densities.map((d) => d * cellAreaKm2);
+  const totalVolume = cellVolumes.reduce((s, v) => s + v, 0);
 
-  const totalDensity = sortedDensities.reduce((s, v) => s + v, 0);
+  if (totalVolume === 0) return { areas, features };
+
+  const indexed = cellVolumes.map((v, i) => ({ v, i, d: densities[i] }));
+  indexed.sort((a, b) => b.d - a.d);
 
   const thresholds: Record<number, number> = {};
-  let cumSum = 0;
-  for (const d of sortedDensities) {
-    cumSum += d;
-    const cumPct = cumSum / totalDensity;
+  let cumVolume = 0;
+  for (const item of indexed) {
+    cumVolume += item.v;
+    const cumPct = cumVolume / totalVolume;
     for (const pct of KERNEL_PERCENTAGES) {
-      if (thresholds[pct] === undefined && cumPct > pct / 100) {
-        thresholds[pct] = d;
+      if (thresholds[pct] === undefined && cumPct >= pct / 100) {
+        thresholds[pct] = item.d;
       }
     }
   }
@@ -398,19 +438,19 @@ function computeKernelMultiPercent(
 
   for (const pct of KERNEL_PERCENTAGES) {
     const threshold = thresholds[pct];
-    const ptsAbove = grid.features.filter((f: any) => (f.properties?.density ?? 0) >= threshold);
+    const cellsAbove = grid.features.filter((f: any) => (f.properties?.density ?? 0) >= threshold);
+    const cellCountArea = cellsAbove.length * cellAreaKm2;
 
-    if (ptsAbove.length >= 3) {
-      const hull = turf.convex(turf.featureCollection(ptsAbove));
+    if (cellsAbove.length >= 3) {
+      const hull = turf.convex(turf.featureCollection(cellsAbove));
       if (hull) {
-        const areaKm2 = turf.area(hull) / 1e6;
-        areas[`${pct}`] = Math.round(areaKm2 * 1000) / 1000;
+        areas[`${pct}`] = Math.round(cellCountArea * 1000) / 1000;
 
         hull.properties = {
           id,
           level: `${pct}%`,
           percent: pct,
-          area_km2: Math.round(areaKm2 * 1000) / 1000,
+          area_km2: Math.round(cellCountArea * 1000) / 1000,
           type: "kernel",
           method,
         };
@@ -420,6 +460,7 @@ function computeKernelMultiPercent(
   }
 
   console.log(`KDE [${id}]: Completado en ${((Date.now() - t0) / 1000).toFixed(1)}s, ${Object.keys(areas).length} contornos generados`);
+  if (areas["95"] !== undefined) console.log(`KDE [${id}]: 95%=${areas["95"]} km², 50%=${areas["50"] || "N/A"} km²`);
 
   return { areas, features };
 }

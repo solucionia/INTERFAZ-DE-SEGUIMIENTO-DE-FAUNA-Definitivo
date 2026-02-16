@@ -1,0 +1,32 @@
+El análisis Kernel Density funciona pero las áreas están sobredimensionadas comparado con los valores de referencia de adehabitatHR en R. Los valores de referencia del cliente son:
+- Kernel 95% HREF: ~3.355 km² (la app da 4.513 km²) → 34% de más
+- Kernel 50% HREF: ~497 km² (la app da 1.064 km²) → 114% de más
+
+El problema es probablemente la resolución del grid (50x50) y el algoritmo de generación de contornos. Ajusta:
+
+1. **Aumentar resolución del grid a 80x80** (6.400 celdas). Con el cutoff de 3*h ya implementado, debería ser manejable en el timeout de 60 segundos. Si no cabe en 60s, probar con 70x70.
+
+2. **Revisar el cálculo del bandwidth HREF (h de Silverman):**
+   - La fórmula correcta para datos 2D es: h = (n^(-1/6)) * 0.9 * min(sd, IQR/1.34)
+   - Donde sd = sqrt((sd_x² + sd_y²)/2) y IQR = sqrt((IQR_x² + IQR_y²)/2)
+   - Verificar que se están usando coordenadas proyectadas (metros) para el cálculo de h, no grados decimales. Si los datos están en lat/lng (grados), hay que convertirlos a metros antes de calcular h, o usar una aproximación: 1 grado lat ≈ 111,320 m, 1 grado lng ≈ 111,320 * cos(lat_media) m
+
+3. **Revisar la generación de contornos:**
+   - El contorno al X% debe contener el X% del volumen de probabilidad, NO el X% del valor máximo de densidad
+   - Procedimiento correcto:
+     a) Calcular densidad en cada celda del grid
+     b) Ordenar las celdas por densidad de mayor a menor
+     c) Acumular el volumen (densidad * área_celda) hasta alcanzar el X% del volumen total
+     d) El umbral de densidad en ese punto es el límite del contorno al X%
+     e) El polígono se forma con todas las celdas que tienen densidad >= umbral
+   - Este es el método que usa adehabitatHR y es diferente a simplemente tomar el percentil X de los valores de densidad
+
+4. **Verificar unidades:** Asegurarse de que el área final está calculada correctamente en km². Si turf.area() devuelve m², dividir por 1.000.000.
+
+5. Prueba con Yiadom (01/01/2024 a 31/12/2024) y muéstrame:
+   - Valor de h calculado
+   - Resolución del grid usada
+   - Área al 95% y 50% resultante
+   - Tiempo de ejecución
+
+Los valores objetivo son: Kernel 95% ≈ 3.355 km², Kernel 50% ≈ 497 km², valor h ≈ 3.434
