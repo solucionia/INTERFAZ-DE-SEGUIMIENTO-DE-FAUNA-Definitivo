@@ -67,12 +67,21 @@ export default function StudyDetail() {
   const { data: deployments } = useQuery<Deployment[]>({
     queryKey: ["/api/studies", studyId, "deployments"],
     enabled: !!studyId,
+    staleTime: 30000,
   });
 
-  const activeDeploymentIndividualIds = useMemo(() =>
-    new Set(deployments?.filter((d) => !d.deployOff).map((d) => d.individualId) || []),
-    [deployments]
-  );
+  const activeDeploymentIndividualIds = useMemo(() => {
+    const active = deployments?.filter((d) => !d.deployOff) || [];
+    const ids = active.map((d) => d.individualId);
+    const set = new Set(ids);
+    if (deployments && deployments.length > 0) {
+      const linked = deployments.filter(d => d.individualId != null).length;
+      const unlinked = deployments.filter(d => d.individualId == null).length;
+      console.log(`[DEBUG] Deployments: total=${deployments.length}, linked=${linked}, unlinked=${unlinked}, active=${active.length}, activeIndividualIds size=${set.size}`);
+      console.log(`[DEBUG] Sample deployment:`, JSON.stringify(deployments[0]));
+    }
+    return set;
+  }, [deployments]);
 
   const filteredIndividuals = useMemo(() => {
     if (!individuals) return [];
