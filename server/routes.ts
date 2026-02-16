@@ -9,7 +9,7 @@ import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
-import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES } from "./geoAnalysis";
+import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
 import { decrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
@@ -1018,7 +1018,31 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No se encontraron datos GPS suficientes en el rango seleccionado" });
       }
 
-      const resultData = runAnalysis(analysisType, allGpsRows, params);
+      const ANALYSIS_TIMEOUT_MS = 60000;
+      const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {
+        try {
+          const result = runAnalysis(analysisType, allGpsRows, params);
+          resolve(result);
+        } catch (err) {
+          reject(err);
+        }
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("ANALYSIS_TIMEOUT")), ANALYSIS_TIMEOUT_MS);
+      });
+
+      let resultData: AnalysisResult;
+      try {
+        resultData = await Promise.race([analysisPromise, timeoutPromise]);
+      } catch (timeoutErr: any) {
+        if (timeoutErr.message === "ANALYSIS_TIMEOUT") {
+          log(`Analysis timeout after ${ANALYSIS_TIMEOUT_MS / 1000}s for study ${study.id}`, "analysis");
+          return res.status(408).json({
+            message: "El cálculo tardó demasiado (más de 60 segundos). Intente con un rango de fechas menor o menos animales.",
+          });
+        }
+        throw timeoutErr;
+      }
 
       const saved = await storage.createSavedAnalysis({
         userId: req.user!.id,

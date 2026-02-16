@@ -303,6 +303,8 @@ function computeLSCVBandwidth(points: GpsPoint[], href: number): { h: number; co
   return { h: Math.round(bestH * 1000) / 1000, converged };
 }
 
+const MAX_GRID_SIDE = 50;
+
 function computeKernelMultiPercent(
   pts: GpsPoint[],
   id: string,
@@ -313,6 +315,9 @@ function computeKernelMultiPercent(
   const features: GeoJSON.Feature[] = [];
 
   if (pts.length < 5) return { areas, features };
+
+  const t0 = Date.now();
+  console.log(`KDE [${id}]: Iniciando con ${pts.length} puntos, bandwidth=${bandwidth.toFixed(3)} km, método=${method}`);
 
   const turfPoints = pts.map((p) => turf.point([p.lng, p.lat]));
   const fc = turf.featureCollection(turfPoints);
@@ -326,14 +331,37 @@ function computeKernelMultiPercent(
     bboxArr[3] + padDeg,
   ];
 
-  const cellSizeKm = Math.max(bandwidth / 3, 0.05);
+  const bboxWidthKm = turf.distance(
+    turf.point([paddedBbox[0], paddedBbox[1]]),
+    turf.point([paddedBbox[2], paddedBbox[1]]),
+    { units: "kilometers" }
+  );
+  const bboxHeightKm = turf.distance(
+    turf.point([paddedBbox[0], paddedBbox[1]]),
+    turf.point([paddedBbox[0], paddedBbox[3]]),
+    { units: "kilometers" }
+  );
+
+  const minCellSize = Math.max(bboxWidthKm, bboxHeightKm) / MAX_GRID_SIDE;
+  const cellSizeKm = Math.max(bandwidth / 3, minCellSize, 0.05);
   const grid = turf.pointGrid(paddedBbox, cellSizeKm, { units: "kilometers" });
+
+  console.log(`KDE [${id}]: Grid generado con ${grid.features.length} celdas (cellSize=${cellSizeKm.toFixed(3)} km)`);
+
+  const cutoffDist = 3 * bandwidth;
+
+  const ptsCoords = pts.map((p) => ({ lng: p.lng, lat: p.lat }));
 
   const densities: number[] = [];
   for (const gridPt of grid.features) {
     let density = 0;
-    for (const p of pts) {
-      const dist = turf.distance(gridPt, turf.point([p.lng, p.lat]), { units: "kilometers" });
+    const gCoords = gridPt.geometry.coordinates;
+    for (const p of ptsCoords) {
+      const dLng = Math.abs(gCoords[0] - p.lng) * 111 * Math.cos((gCoords[1] * Math.PI) / 180);
+      const dLat = Math.abs(gCoords[1] - p.lat) * 111;
+      if (dLng > cutoffDist || dLat > cutoffDist) continue;
+      const dist = Math.sqrt(dLng * dLng + dLat * dLat);
+      if (dist > cutoffDist) continue;
       density += gaussianKernel(dist, bandwidth);
     }
     density /= pts.length;
@@ -341,6 +369,8 @@ function computeKernelMultiPercent(
     gridPt.properties = gridPt.properties || {};
     gridPt.properties.density = density;
   }
+
+  console.log(`KDE [${id}]: Densidades calculadas en ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   if (densities.length === 0) return { areas, features };
 
@@ -389,6 +419,8 @@ function computeKernelMultiPercent(
     }
   }
 
+  console.log(`KDE [${id}]: Completado en ${((Date.now() - t0) / 1000).toFixed(1)}s, ${Object.keys(areas).length} contornos generados`);
+
   return { areas, features };
 }
 
@@ -398,9 +430,10 @@ export function computeKernel(points: GpsPoint[], params?: { bandwidth?: number 
   const areas: { individual: string; area_95_km2: number; area_50_km2: number }[] = [];
 
   for (const id of Object.keys(groups)) {
-    const pts = groups[id];
-    if (pts.length < 5) continue;
+    const rawPts = groups[id];
+    if (rawPts.length < 5) continue;
 
+    const { sampled: pts } = samplePoints(rawPts, MAX_SAMPLE_SIZE);
     const bandwidth = params?.bandwidth ?? silvermanBandwidth(pts);
     const result = computeKernelMultiPercent(pts, id, bandwidth, "href");
 

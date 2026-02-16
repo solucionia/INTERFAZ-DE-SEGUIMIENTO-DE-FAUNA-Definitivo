@@ -171,7 +171,14 @@ export default function GeoAnalysis() {
       toast({ title: "Analisis completado", description: `${ANALYSIS_LABELS[analysisType]} ejecutado exitosamente` });
     },
     onError: (e: any) => {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
+      const isTimeout = e.message?.includes("tardó demasiado") || e.message?.includes("408");
+      toast({
+        title: isTimeout ? "Tiempo excedido" : "Error",
+        description: isTimeout
+          ? "El cálculo tardó demasiado. Intente con un rango de fechas menor o menos animales."
+          : e.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -590,9 +597,9 @@ export default function GeoAnalysis() {
             <Card>
               <CardContent className="py-12 text-center">
                 <Loader2 className="w-10 h-10 mx-auto mb-3 animate-spin text-primary" />
-                <p className="text-sm font-medium">Ejecutando analisis...</p>
+                <p className="text-sm font-medium">Calculando... esto puede tardar unos segundos</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Obteniendo datos de Movebank y procesando analisis geoespacial
+                  Procesando datos GPS y generando análisis geoespacial
                 </p>
               </CardContent>
             </Card>

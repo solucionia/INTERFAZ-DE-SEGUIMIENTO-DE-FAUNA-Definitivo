@@ -1,0 +1,29 @@
+El análisis Kernel Density Estimation se queda ejecutando indefinidamente sin devolver resultados para el animal Yiadom (47.000 puntos GPS). El problema es probablemente que el cálculo KDE con tantos puntos es demasiado pesado.
+
+Diagnostica y arregla:
+
+1. Revisa en server/geoAnalysis.ts la función de Kernel Density:
+   - ¿Se está aplicando el muestreo de 10.000 puntos antes del cálculo?
+   - ¿Cuántos puntos de grid se están generando? Si el grid es muy denso, puede tardar horas
+   - Añade logs con timestamps para saber en qué paso se queda: "KDE: Iniciando con {N} puntos", "KDE: Grid generado con {N} celdas", "KDE: Calculando densidades...", "KDE: Generando contornos...", "KDE: Completado en {X} segundos"
+
+2. Optimizaciones necesarias:
+   a) Asegurar que el muestreo de 10.000 puntos se aplica ANTES del KDE
+   b) Reducir la resolución del grid: usar máximo 50x50 celdas (2.500 puntos de grid). Con 100x100 ya son 10.000 celdas y con 10.000 puntos de datos son 100 millones de cálculos de distancia
+   c) Usar una implementación eficiente: para cada celda del grid, no calcular la distancia a TODOS los puntos. Usar un radio de corte (cutoff) de 3*h — los puntos más lejanos que 3*h contribuyen prácticamente 0 a la densidad
+   d) Añadir un timeout de 60 segundos al cálculo. Si no termina, devolver error con mensaje "El cálculo tardó demasiado. Intente con un rango de fechas menor o menos animales"
+
+3. Añade el timeout también en el endpoint de routes.ts:
+   - Si el análisis tarda más de 60 segundos, abortar y devolver HTTP 408 con mensaje claro
+
+4. En el frontend geo-analysis.tsx:
+   - Mostrar un indicador de progreso con texto "Calculando... esto puede tardar unos segundos"
+   - Si recibe timeout, mostrar mensaje sugeriendo reducir el rango de fechas
+
+5. Prueba ejecutando el análisis Kernel con Yiadom (01/01/2024 a 31/12/2024) y muéstrame:
+   - Cuántos puntos tiene después del muestreo
+   - Cuántas celdas tiene el grid
+   - Cuánto tarda en completarse
+   - El resultado si funciona
+
+Prioriza que funcione aunque sea con menor resolución. Es mejor un resultado en 10 segundos con grid 50x50 que un resultado perfecto que nunca termina.
