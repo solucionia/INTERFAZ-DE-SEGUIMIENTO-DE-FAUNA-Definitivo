@@ -1,0 +1,134 @@
+Dos tareas: arreglar los deployments y añadir un detector de inmovilidad/mortalidad.
+
+TAREA 1 — REPARAR DEPLOYMENTS SIN MOVEBANK:
+
+Los deployments tienen individual_id en NULL y el botón "Reparar" falla porque Movebank da 429.
+
+1. Crea un endpoint POST /api/studies/:id/repair-deployments-local que ejecute:
+   UPDATE deployments d
+   SET individual_id = i.movebank_id
+   FROM individuals i
+   WHERE d.local_identifier = i.local_identifier
+   AND d.study_id = i.study_id
+   AND d.individual_id IS NULL;
+   
+   Devuelve { linked: número de filas actualizadas, remaining: número que siguen sin vincular }
+
+2. En study-detail.tsx, cambia el botón "Reparar vínculos" para que PRIMERO llame al endpoint local (/repair-deployments-local). Solo si vincula 0, intente el de Movebank como fallback. Muestra toast con el resultado.
+
+TAREA 2 — DETECTOR DE INMOVILIDAD Y MORTALIDAD:
+
+Añade un nuevo módulo completo de detección de inmovilidad basado en datos GPS. Es una funcionalidad nueva que analiza el movimiento de los animales para detectar posible mortalidad. Está basado en un script Python que teníamos en Google Colab + N8N, pero ahora lo integramos directamente en la web.
+
+A) NUEVO ARCHIVO: server/immobilityDetector.ts
+
+Crea una clase ImmobilityDetector con esta lógica:
+
+interface ImmobilityConfig {
+  hoursToAnalyze: number;          // default 96 (últimas 4 días)
+  immobilityThresholdHours: number; // default 24 (horas inmóvil para alerta)
+  noTransmissionThresholdHours: number; // default 48
+  speedThreshold: number;          // default 0.5 m/s
+  positionChangeThreshold: number; // default 0.0001 grados (~11 metros)
+}
+
+La clase debe:
+
+1. prepareData(gpsEvents): Recibe array de GPS events de cached_gps_events. Ordena por animal y timestamp. Calcula para cada punto consecutivo del mismo animal:
+   - time_diff: diferencia en horas con el punto anterior
+   - distance: distancia en grados entre puntos consecutivos (sqrt((lat2-lat1)² + (lon2-lon1)²))
+   - speed_calculated: si ground_speed es 0 o null, calcular distance/time_diff convertido a m/s aproximado (1 grado ≈ 111320 metros)
+
+2. detectImmobility(preparedData): Para cada punto, marca is_immobile = true si:
+   - speed < speedThreshold (0.5 m/s) Y
+   - distance < positionChangeThreshold (0.0001°)
+   Agrupa períodos consecutivos de inmovilidad del mismo animal con un immobility_group_id
+
+3. identifyMortalityEvents(analyzedData): Para cada grupo de inmovilidad:
+   - Calcula duración total del grupo (timestamp_max - timestamp_min)
+   - Si duración >= immobilityThresholdHours → genera alerta de MORTALIDAD con:
+     * individual: nombre del animal
+     * species: especie
+     * alertStart: inicio del período inmóvil
+     * alertEnd: último punto inmóvil
+     * hoursImmobile: duración
+     * daysImmobile: duración en días
+     * numRecords: puntos en el período
+     * lastLat, lastLon: última posición conocida
+     * avgSpeed, maxSpeed: velocidades del período
+     * googleMapsUrl: https://www.google.com/maps?q={lat},{lon}
+     * status: "INMÓVIL"
+     * severity: "critical" si > 48h, "warning" si > 24h
+
+4. checkTransmissionStatus(individuals, gpsEvents): Para cada animal del estudio:
+   - Busca su última transmisión en los datos GPS
+   - Si no tiene datos GPS en el rango analizado, busca el último dato en toda la caché
+   - Si horas desde última transmisión >= noTransmissionThresholdHours → alerta de SIN TRANSMISIÓN con:
+     * individual, species, lastTransmission, hoursSinceLast, daysSinceLast, status: "SIN TRANSMISIÓN"
+     * severity: "critical" si > 96h, "warning" si > 48h
+
+5. analyze(studyId, config): Función principal que:
+   - Lee los individuos del estudio con deployment activo
+   - Lee los datos GPS de cached_gps_events de las últimas config.hoursToAnalyze horas
+   - Ejecuta prepareData → detectImmobility → identifyMortalityEvents + checkTransmissionStatus
+   - Guarda las alertas en la tabla detected_events con event_type = 'mortality' o 'no_transmission'
+   - Devuelve { summary, immobilityAlerts, noTransmissionAlerts, stats }
+
+B) NUEVO ENDPOINT: POST /api/studies/:id/immobility-analysis
+
+- Requiere autenticación
+- Acepta body: { hoursToAnalyze?, immobilityThresholdHours?, noTransmissionThresholdHours?, speedThreshold?, positionChangeThreshold? }
+- Llama a ImmobilityDetector.analyze()
+- Devuelve el resultado completo con alertas
+
+C) NUEVO ENDPOINT: GET /api/studies/:id/immobility-status
+
+- Devuelve el último análisis de inmovilidad ejecutado
+- Incluye las alertas activas
+- Para uso del dashboard
+
+D) CRON JOB: Añade al cron existente (o crea uno nuevo) que ejecute el análisis de inmovilidad cada 6 horas para todos los estudios activos. Si detecta alertas de mortalidad, envía email usando el sistema de alertas existente (Nodemailer). El email debe incluir:
+- Nombre del animal
+- Especie
+- Horas/días inmóvil
+- Última posición con enlace Google Maps
+- Velocidad promedio y máxima
+- Severidad (warning/critical)
+
+E) NUEVA PÁGINA: client/src/pages/immobility-monitor.tsx
+
+Crea una página accesible desde el sidebar (icono de alerta/corazón) con:
+
+1. Panel de configuración:
+   - Selector de estudio
+   - Sliders/inputs para los 5 parámetros configurables (con valores por defecto)
+   - Botón "Ejecutar análisis" (rojo, prominente)
+   - Botón "Análisis automático cada 6h" (toggle on/off)
+
+2. Panel de resultados:
+   - Tarjetas de resumen: Total animales, Transmitiendo, Sin transmisión, Inmóviles, Alertas críticas
+   - Tabla de alertas de INMOVILIDAD (rojas):
+     * Animal | Especie | Horas inmóvil | Última posición | Velocidad | Estado | Acciones
+     * Cada fila con enlace a Google Maps y botón "Ver en mapa"
+   - Tabla de alertas de SIN TRANSMISIÓN (naranjas):
+     * Animal | Especie | Última transmisión | Horas sin datos | Estado
+   - Tabla de animales OK (verdes, colapsable):
+     * Animal | Especie | Última transmisión | Velocidad actual | Estado: "ACTIVO"
+
+3. Mapa (Leaflet):
+   - Muestra TODOS los animales del estudio con puntos de colores:
+     * 🔴 Rojo: alertas de mortalidad (inmóvil)
+     * 🟠 Naranja: sin transmisión
+     * 🟢 Verde: activo y transmitiendo
+   - Al hacer clic en un punto: popup con nombre, especie, última posición, horas sin movimiento
+   - Los puntos rojos parpadean o tienen un halo para destacar
+
+4. Historial:
+   - Gráfica temporal de alertas (últimos 30 días)
+   - Lista de alertas anteriores con fecha/hora y resolución
+
+Toda la UI en español. Usa los componentes Shadcn existentes. Colores de severidad: rojo para crítico, naranja para warning, verde para OK.
+
+F) AÑADIR AL SIDEBAR: En el sidebar (client/src/components/layout.tsx o similar), añade "Detector de mortalidad" con icono de corazón/alerta entre "Monitor de emisión" e "Historial de alertas".
+
+No rompas ninguna funcionalidad existente. Mantén toda la UI en español.
