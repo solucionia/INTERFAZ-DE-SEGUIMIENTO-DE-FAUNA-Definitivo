@@ -124,10 +124,20 @@ export default function StudyDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
 
-      if ((localData.repaired || 0) > 0 || (localData.unlinked || 0) === 0) {
+      const repaired = localData.repaired || 0;
+      const linked = localData.linked || 0;
+      const unlinked = localData.unlinked || 0;
+      const total = localData.total || 0;
+
+      if (unlinked === 0) {
         toast({
-          title: "Reparación completada (local)",
-          description: `${localData.repaired || 0} reparados, ${localData.linked || 0} vinculados, ${localData.unlinked || 0} sin vincular de ${localData.total || 0} total`,
+          title: "Todos los deployments están vinculados",
+          description: `${linked} de ${total} deployments vinculados correctamente`,
+        });
+      } else if (repaired > 0) {
+        toast({
+          title: "Vínculos reparados",
+          description: `Se vincularon ${repaired} deployments. Quedan ${unlinked} sin vincular`,
         });
       } else {
         try {
@@ -135,15 +145,28 @@ export default function StudyDetail() {
           let mbData: { total?: number; linked?: number; unlinked?: number } = {};
           try { mbData = await mbRes.json(); } catch {}
           queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
-          toast({
-            title: "Reparación completada (Movebank)",
-            description: `${mbData.linked || 0} vinculados, ${mbData.unlinked || 0} sin vincular de ${mbData.total || 0} total`,
-          });
+          const mbRepaired = (mbData.linked || 0) - linked;
+          const mbUnlinked = mbData.unlinked || 0;
+          if (mbRepaired > 0) {
+            toast({
+              title: "Vínculos reparados (Movebank)",
+              description: `Se vincularon ${mbRepaired} deployments. Quedan ${mbUnlinked} sin vincular`,
+            });
+          } else if (mbUnlinked === 0) {
+            toast({
+              title: "Todos los deployments están vinculados",
+              description: `${mbData.linked || 0} de ${mbData.total || 0} deployments vinculados correctamente`,
+            });
+          } else {
+            toast({
+              title: "Sin cambios",
+              description: `${mbData.linked || linked} de ${mbData.total || total} deployments vinculados. Los ${mbUnlinked} restantes requieren sincronización con Movebank`,
+            });
+          }
         } catch (mbErr: any) {
           toast({
-            title: "Reparación local sin cambios",
-            description: `${localData.linked || 0} ya vinculados, ${localData.unlinked || 0} sin vincular. Movebank no disponible.`,
-            variant: "destructive",
+            title: "Sin cambios adicionales",
+            description: `${linked} de ${total} deployments vinculados. Los ${unlinked} restantes requieren sincronización con Movebank`,
           });
         }
       }
@@ -379,7 +402,7 @@ export default function StudyDetail() {
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-xs" data-testid="badge-unlinked-deployments">
                       <Link2 className="w-3 h-3 mr-1" />
-                      {unlinkedActiveCount} deployments sin vincular
+                      {unlinkedActiveCount} sin vincular (requieren Movebank)
                     </Badge>
                     {isSuperuser && (
                       <Button
