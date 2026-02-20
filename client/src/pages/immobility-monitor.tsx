@@ -46,6 +46,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
+import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import "leaflet/dist/leaflet.css";
 
@@ -389,10 +390,8 @@ export default function ImmobilityMonitor() {
                     style={{ height: "100%", width: "100%" }}
                     data-testid="map-immobility"
                   >
-                    <TileLayer
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      attribution='&copy; OpenStreetMap'
-                    />
+                    <MapLayerControl />
+                    <GoogleMapsClick />
                     {mapPoints.length > 0 && (
                       <MapFitter points={mapPoints.map((p) => ({ lat: p.lat, lng: p.lng }))} />
                     )}
@@ -415,12 +414,14 @@ export default function ImmobilityMonitor() {
                             <p style={{ color: p.color, fontWeight: "bold" }}>{p.label}</p>
                             <p>{p.detail}</p>
                             <p className="text-xs">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</p>
+                            <a href={googleMapsLink(p.lat, p.lng)} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", textDecoration: "underline", fontSize: "12px" }}>Ver en Google Maps</a>
                           </div>
                         </Popup>
                       </CircleMarker>
                     ))}
                   </MapContainer>
                 </CardContent>
+                <p className="text-[10px] text-muted-foreground mt-1 text-center px-3 pb-2">Clic en el mapa para abrir en Google Maps</p>
               </Card>
             </>
           ) : (

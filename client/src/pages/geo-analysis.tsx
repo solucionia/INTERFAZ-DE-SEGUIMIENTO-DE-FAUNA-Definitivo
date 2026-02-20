@@ -51,6 +51,7 @@ import {
   FileJson,
 } from "lucide-react";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
+import { MapLayerControl, GoogleMapsClick } from "@/components/map-layers";
 import {
   ResponsiveContainer,
   LineChart,
@@ -697,10 +698,8 @@ export default function GeoAnalysis() {
                             style={{ height: "100%", width: "100%" }}
                             key={JSON.stringify(resultData.geojson).slice(0, 100)}
                           >
-                            <TileLayer
-                              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-                              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                            />
+                            <MapLayerControl />
+                            <GoogleMapsClick />
                             <GeoJSON
                               data={resultData.geojson}
                               style={(feature: any) => {
@@ -736,6 +735,7 @@ export default function GeoAnalysis() {
                             <FitBounds geojson={resultData.geojson} />
                           </MapContainer>
                         </div>
+                        <p className="text-[10px] text-muted-foreground mt-1 text-center">Clic en el mapa para abrir en Google Maps</p>
                       </CardContent>
                     </Card>
                   )}
@@ -932,10 +932,8 @@ function ComprehensiveResults({
                 style={{ height: "100%", width: "100%" }}
                 key={`${mapLayer}-${mapMethod}-${showKernelPcts.join(",")}-${showMcpPcts.join(",")}`}
               >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
+                <MapLayerControl />
+                <GoogleMapsClick />
                 <GeoJSON
                   data={filteredGeojson}
                   style={(feature: any) => {
@@ -975,6 +973,7 @@ function ComprehensiveResults({
                 <FitBounds geojson={filteredGeojson} />
               </MapContainer>
             </div>
+            <p className="text-[10px] text-muted-foreground mt-1 text-center">Clic en el mapa para abrir en Google Maps</p>
 
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">

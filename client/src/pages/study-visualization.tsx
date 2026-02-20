@@ -68,6 +68,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
@@ -922,7 +923,8 @@ export default function StudyVisualization() {
                   </h2>
                   <div className="flex-1 min-h-0 rounded-md overflow-hidden border" ref={mapContainerRef}>
                     <MapContainer center={mapCenter || [0, 0]} zoom={12} style={{ height: "100%", width: "100%" }} scrollWheelZoom={true}>
-                      <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                      <MapLayerControl />
+                      <GoogleMapsClick />
                       <MapUpdater center={mapCenter} />
                       {selectedAnimals.map((animalId) => {
                         const points = gpsData[animalId] || [];
@@ -943,6 +945,7 @@ export default function StudyVisualization() {
                                     <div>{format(new Date(p.timestamp), "dd/MM/yyyy HH:mm:ss", { locale: es })}</div>
                                     <div>Lat: {p.lat.toFixed(6)}, Lng: {p.lng.toFixed(6)}</div>
                                     {p.speed !== null && <div>Velocidad: {p.speed.toFixed(2)} m/s</div>}
+                                    <a href={googleMapsLink(p.lat, p.lng)} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Ver en Google Maps</a>
                                   </div>
                                 </Popup>
                               </CircleMarker>
@@ -958,12 +961,14 @@ export default function StudyVisualization() {
                               <div className="font-semibold">{highlightedGpsPoint.animal}</div>
                               <div>{format(new Date(highlightedGpsPoint.timestamp), "dd/MM/yyyy HH:mm:ss", { locale: es })}</div>
                               <div>Lat: {highlightedGpsPoint.lat.toFixed(6)}, Lng: {highlightedGpsPoint.lng.toFixed(6)}</div>
+                              <a href={googleMapsLink(highlightedGpsPoint.lat, highlightedGpsPoint.lng)} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Ver en Google Maps</a>
                             </div>
                           </Popup>
                         </Marker>
                       )}
                     </MapContainer>
                   </div>
+                  <p className="text-[10px] text-muted-foreground mt-1 text-center">Clic en el mapa para abrir en Google Maps</p>
                 </div>
               </Panel>
             </PanelGroup>
