@@ -1766,17 +1766,20 @@ export async function registerRoutes(
         return -1;
       };
 
+      const hasOrnitellaCols = findCol("device_id") >= 0 && findCol("utc_datetime") >= 0;
       const hasBaseLunarCols = findCol("nombre") >= 0 && findCol("fecha") >= 0 && findCol("hora") >= 0 && findCol("x") >= 0 && findCol("y") >= 0;
       const hasMovebankCols = findCol("timestamp") >= 0 && findCol("individual_local_identifier", "individual.local.identifier") >= 0;
 
-      let detectedFormat: "movebank" | "baselunar" = "movebank";
-      if (hasBaseLunarCols) {
+      let detectedFormat: "movebank" | "baselunar" | "ornitella" = "movebank";
+      if (hasOrnitellaCols) {
+        detectedFormat = "ornitella";
+      } else if (hasBaseLunarCols) {
         detectedFormat = "baselunar";
       } else if (hasSemicolon && !hasMovebankCols) {
         detectedFormat = "baselunar";
       }
 
-      const format = requestedFormat === "auto" ? detectedFormat : (requestedFormat as "movebank" | "baselunar");
+      const format = requestedFormat === "auto" ? detectedFormat : (requestedFormat as "movebank" | "baselunar" | "ornitella");
 
       if (format === "baselunar") {
         if (dataType !== "gps") {
@@ -1881,6 +1884,140 @@ export async function registerRoutes(
           individuals: individualsMap.size,
           individuals_created: metadataEntries.length,
           format: "baselunar",
+        });
+      }
+
+      if (format === "ornitella") {
+        const deviceIdCol = findCol("device_id");
+        const utcDatetimeCol = findCol("utc_datetime");
+        const latCol = findCol("latitude");
+        const lonCol = findCol("longitude");
+        const altCol = findCol("altitude_m");
+        const speedKmhCol = findCol("speed_km_h");
+        const dirCol = findCol("direction_deg");
+        const accXCol = findCol("acc_x");
+        const accYCol = findCol("acc_y");
+        const accZCol = findCol("acc_z");
+
+        if (deviceIdCol === -1) return res.status(400).json({ message: "Formato Ornitella: columna obligatoria 'device_id' no encontrada" });
+        if (utcDatetimeCol === -1) return res.status(400).json({ message: "Formato Ornitella: columna obligatoria 'UTC_datetime' no encontrada" });
+        if (latCol === -1) return res.status(400).json({ message: "Formato Ornitella: columna obligatoria 'Latitude' no encontrada" });
+        if (lonCol === -1) return res.status(400).json({ message: "Formato Ornitella: columna obligatoria 'Longitude' no encontrada" });
+
+        const hasAccCols = accXCol >= 0 && accYCol >= 0 && accZCol >= 0;
+
+        let gpsImported = 0, gpsDuplicates = 0, accImported = 0, accDuplicates = 0, errors = 0;
+        const details: string[] = [];
+        const individualsSet = new Set<string>();
+        const batchSize = 1000;
+        let gpsBatch: Omit<CachedGpsEvent, "id">[] = [];
+        let accBatch: Omit<CachedAccEvent, "id">[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const vals = parseCsvLine(lines[i], separator);
+            const deviceId = vals[deviceIdCol]?.trim();
+            const utcDatetime = vals[utcDatetimeCol]?.trim();
+
+            if (!deviceId || !utcDatetime) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: device_id o UTC_datetime vacío`);
+              continue;
+            }
+
+            const lat = parseFloat(vals[latCol]);
+            const lon = parseFloat(vals[lonCol]);
+
+            if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: coordenadas inválidas o (0,0) — omitida`);
+              continue;
+            }
+
+            const ts = new Date(utcDatetime.replace(" ", "T") + "Z").getTime();
+            if (isNaN(ts)) {
+              errors++;
+              if (errors <= 10) details.push(`Fila ${i + 1}: fecha/hora inválida "${utcDatetime}"`);
+              continue;
+            }
+
+            const individual = String(deviceId);
+            individualsSet.add(individual);
+
+            const speedKmh = speedKmhCol >= 0 ? safeFloat(vals[speedKmhCol]) : null;
+            const speedMs = speedKmh !== null ? speedKmh / 3.6 : null;
+
+            gpsBatch.push({
+              studyId,
+              individualLocalIdentifier: individual,
+              timestamp: ts,
+              latitude: lat,
+              longitude: lon,
+              groundSpeed: speedMs,
+              heading: dirCol >= 0 ? safeFloat(vals[dirCol]) : null,
+              heightAboveEllipsoid: altCol >= 0 ? safeFloat(vals[altCol]) : null,
+            });
+
+            if (hasAccCols) {
+              const ax = parseFloat(vals[accXCol]);
+              const ay = parseFloat(vals[accYCol]);
+              const az = parseFloat(vals[accZCol]);
+              if (!isNaN(ax) && !isNaN(ay) && !isNaN(az)) {
+                accBatch.push({
+                  studyId,
+                  individualLocalIdentifier: individual,
+                  timestamp: ts,
+                  xAcceleration: ax,
+                  yAcceleration: ay,
+                  zAcceleration: az,
+                  rawData: null,
+                });
+              }
+            }
+
+            if (gpsBatch.length >= batchSize) {
+              const r = await storage.insertCachedGpsEventsCounted(gpsBatch);
+              gpsImported += r.inserted;
+              gpsDuplicates += r.duplicates;
+              gpsBatch = [];
+            }
+            if (accBatch.length >= batchSize) {
+              const r = await storage.insertCachedAccEventsCounted(accBatch);
+              accImported += r.inserted;
+              accDuplicates += r.duplicates;
+              accBatch = [];
+            }
+          } catch (e: any) {
+            errors++;
+            if (errors <= 10) details.push(`Fila ${i + 1}: ${e.message}`);
+          }
+        }
+
+        if (gpsBatch.length > 0) {
+          const r = await storage.insertCachedGpsEventsCounted(gpsBatch);
+          gpsImported += r.inserted;
+          gpsDuplicates += r.duplicates;
+        }
+        if (accBatch.length > 0) {
+          const r = await storage.insertCachedAccEventsCounted(accBatch);
+          accImported += r.inserted;
+          accDuplicates += r.duplicates;
+        }
+
+        const metadataEntries = Array.from(individualsSet).map((name) => ({ name }));
+        await storage.createIndividualsWithMetadata(studyId, metadataEntries);
+
+        return res.json({
+          imported: gpsImported,
+          accImported,
+          duplicates: gpsDuplicates,
+          accDuplicates,
+          errors,
+          details,
+          dataType: "gps+acc",
+          individuals: individualsSet.size,
+          individuals_created: metadataEntries.length,
+          format: "ornitella",
         });
       }
 

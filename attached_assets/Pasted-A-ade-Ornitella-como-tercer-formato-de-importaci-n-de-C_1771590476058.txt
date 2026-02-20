@@ -1,0 +1,48 @@
+Añade "Ornitella" como tercer formato de importación de CSV, junto a Movebank y Base Lunar.
+
+Aquí están las columnas EXACTAS del formato Ornitella (separador coma):
+
+device_id, UTC_datetime, UTC_date, UTC_time, datatype, satcount, U_bat_mV, bat_soc_pct, solar_I_mA, hdop, Latitude, Longitude, Altitude_m, speed_km_h, direction_deg, temperature_C, mag_x, mag_y, mag_z, acc_x, acc_y, acc_z
+
+Ejemplo de fila:
+191488,2026-02-13 08:34:48,2026-02-13,08:34:48,GPS,6,3932,64,0,1.3,39.921379,-3.694320,661,0,328,22,978,-846,6,41,-956,398
+
+Mapeo a los campos internos de la app:
+- device_id → individual_local_identifier (crear individuo automáticamente si no existe, usando device_id como identificador y nombre)
+- UTC_datetime → timestamp (formato: YYYY-MM-DD HH:MM:SS, ya es UTC)
+- Latitude → location_lat
+- Longitude → location_long
+- Altitude_m → height_above_ellipsoid
+- speed_km_h → ground_speed (IMPORTANTE: convertir de km/h a m/s dividiendo entre 3.6)
+- direction_deg → heading
+- satcount → número de satélites (guardar como metadato si hay campo, si no ignorar)
+- hdop → guardar como metadato si hay campo
+- temperature_C → guardar como metadato si hay campo
+- bat_soc_pct → nivel de batería en % (guardar como metadato si hay campo)
+- acc_x, acc_y, acc_z → DATOS DE ACELERÓMETRO. Guardar en cached_accelerometer_events (o en la tabla correspondiente) vinculados al mismo timestamp e individuo. Esto es CRÍTICO: el CSV de Ornitella incluye GPS Y acelerómetro en la misma fila, así que cada fila genera DOS registros: uno GPS y uno de acelerómetro.
+
+Implementación:
+
+1. En el backend (lógica de importación):
+   - Detectar formato Ornitella: si la cabecera contiene "device_id" Y "UTC_datetime" → es Ornitella
+   - Para cada fila:
+     a) Crear registro GPS en cached_gps_events con lat, lon, altitud, velocidad (convertida a m/s), heading, timestamp
+     b) Crear registro de ACELERÓMETRO en cached_accelerometer_events (o tabla equivalente) con acc_x, acc_y, acc_z, timestamp, mismo individuo
+   - Crear individuo automáticamente con device_id como local_identifier si no existe
+   - Ignorar filas donde Latitude o Longitude sean 0 o NULL
+
+2. En el frontend (página de importar CSV):
+   - Añade "Ornitella" al selector de formato junto a "Movebank", "Base Lunar" y "Automático"
+   - Cuando se selecciona "Automático", detecta Ornitella por la presencia de "device_id" Y "UTC_datetime"
+   - Muestra preview indicando: "Se importarán X registros GPS y X registros de acelerómetro"
+   - La prioridad de detección automática:
+     * Si tiene "device_id" Y "UTC_datetime" → Ornitella
+     * Si separador es punto y coma Y tiene "nombre" → Base Lunar
+     * Si tiene "individual_local_identifier" → Movebank
+
+3. Después de importar, el usuario debería poder:
+   - Ver los datos GPS en visualización/mapa
+   - Ver los datos de acelerómetro (acc_x, acc_y, acc_z) en la gráfica de acelerómetro
+   - Los datos de acelerómetro deben estar sincronizados con el mapa por timestamp
+
+No rompas los formatos existentes (Movebank y Base Lunar).

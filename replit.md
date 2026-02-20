@@ -70,7 +70,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 26. Local data cache for GPS/accelerometer events with cache-first strategy and gap-filling
 27. Force reload from Movebank button in visualization page
 28. Cache statistics endpoint for monitoring cached data
-29. CSV import: drag-and-drop upload supporting two formats (Movebank and Base Lunar), auto-detect format by separator/columns, preview with column mapping, batch insert with duplicate detection, auto-create individuals with metadata (taxon, sex from Base Lunar)
+29. CSV import: drag-and-drop upload supporting three formats (Movebank, Base Lunar, Ornitella), auto-detect format by separator/columns, preview with column mapping, batch insert with duplicate detection, auto-create individuals with metadata (taxon, sex from Base Lunar; device_id from Ornitella)
+33. Ornitella CSV import: each row generates BOTH GPS and accelerometer records; speed converted km/h→m/s; device_id used as individual identifier; rows with lat/lon=0 skipped; separate import counts for GPS and acc
 30. Comprehensive geospatial analysis: multi-percent MCP (20-100% in 5% steps), multi-percent Kernel (5-95% in 5% steps), dual bandwidth methods (HREF Silverman + LSCV cross-validation), eccentricity (PCA), linearity, full distance statistics, random sampling for >10k points, multi-animal comparison table, graduated map colors with percentage toggles, CSV metrics export
 31. R-compatible CSV exports: VALORES.csv (metrics with m² areas), HRREF.csv (Kernel areas), MPC.csv (MCP areas), GeoJSON (polygons + trajectory)
 32. Area-vs-percentage charts for HRREF and MPC, visual bars for eccentricity/linearity, trajectory overlay on map, export dropdown menu

@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
-type ImportFormat = "auto" | "movebank" | "baselunar";
+type ImportFormat = "auto" | "movebank" | "baselunar" | "ornitella";
 
 type ImportResult = {
   imported: number;
@@ -36,6 +36,8 @@ type ImportResult = {
   individuals: number;
   individuals_created?: number;
   format?: string;
+  accImported?: number;
+  accDuplicates?: number;
 };
 
 type ParsedPreview = {
@@ -43,11 +45,13 @@ type ParsedPreview = {
   rows: string[][];
   totalRows: number;
   separator: string;
-  detectedFormat: "movebank" | "baselunar" | "unknown";
+  detectedFormat: "movebank" | "baselunar" | "ornitella" | "unknown";
 };
 
-function detectFormat(headers: string[]): "movebank" | "baselunar" | "unknown" {
+function detectFormat(headers: string[]): "movebank" | "baselunar" | "ornitella" | "unknown" {
   const lower = headers.map((h) => h.toLowerCase());
+  const hasOrnitella = lower.includes("device_id") && lower.includes("utc_datetime");
+  if (hasOrnitella) return "ornitella";
   const hasBaseLunar = lower.includes("nombre") && lower.includes("fecha") && lower.includes("hora") && lower.includes("x") && lower.includes("y");
   if (hasBaseLunar) return "baselunar";
   const hasMovebank = lower.includes("timestamp") && (lower.includes("individual-local-identifier") || lower.includes("individual_local_identifier"));
@@ -58,6 +62,7 @@ function detectFormat(headers: string[]): "movebank" | "baselunar" | "unknown" {
 const FORMAT_LABELS: Record<string, string> = {
   movebank: "Movebank",
   baselunar: "Base Lunar",
+  ornitella: "Ornitella",
   auto: "Detectar automaticamente",
   unknown: "No detectado",
 };
@@ -74,7 +79,7 @@ export default function ImportCsv() {
   const [format, setFormatRaw] = useState<ImportFormat>("auto");
   const setFormat = useCallback((f: ImportFormat) => {
     setFormatRaw(f);
-    if (f === "baselunar") setDataType("gps");
+    if (f === "baselunar" || f === "ornitella") setDataType("gps");
   }, []);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ParsedPreview | null>(null);
@@ -118,7 +123,7 @@ export default function ImportCsv() {
       }
       const detectedFormat = detectFormat(headers);
       setPreview({ headers, rows, totalRows: lines.length - 1, separator, detectedFormat });
-      if (detectedFormat === "baselunar") {
+      if (detectedFormat === "baselunar" || detectedFormat === "ornitella") {
         setDataType("gps");
       }
     };
@@ -178,9 +183,12 @@ export default function ImportCsv() {
       setResult(data);
       setProgress(100);
 
+      const accInfo = data.format === "ornitella" && data.accImported !== undefined
+        ? ` + ${data.accImported} acelerómetro`
+        : "";
       toast({
-        title: "Importacion completada",
-        description: `${data.imported} registros importados, ${data.duplicates} duplicados ignorados`,
+        title: "Importación completada",
+        description: `${data.imported} GPS importados${accInfo}, ${data.duplicates} duplicados ignorados`,
       });
     } catch (e: any) {
       toast({ title: "Error al importar", description: e.message, variant: "destructive" });
@@ -208,7 +216,7 @@ export default function ImportCsv() {
       <div>
         <h1 className="text-2xl font-bold text-foreground" data-testid="text-import-title">Importar datos CSV</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Carga datos GPS o acelerometro desde archivos CSV de Movebank o Base Lunar
+          Carga datos GPS o acelerómetro desde archivos CSV de Movebank, Base Lunar u Ornitella
         </p>
       </div>
 
@@ -240,7 +248,7 @@ export default function ImportCsv() {
               <Select
                 value={dataType}
                 onValueChange={(v) => setDataType(v as "gps" | "acc")}
-                disabled={effectiveFormat === "baselunar"}
+                disabled={effectiveFormat === "baselunar" || effectiveFormat === "ornitella"}
               >
                 <SelectTrigger data-testid="select-data-type">
                   <SelectValue />
@@ -252,6 +260,9 @@ export default function ImportCsv() {
               </Select>
               {effectiveFormat === "baselunar" && (
                 <p className="text-xs text-muted-foreground mt-1">Base Lunar solo soporta GPS</p>
+              )}
+              {effectiveFormat === "ornitella" && (
+                <p className="text-xs text-muted-foreground mt-1">Ornitella importa GPS + acelerómetro automáticamente</p>
               )}
             </div>
 
@@ -268,6 +279,7 @@ export default function ImportCsv() {
                   <SelectItem value="auto">Detectar automaticamente</SelectItem>
                   <SelectItem value="movebank">Movebank</SelectItem>
                   <SelectItem value="baselunar">Base Lunar</SelectItem>
+                  <SelectItem value="ornitella">Ornitella</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -330,6 +342,7 @@ export default function ImportCsv() {
                 Formato detectado: <span className="font-medium text-foreground">{FORMAT_LABELS[preview.detectedFormat]}</span>
                 {preview.detectedFormat === "baselunar" && " (separador punto y coma, columnas nombre/fecha/hora/x/y)"}
                 {preview.detectedFormat === "movebank" && " (separador coma, columnas timestamp/individual-local-identifier)"}
+                {preview.detectedFormat === "ornitella" && " (columnas device_id/UTC_datetime — GPS + acelerómetro)"}
               </p>
             </div>
           )}
@@ -354,6 +367,17 @@ export default function ImportCsv() {
                 <p>x → longitud (WGS84) | y → latitud (WGS84)</p>
                 <p>velocidad → ground_speed | curso → heading | altitud → height</p>
                 <p>nombre_comun → especie | sexo → sexo del individuo</p>
+              </div>
+            )}
+
+            {effectiveFormat === "ornitella" && (
+              <div className="text-xs text-muted-foreground space-y-0.5 p-2 rounded-md bg-muted/30 border">
+                <p className="font-medium text-foreground mb-1">Mapeo Ornitella (GPS + acelerómetro):</p>
+                <p>device_id → identificador del individuo (se crea automáticamente)</p>
+                <p>UTC_datetime → timestamp (UTC) | Latitude/Longitude → coordenadas</p>
+                <p>speed_km_h → velocidad (convertida a m/s) | direction_deg → heading</p>
+                <p>Altitude_m → altitud | acc_x, acc_y, acc_z → acelerómetro</p>
+                <p className="text-primary/80 font-medium mt-1">Cada fila genera 1 registro GPS + 1 registro de acelerómetro</p>
               </div>
             )}
 
@@ -396,6 +420,7 @@ export default function ImportCsv() {
                   <>
                     <Upload className="w-4 h-4 mr-2" />
                     Importar {preview.totalRows.toLocaleString()} registros
+                    {effectiveFormat === "ornitella" && " (GPS + acelerómetro)"}
                   </>
                 )}
               </Button>
@@ -424,13 +449,13 @@ export default function ImportCsv() {
                 <p className="text-2xl font-bold text-foreground" data-testid="text-imported-count">
                   {result.imported.toLocaleString()}
                 </p>
-                <p className="text-xs text-muted-foreground">Importados</p>
+                <p className="text-xs text-muted-foreground">GPS importados</p>
               </div>
               <div className="p-3 rounded-md bg-muted/50 border text-center">
                 <p className="text-2xl font-bold text-foreground" data-testid="text-duplicate-count">
                   {result.duplicates.toLocaleString()}
                 </p>
-                <p className="text-xs text-muted-foreground">Duplicados</p>
+                <p className="text-xs text-muted-foreground">GPS duplicados</p>
               </div>
               <div className="p-3 rounded-md bg-muted/50 border text-center">
                 <p className="text-2xl font-bold text-foreground" data-testid="text-error-count">
@@ -445,6 +470,23 @@ export default function ImportCsv() {
                 <p className="text-xs text-muted-foreground">Individuos</p>
               </div>
             </div>
+
+            {result.format === "ornitella" && result.accImported !== undefined && (
+              <div className="grid grid-cols-2 sm:grid-cols-2 gap-3">
+                <div className="p-3 rounded-md bg-muted/50 border text-center">
+                  <p className="text-2xl font-bold text-foreground" data-testid="text-acc-imported-count">
+                    {result.accImported.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Acelerómetro importados</p>
+                </div>
+                <div className="p-3 rounded-md bg-muted/50 border text-center">
+                  <p className="text-2xl font-bold text-foreground" data-testid="text-acc-duplicate-count">
+                    {(result.accDuplicates ?? 0).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Acelerómetro duplicados</p>
+                </div>
+              </div>
+            )}
 
             {result.individuals_created && result.individuals_created > 0 && (
               <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border">
@@ -518,7 +560,7 @@ export default function ImportCsv() {
                 <p className="text-xs text-muted-foreground/60">O accelerations-raw (formato texto)</p>
               </div>
             </div>
-            <div className="md:col-span-2">
+            <div>
               <div className="flex items-center gap-2 mb-2">
                 <Badge variant="outline">Base Lunar — GPS</Badge>
                 <span className="text-xs text-muted-foreground">separador punto y coma</span>
@@ -529,6 +571,19 @@ export default function ImportCsv() {
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">x</span> — Longitud (WGS84)</p>
                 <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">y</span> — Latitud (WGS84)</p>
                 <p className="text-xs text-muted-foreground/60">velocidad, curso, altitud, nombre_comun, sexo (opcionales)</p>
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Badge variant="outline">Ornitella — GPS + Acelerómetro</Badge>
+                <span className="text-xs text-muted-foreground">separador coma</span>
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">device_id</span> — Identificador del dispositivo (= individuo)</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">UTC_datetime</span> — Fecha/hora UTC (YYYY-MM-DD HH:MM:SS)</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Latitude</span> / <span className="font-medium text-foreground">Longitude</span> — Coordenadas GPS</p>
+                <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">acc_x, acc_y, acc_z</span> — Datos de acelerómetro</p>
+                <p className="text-xs text-muted-foreground/60">speed_km_h (→ m/s), direction_deg, Altitude_m, temperature_C (opcionales)</p>
               </div>
             </div>
           </div>
