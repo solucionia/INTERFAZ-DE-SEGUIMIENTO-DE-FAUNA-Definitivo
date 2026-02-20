@@ -1,0 +1,40 @@
+Hay un problema persistente con los deployments. Necesito diagnosticar y arreglar definitivamente.
+
+PASO 1 — DIAGNÓSTICO. Ejecuta estas queries SQL y muéstrame los resultados:
+
+SELECT COUNT(*) as total FROM deployments;
+SELECT COUNT(*) as vinculados FROM deployments WHERE individual_id IS NOT NULL;
+SELECT COUNT(*) as sin_vincular FROM deployments WHERE individual_id IS NULL;
+SELECT id, individual_id, local_identifier FROM deployments LIMIT 5;
+SELECT id, movebank_id, local_identifier FROM individuals LIMIT 5;
+
+PASO 2 — Si individual_id es NULL en todos los deployments, vincúlalos. Los deployments pueden no tener local_identifier, así que usa el endpoint de Movebank para obtener el mapeo. PERO como Movebank da 429, necesitamos otra estrategia.
+
+Ejecuta esta query para ver si hay algún campo útil para vincular:
+SELECT column_name FROM information_schema.columns WHERE table_name = 'deployments' ORDER BY ordinal_position;
+SELECT * FROM deployments LIMIT 2;
+
+PASO 3 — Si no hay forma de vincular sin Movebank, haz un workaround: crea un endpoint POST /api/studies/:id/force-link-deployments que simplemente haga match por ORDEN. Es decir:
+- Ordena individuos por local_identifier ASC
+- Ordena deployments por id ASC  
+- Asigna cada deployment al individuo correspondiente por posición
+
+Esto no es perfecto pero es mejor que tener 0 vinculados. Alternativamente, si los deployments tienen algún campo con el nombre del animal (como tag_id, animal_name, o similar), usa ese para vincular.
+
+PASO 4 — ARREGLAR EL FRONTEND DEFINITIVAMENTE. En study-detail.tsx:
+
+Busca TODAS las líneas donde se compara individualId con movebankId y muéstramelas. Luego cambia TODAS para usar String() en ambos lados:
+
+const activeDeploymentIndividualIds = new Set(
+  deployments?.filter((d) => !d.deployOff).map((d) => String(d.individualId)).filter(id => id && id !== 'null' && id !== 'undefined') || []
+);
+
+Y en la comparación:
+activeDeploymentIndividualIds.has(String(ind.movebankId))
+
+Y para unlinkedActiveCount:
+const unlinkedActiveCount = deployments?.filter((d) => !d.deployOff && (!d.individualId || String(d.individualId) === 'null')).length || 0;
+
+Usa String() en vez de Number() porque los bigints de PostgreSQL a veces se serializan como string en JSON y Number() puede perder precisión.
+
+PASO 5 — Muéstrame los resultados de las queries y los cambios aplicados.

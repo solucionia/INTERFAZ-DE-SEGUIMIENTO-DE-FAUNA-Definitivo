@@ -71,7 +71,11 @@ export default function StudyDetail() {
   });
 
   const activeDeploymentIndividualIds = useMemo(() =>
-    new Set(deployments?.filter((d) => !d.deployOff).map((d) => d.individualId) || []),
+    new Set(
+      deployments?.filter((d) => !d.deployOff)
+        .map((d) => String(d.individualId))
+        .filter(id => id && id !== 'null' && id !== 'undefined') || []
+    ),
     [deployments]
   );
 
@@ -80,10 +84,10 @@ export default function StudyDetail() {
     let result = individuals;
     switch (filterMode) {
       case "active":
-        result = result.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId));
+        result = result.filter((ind) => activeDeploymentIndividualIds.has(String(ind.movebankId)));
         break;
       case "inactive":
-        result = result.filter((ind) => !activeDeploymentIndividualIds.has(ind.movebankId));
+        result = result.filter((ind) => !activeDeploymentIndividualIds.has(String(ind.movebankId)));
         break;
     }
     if (searchQuery.trim()) {
@@ -102,11 +106,11 @@ export default function StudyDetail() {
     return result;
   }, [individuals, filterMode, activeDeploymentIndividualIds, searchQuery]);
 
-  const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(ind.movebankId)).length || 0;
+  const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(String(ind.movebankId))).length || 0;
   const inactiveCount = (individuals?.length || 0) - activeCount;
 
   const unlinkedActiveCount = useMemo(() =>
-    deployments?.filter((d) => !d.deployOff && !d.individualId).length || 0,
+    deployments?.filter((d) => !d.deployOff && (!d.individualId || String(d.individualId) === 'null')).length || 0,
     [deployments]
   );
 
@@ -196,8 +200,8 @@ export default function StudyDetail() {
   };
 
   const openEditDialog = (ind: Individual) => {
-    const hasActive = activeDeploymentIndividualIds.has(ind.movebankId);
-    const indDeployments = deployments?.filter(d => d.individualId === ind.movebankId) || [];
+    const hasActive = activeDeploymentIndividualIds.has(String(ind.movebankId));
+    const indDeployments = deployments?.filter(d => String(d.individualId) === String(ind.movebankId)) || [];
     const activeDep = indDeployments.find(d => !d.deployOff);
     setEditingIndividual(ind);
     setEditForm({
@@ -219,8 +223,8 @@ export default function StudyDetail() {
         animalLifeStage: editForm.animalLifeStage || null,
       });
 
-      const hasActive = activeDeploymentIndividualIds.has(editingIndividual.movebankId);
-      const indDeployments = deployments?.filter(d => d.individualId === editingIndividual.movebankId) || [];
+      const hasActive = activeDeploymentIndividualIds.has(String(editingIndividual.movebankId));
+      const indDeployments = deployments?.filter(d => String(d.individualId) === String(editingIndividual.movebankId)) || [];
       const activeDep = indDeployments.find(d => !d.deployOff);
       const mostRecentInactiveDep = indDeployments.filter(d => d.deployOff).sort((a, b) => (b.deployOff || "").localeCompare(a.deployOff || ""))[0];
 
@@ -465,7 +469,7 @@ export default function StudyDetail() {
                 </TableHeader>
                 <TableBody>
                   {filteredIndividuals.map((ind) => {
-                    const hasActive = activeDeploymentIndividualIds.has(ind.movebankId);
+                    const hasActive = activeDeploymentIndividualIds.has(String(ind.movebankId));
                     return (
                       <TableRow
                         key={ind.id}
@@ -612,7 +616,7 @@ export default function StudyDetail() {
                 </SelectContent>
               </Select>
             </div>
-            {deploymentStatus === "inactive" && activeDeploymentIndividualIds.has(editingIndividual?.movebankId ?? 0) && (
+            {deploymentStatus === "inactive" && activeDeploymentIndividualIds.has(String(editingIndividual?.movebankId ?? 0)) && (
               <div className="space-y-2">
                 <Label htmlFor="edit-deploy-off">Fecha fin del deployment</Label>
                 <Input
