@@ -16,7 +16,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `server/movebank.ts` - Movebank API integration (CSV parsing, Basic Auth)
 - `server/eventDetection.ts` - Event detection algorithms (mortality, detachment, fight, feeding, incubation) with configurable thresholds
 - `server/emailService.ts` - Email alert service using Nodemailer with Google Maps links
-- `server/scheduler.ts` - Cron scheduler for automated event detection and emission checks (node-cron)
+- `server/immobilityDetector.ts` - GPS-based immobility/mortality detection (speed analysis, position change, transmission gaps)
+- `server/scheduler.ts` - Cron scheduler for automated event detection, emission checks, and immobility analysis (node-cron)
 - `server/routes.ts` - All API endpoints
 - `server/db.ts` - PostgreSQL pool + Drizzle instance
 - `client/src/lib/auth.tsx` - AuthProvider context with login/register/logout
@@ -31,6 +32,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/admin-users.tsx` - User listing (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
+- `client/src/pages/immobility-monitor.tsx` - Immobility/mortality detector with GPS analysis, configurable thresholds, map, and alert tables
 - `server/geoAnalysis.ts` - Geospatial analysis engine using Turf.js (comprehensive: multi-percent MCP/Kernel with HREF+LSCV bandwidth, eccentricity, linearity, distance stats, sampling)
 - `client/src/pages/geo-analysis.tsx` - Geospatial analysis UI with comprehensive metrics panels, graduated map colors, percentage toggles, multi-animal comparison table
 - `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
@@ -83,6 +85,15 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - Detection runs server-side on-demand via POST /api/studies/:id/detect-events
 - Email deduplication via alert_logs table
 
+## Immobility / Mortality Detection
+- **Immobility**: GPS-based detection of prolonged stationary behavior (speed < threshold + position change < threshold)
+- **No Transmission**: Detects animals that stopped transmitting GPS data beyond configurable hours
+- Configurable: hoursToAnalyze (96h), immobilityThresholdHours (24h), noTransmissionThresholdHours (48h), speedThreshold (0.5 m/s), positionChangeThreshold (0.0001°)
+- Analyses cached GPS data (no Movebank call), runs via POST /api/studies/:id/immobility-analysis
+- Cron job runs every 6h alongside event detection and emission checks
+- Email alerts for immobility events via sendImmobilityAlertEmail
+- Frontend: /immobility page with study selector, config sliders, summary cards, Leaflet map (red/orange/green markers), alert tables
+
 ## API Routes
 - POST /api/auth/register, /api/auth/login, /api/auth/logout, GET /api/auth/me
 - GET /api/individuals/all (all individuals across user-accessible studies with studyName)
@@ -111,6 +122,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - GET /api/studies/:id/export-kml (KML export for Google Earth)
 - GET /api/cache/stats (cache statistics: total GPS/Acc records, per-study breakdown)
 - POST /api/studies/:id/import-csv (multipart/form-data: file + dataType, batch CSV import with duplicate detection)
+- POST /api/studies/:id/immobility-analysis (GPS-based immobility/mortality analysis with configurable thresholds)
+- GET /api/studies/:id/immobility-status (latest mortality events for study, last 30 days)
 
 ## Data Cache
 - GPS and accelerometer data from Movebank is cached locally in `cached_gps_events` and `cached_acc_events` tables

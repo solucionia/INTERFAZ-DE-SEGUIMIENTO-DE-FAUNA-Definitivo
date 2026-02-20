@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { storage } from "./storage";
 import { fetchMovebankEvents } from "./movebank";
 import { detectEvents } from "./eventDetection";
-import { sendEventAlert, sendEmissionSummaryEmail } from "./emailService";
+import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } from "./emailService";
 import { DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
 import { decrypt } from "./encryption";
 import { log } from "./index";
@@ -279,6 +279,49 @@ async function runEmissionCheck() {
   }
 }
 
+async function runImmobilityCheck() {
+  const startTime = Date.now();
+  log("Cron: Iniciando chequeo de inmovilidad/mortalidad...", "cron");
+
+  try {
+    const { analyzeImmobility } = await import("./immobilityDetector");
+    const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
+    let totalAlerts = 0;
+    let totalEmails = 0;
+
+    for (const { study } of studiesWithAnimals) {
+      try {
+        const result = await analyzeImmobility(study.id);
+        const alertCount = result.immobilityAlerts.length + result.noTransmissionAlerts.length;
+        totalAlerts += alertCount;
+
+        if (study.alertEmail && result.immobilityAlerts.length > 0) {
+          const sent = await sendImmobilityAlertEmail(
+            study.alertEmail,
+            study.name,
+            result.immobilityAlerts
+          );
+          if (sent) totalEmails++;
+        }
+
+        if (alertCount > 0) {
+          log(`Cron: Inmovilidad ${study.name}: ${result.immobilityAlerts.length} inmoviles, ${result.noTransmissionAlerts.length} sin transmision`, "cron");
+        }
+      } catch (e: any) {
+        log(`Cron: Error en inmovilidad para "${study.name}": ${e.message}`, "cron");
+      }
+    }
+
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("immobility_check", "success", `${totalAlerts} alertas, ${totalEmails} emails (${totalDuration}s)`);
+    log(`Cron: Chequeo de inmovilidad completado - ${totalAlerts} alertas, ${totalEmails} emails (${totalDuration}s)`, "cron");
+  } catch (e: any) {
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("immobility_check", "error", `${e.message} (${totalDuration}s)`);
+    log(`Cron: Error en chequeo de inmovilidad: ${e.message} (${totalDuration}s)`, "cron");
+  }
+}
+
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
 
@@ -286,6 +329,7 @@ export function startScheduler() {
     log("Cron: Ejecutando tareas programadas...", "cron");
     await runEventDetection();
     await runEmissionCheck();
+    await runImmobilityCheck();
   });
 
   log("Cron: Scheduler iniciado correctamente", "cron");

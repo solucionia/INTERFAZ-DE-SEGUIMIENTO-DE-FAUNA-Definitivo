@@ -123,6 +123,90 @@ export async function sendEmissionSummaryEmail(
   }
 }
 
+interface ImmobilityAlertEmail {
+  individual: string;
+  species: string;
+  hoursImmobile: number;
+  daysImmobile: number;
+  lastLat: number;
+  lastLon: number;
+  avgSpeed: number;
+  maxSpeed: number;
+  googleMapsUrl: string;
+  severity: string;
+  numRecords: number;
+}
+
+export async function sendImmobilityAlertEmail(
+  toEmail: string,
+  studyName: string,
+  alerts: ImmobilityAlertEmail[]
+): Promise<boolean> {
+  const transport = getTransporter();
+  if (!transport) {
+    log("SMTP no configurado - alerta de inmovilidad no enviada", "email");
+    return false;
+  }
+
+  if (alerts.length === 0) return false;
+
+  const rows = alerts.map((a) => {
+    const sevLabel = a.severity === "critical" ? "CRITICO" : "WARNING";
+    const sevColor = a.severity === "critical" ? "#ef4444" : "#f97316";
+    return `<tr style="border-bottom:1px solid #e5e7eb">
+      <td style="padding:6px 8px">${a.individual}</td>
+      <td style="padding:6px 8px">${a.species}</td>
+      <td style="padding:6px 8px;font-weight:bold;color:${sevColor}">${a.hoursImmobile}h (${a.daysImmobile} dias)</td>
+      <td style="padding:6px 8px">${a.numRecords} pts</td>
+      <td style="padding:6px 8px">${a.avgSpeed} m/s</td>
+      <td style="padding:6px 8px"><a href="${a.googleMapsUrl}" style="color:#3b82f6;text-decoration:underline" target="_blank">Ver mapa</a></td>
+      <td style="padding:6px 8px;font-weight:bold;color:${sevColor}">${sevLabel}</td>
+    </tr>`;
+  }).join("");
+
+  const criticalCount = alerts.filter(a => a.severity === "critical").length;
+  const headerColor = criticalCount > 0 ? "#ef4444" : "#f97316";
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:750px;margin:0 auto">
+      <div style="background:${headerColor};color:white;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">Alerta de Inmovilidad/Mortalidad — ${studyName}</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 8px 8px">
+        <p style="margin:0 0 16px;color:#374151">${alerts.length} animal(es) detectado(s) como inmovil(es) — posible mortalidad:</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px">
+          <thead>
+            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
+              <th style="padding:8px;text-align:left">Animal</th>
+              <th style="padding:8px;text-align:left">Especie</th>
+              <th style="padding:8px;text-align:left">Tiempo inmovil</th>
+              <th style="padding:8px;text-align:left">Registros</th>
+              <th style="padding:8px;text-align:left">Vel. prom</th>
+              <th style="padding:8px;text-align:left">Ubicacion</th>
+              <th style="padding:8px;text-align:left">Severidad</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="margin:0;font-size:12px;color:#9ca3af">WildTrack — Sistema de Seguimiento de Fauna Silvestre</p>
+      </div>
+    </div>`;
+
+  try {
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: `[WildTrack] ${criticalCount > 0 ? "CRITICO: " : ""}${alerts.length} animal(es) inmovil(es) — ${studyName}`,
+      html,
+    });
+    log(`Email de inmovilidad enviado a ${toEmail} (${alerts.length} alertas)`, "email");
+    return true;
+  } catch (e: any) {
+    log(`Error enviando email de inmovilidad: ${e.message}`, "email");
+    return false;
+  }
+}
+
 export async function sendEventAlert(event: DetectedEvent, toEmail: string, studyName: string): Promise<boolean> {
   const transport = getTransporter();
   if (!transport) {

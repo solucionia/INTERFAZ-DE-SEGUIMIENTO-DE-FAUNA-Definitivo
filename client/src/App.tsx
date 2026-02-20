@@ -21,6 +21,7 @@ import GeoAnalysis from "@/pages/geo-analysis";
 import AlertHistory from "@/pages/alert-history";
 import RawData from "@/pages/raw-data";
 import ImportCsv from "@/pages/import-csv";
+import ImmobilityMonitor from "@/pages/immobility-monitor";
 import { Loader2, Search } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
 
@@ -38,6 +39,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/species-profiles" component={AdminSpeciesProfiles} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/monitor" component={EmissionMonitor} />
+      <Route path="/immobility" component={ImmobilityMonitor} />
       <Route path="/alerts" component={AlertHistory} />
       <Route component={NotFound} />
     </Switch>

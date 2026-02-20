@@ -1129,6 +1129,53 @@ export async function registerRoutes(
     }
   });
 
+  // Immobility / Mortality Analysis
+  app.post("/api/studies/:id/immobility-analysis", requireStudyAccess, async (req, res) => {
+    try {
+      const { analyzeImmobility } = await import("./immobilityDetector");
+      const { z } = await import("zod");
+      const configSchema = z.object({
+        hoursToAnalyze: z.coerce.number().min(1).max(2160).optional(),
+        immobilityThresholdHours: z.coerce.number().min(1).max(720).optional(),
+        noTransmissionThresholdHours: z.coerce.number().min(1).max(720).optional(),
+        speedThreshold: z.coerce.number().min(0).max(100).optional(),
+        positionChangeThreshold: z.coerce.number().min(0).max(1).optional(),
+      }).passthrough();
+      const parsed = configSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
+      }
+      const result = await analyzeImmobility(req.params.id, parsed.data);
+      return res.json(result);
+    } catch (e: any) {
+      log(`Immobility analysis error: ${e.message}`, "analysis");
+      return res.status(500).json({ message: `Error en análisis de inmovilidad: ${e.message}` });
+    }
+  });
+
+  app.get("/api/studies/:id/immobility-status", requireStudyAccess, async (req, res) => {
+    try {
+      const tsEnd = Date.now();
+      const tsStart = tsEnd - 30 * 24 * 60 * 60 * 1000;
+      const { events } = await storage.getAllDetectedEvents({
+        studyId: req.params.id,
+        eventType: "mortality",
+        timestampStart: tsStart,
+        timestampEnd: tsEnd,
+        limit: 100,
+        offset: 0,
+      });
+      const sorted = events.sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+      return res.json({ events: sorted, lastCheck: sorted.length > 0 ? sorted[0].createdAt : null });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   // Geospatial Analysis
   app.post("/api/studies/:id/analysis", requireStudyAccess, async (req, res) => {
     try {
