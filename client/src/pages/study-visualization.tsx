@@ -16,6 +16,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -37,6 +39,10 @@ import {
   FileDown,
   Image,
   FileText,
+  Globe,
+  Database,
+  FileCode,
+  Table2,
 } from "lucide-react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -678,6 +684,43 @@ export default function StudyVisualization() {
     }
   };
 
+  const exportData = async (fmt: "csv" | "kmz" | "shp" | "geojson") => {
+    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/studies/${studyId}/export-visualization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          individualIds: selectedAnimals,
+          startDate: new Date(dateStart).getTime(),
+          endDate: new Date(dateEnd).getTime(),
+          format: fmt,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Error desconocido" }));
+        throw new Error(err.message || `Error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = res.headers.get("content-disposition") || "";
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      link.download = filenameMatch ? filenameMatch[1] : `export.${fmt === "kmz" ? "kmz" : fmt === "shp" ? "zip" : fmt}`;
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+      const labels: Record<string, string> = { csv: "CSV", kmz: "KMZ (Google Earth)", shp: "Shapefile", geojson: "GeoJSON" };
+      toast({ title: "Exportación completada", description: `Datos exportados como ${labels[fmt]}` });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b space-y-4 shrink-0">
@@ -744,18 +787,37 @@ export default function StudyVisualization() {
                   Exportar
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Imágenes</DropdownMenuLabel>
                 <DropdownMenuItem onClick={exportChartPng} data-testid="menu-export-chart-png">
                   <Image className="w-4 h-4 mr-2" />
-                  Exportar grafica como PNG
+                  Gráfica como PNG
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={exportMapPng} data-testid="menu-export-map-png">
                   <Image className="w-4 h-4 mr-2" />
-                  Exportar mapa como PNG
+                  Mapa como PNG
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={exportPdf} data-testid="menu-export-pdf">
                   <FileText className="w-4 h-4 mr-2" />
-                  Exportar informe PDF
+                  Informe PDF
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Exportar datos como...</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => exportData("csv")} data-testid="menu-export-csv">
+                  <Table2 className="w-4 h-4 mr-2" />
+                  CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportData("kmz")} data-testid="menu-export-kmz">
+                  <Globe className="w-4 h-4 mr-2" />
+                  KMZ (Google Earth)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportData("shp")} data-testid="menu-export-shp">
+                  <Database className="w-4 h-4 mr-2" />
+                  Shapefile (SHP)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportData("geojson")} data-testid="menu-export-geojson">
+                  <FileCode className="w-4 h-4 mr-2" />
+                  GeoJSON
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

@@ -120,6 +120,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - PATCH /api/alerts/:id/read, /api/alerts/:id/resolve (mark alert read/resolved)
 - POST /api/alerts/mark-read (bulk mark alerts as read)
 - GET /api/studies/:id/export-kml (KML export for Google Earth)
+- POST /api/studies/:id/export-visualization (multi-format export: CSV, KMZ, SHP/GeoJSON ZIP, GeoJSON; body: {individualIds, startDate, endDate, format})
 - GET /api/cache/stats (cache statistics: total GPS/Acc records, per-study breakdown)
 - POST /api/studies/:id/import-csv (multipart/form-data: file + dataType, batch CSV import with duplicate detection)
 - POST /api/studies/:id/immobility-analysis (GPS-based immobility/mortality analysis with configurable thresholds)
