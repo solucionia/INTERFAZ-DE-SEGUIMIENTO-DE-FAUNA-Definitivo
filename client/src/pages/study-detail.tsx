@@ -70,18 +70,10 @@ export default function StudyDetail() {
     staleTime: 30000,
   });
 
-  const activeDeploymentIndividualIds = useMemo(() => {
-    const active = deployments?.filter((d) => !d.deployOff) || [];
-    const ids = active.map((d) => d.individualId);
-    const set = new Set(ids);
-    if (deployments && deployments.length > 0) {
-      const linked = deployments.filter(d => d.individualId != null).length;
-      const unlinked = deployments.filter(d => d.individualId == null).length;
-      console.log(`[DEBUG] Deployments: total=${deployments.length}, linked=${linked}, unlinked=${unlinked}, active=${active.length}, activeIndividualIds size=${set.size}`);
-      console.log(`[DEBUG] Sample deployment:`, JSON.stringify(deployments[0]));
-    }
-    return set;
-  }, [deployments]);
+  const activeDeploymentIndividualIds = useMemo(() =>
+    new Set(deployments?.filter((d) => !d.deployOff).map((d) => d.individualId) || []),
+    [deployments]
+  );
 
   const filteredIndividuals = useMemo(() => {
     if (!individuals) return [];
@@ -121,15 +113,36 @@ export default function StudyDetail() {
   const handleRepair = async () => {
     setRepairing(true);
     try {
-      const res = await apiRequest("POST", `/api/studies/${studyId}/repair-deployments`);
-      let data: { total?: number; linked?: number; unlinked?: number } = {};
-      try { data = await res.json(); } catch {}
+      const localRes = await apiRequest("POST", `/api/studies/${studyId}/repair-deployments-local`);
+      let localData: { total?: number; linked?: number; repaired?: number; unlinked?: number } = {};
+      try { localData = await localRes.json(); } catch {}
+
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
-      toast({
-        title: "Reparacion completada",
-        description: `${data.linked || 0} deployments vinculados, ${data.unlinked || 0} sin vincular de ${data.total || 0} total`,
-      });
+
+      if ((localData.repaired || 0) > 0 || (localData.unlinked || 0) === 0) {
+        toast({
+          title: "Reparación completada (local)",
+          description: `${localData.repaired || 0} reparados, ${localData.linked || 0} vinculados, ${localData.unlinked || 0} sin vincular de ${localData.total || 0} total`,
+        });
+      } else {
+        try {
+          const mbRes = await apiRequest("POST", `/api/studies/${studyId}/repair-deployments`);
+          let mbData: { total?: number; linked?: number; unlinked?: number } = {};
+          try { mbData = await mbRes.json(); } catch {}
+          queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
+          toast({
+            title: "Reparación completada (Movebank)",
+            description: `${mbData.linked || 0} vinculados, ${mbData.unlinked || 0} sin vincular de ${mbData.total || 0} total`,
+          });
+        } catch (mbErr: any) {
+          toast({
+            title: "Reparación local sin cambios",
+            description: `${localData.linked || 0} ya vinculados, ${localData.unlinked || 0} sin vincular. Movebank no disponible.`,
+            variant: "destructive",
+          });
+        }
+      }
     } catch (e: any) {
       let errorMsg = "Error desconocido al reparar";
       if (e.message) {

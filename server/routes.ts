@@ -1057,6 +1057,18 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/studies/:id/repair-deployments-local", requireSuperuser, requireStudyAccess, async (req, res) => {
+    try {
+      log(`Repair-deployments-local iniciado para estudio: ${req.params.id}`, "movebank");
+      const result = await storage.repairDeploymentsLocal(req.params.id);
+      log(`Repair-local completado: total=${result.total}, linked=${result.linked}, repaired=${result.repaired}, unlinked=${result.unlinked}`, "movebank");
+      return res.json(result);
+    } catch (e: any) {
+      log(`Repair-local error: ${e.message}`, "movebank");
+      return res.status(500).json({ message: `Error al reparar localmente: ${e.message}` });
+    }
+  });
+
   app.post("/api/studies/:id/repair-deployments", movebankLimiter, requireSuperuser, requireStudyAccess, async (req, res) => {
     try {
       log(`Repair-deployments iniciado para estudio: ${req.params.id}`, "movebank");

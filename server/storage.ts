@@ -43,6 +43,7 @@ export interface IStorage {
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
   createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
   updateDeploymentStatus(id: string, data: { deployOff: string | null }): Promise<Deployment | undefined>;
+  repairDeploymentsLocal(studyId: string): Promise<{ total: number; linked: number; repaired: number; unlinked: number }>;
 
   getAllSpeciesProfiles(): Promise<SpeciesProfile[]>;
   getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined>;
@@ -338,6 +339,42 @@ export class DatabaseStorage implements IStorage {
   async updateDeploymentStatus(id: string, data: { deployOff: string | null }): Promise<Deployment | undefined> {
     const [updated] = await db.update(deployments).set(data).where(eq(deployments.id, id)).returning();
     return updated;
+  }
+
+  async repairDeploymentsLocal(studyId: string): Promise<{ total: number; linked: number; repaired: number; unlinked: number }> {
+    const allDeps = await this.getDeployments(studyId);
+    const allInds = await this.getIndividuals(studyId);
+    const total = allDeps.length;
+    const alreadyLinked = allDeps.filter(d => d.individualId != null).length;
+
+    const indByLocalId = new Map<string, Individual>();
+    const indByMbId = new Map<number, Individual>();
+    for (const ind of allInds) {
+      if (ind.localIdentifier) indByLocalId.set(ind.localIdentifier, ind);
+      if (ind.movebankId) indByMbId.set(ind.movebankId, ind);
+    }
+
+    let repaired = 0;
+    for (const dep of allDeps) {
+      if (dep.individualId != null) continue;
+      let matchedInd: Individual | undefined;
+      if (dep.localIdentifier) {
+        matchedInd = indByLocalId.get(dep.localIdentifier);
+      }
+      if (!matchedInd && dep.movebankId) {
+        matchedInd = indByMbId.get(dep.movebankId);
+      }
+      if (matchedInd) {
+        await db.update(deployments)
+          .set({ individualId: matchedInd.movebankId })
+          .where(eq(deployments.id, dep.id));
+        repaired++;
+      }
+    }
+
+    const linked = alreadyLinked + repaired;
+    const unlinked = total - linked;
+    return { total, linked, repaired, unlinked };
   }
 
   async getAllSpeciesProfiles(): Promise<SpeciesProfile[]> {
