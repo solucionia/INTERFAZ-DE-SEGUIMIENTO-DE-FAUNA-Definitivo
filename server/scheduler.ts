@@ -3,7 +3,7 @@ import { storage } from "./storage";
 import { fetchMovebankEvents } from "./movebank";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } from "./emailService";
-import { DEFAULT_THRESHOLDS, type EventThresholds } from "@shared/schema";
+import { DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds } from "@shared/schema";
 import { decrypt } from "./encryption";
 import { log } from "./index";
 
@@ -25,7 +25,7 @@ async function runEventDetection() {
       let thresholds: EventThresholds = DEFAULT_THRESHOLDS;
       if (study.speciesProfileId) {
         const profile = await storage.getSpeciesProfile(study.speciesProfileId);
-        if (profile) thresholds = profile.thresholds as EventThresholds;
+        if (profile) thresholds = normalizeThresholds(profile.thresholds);
       }
 
       const now = Date.now();

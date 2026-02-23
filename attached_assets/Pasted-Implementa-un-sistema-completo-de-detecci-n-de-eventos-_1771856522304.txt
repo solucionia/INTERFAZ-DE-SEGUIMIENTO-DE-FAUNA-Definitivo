@@ -1,0 +1,152 @@
+Implementa un sistema completo de detección de eventos basado en datos de acelerómetro. El cliente ha definido umbrales específicos para 5 tipos de evento. Los umbrales deben ser configurables por perfil de especie.
+
+PARTE A — NUEVO ARCHIVO: server/eventDetector.ts
+
+Crea una clase EventDetector que analice datos de acelerómetro (cached_accelerometer_events) para detectar estos 5 tipos de evento:
+
+1. MORTALIDAD:
+   - Condición: El acelerómetro muestra valores estacionarios (sin variación significativa) durante un período prolongado
+   - Parámetros configurables:
+     * stationaryThreshold: variación máxima entre lecturas consecutivas (default 50)
+     * stationaryDurationHours: horas de datos estacionarios para generar alerta (default 24)
+   - Combinar con el detector de inmovilidad GPS existente para mayor fiabilidad
+   - Severidad: critical
+
+2. DESPRENDIMIENTO DEL EMISOR:
+   - Condición: eje X toma valores por encima de +200 o por debajo de -200 durante al menos 5 posiciones en un rango de 10 posiciones consecutivas
+   - Implementación: ventana deslizante de 10 lecturas consecutivas. Si en esa ventana hay >= 5 lecturas donde abs(acc_x) > 200 → alerta
+   - Parámetros configurables:
+     * xAxisThreshold: valor absoluto del eje X (default 200)
+     * minPositions: mínimo de posiciones que superan el umbral (default 5)
+     * windowSize: tamaño de la ventana deslizante (default 10)
+   - Severidad: warning
+
+3. PELEA / DEPREDACIÓN:
+   - Condición: eje Z toma valores (al menos dos) por debajo de -300 alternándose con posiciones en valores positivos en un periodo de dos horas
+   - Implementación: en una ventana de 2 horas, buscar al menos 2 lecturas donde acc_z < -300, Y que entre esas lecturas haya valores de acc_z positivos (alternancia)
+   - Parámetros configurables:
+     * zAxisNegativeThreshold: valor negativo del eje Z (default -300)
+     * minNegativeReadings: mínimo de lecturas negativas (default 2)
+     * windowMinutes: ventana temporal en minutos (default 120)
+   - Severidad: warning
+
+4. ALIMENTACIÓN:
+   - Condición: eje Y toma al menos dos valores positivos por encima de 150 en un periodo de 20 minutos
+   - Implementación: en una ventana de 20 minutos, buscar al menos 2 lecturas donde acc_y > 150
+   - Parámetros configurables:
+     * yAxisThreshold: valor del eje Y (default 150)
+     * minPositiveReadings: mínimo de lecturas (default 2)
+     * windowMinutes: ventana temporal en minutos (default 20)
+   - Severidad: info
+
+5. INCUBACIÓN / VUELO:
+   - Condición: eje Y toma valores entre -200 y +200 continuados pero con alternancia de valores (no estacionario)
+   - Implementación: en una ventana temporal, verificar que:
+     a) Todos los valores de acc_y están entre -200 y +200
+     b) La desviación estándar de acc_y es > un umbral mínimo (hay variación, no está quieto)
+     c) Hay cambios de signo frecuentes en acc_y (alternancia)
+   - Parámetros configurables:
+     * yAxisRange: rango del eje Y [min, max] (default [-200, 200])
+     * minStdDev: desviación estándar mínima para confirmar alternancia (default 30)
+     * windowMinutes: ventana temporal (default 60)
+     * minSignChanges: mínimo de cambios de signo en la ventana (default 3)
+   - Severidad: info
+
+La clase EventDetector debe tener:
+
+- analyzeAccelerometerData(individualId, studyId, startDate, endDate, speciesProfile): 
+  * Lee datos de cached_accelerometer_events para el individuo y rango
+  * Ejecuta los 5 detectores en secuencia
+  * Devuelve array de eventos detectados con: type, severity, startTime, endTime, description, accData (valores que causaron la alerta), coordinates (si hay GPS del mismo timestamp)
+
+- Para cada evento detectado, guardar en detected_events con:
+  * event_type: 'mortality' | 'transmitter_detachment' | 'fight_predation' | 'feeding' | 'incubation_flight'
+  * individual_id, study_id
+  * start_time, end_time
+  * severity: 'critical' | 'warning' | 'info'
+  * details: JSON con los valores de acelerómetro que causaron la detección
+  * coordinates: lat/lon del GPS más cercano al evento
+  * google_maps_url
+  * status: 'new'
+
+PARTE B — ACTUALIZAR PERFILES DE ESPECIE
+
+En la tabla species_profiles (o donde se guarden los perfiles), añade campos para todos los umbrales configurables de los 5 eventos. Si la tabla no tiene estos campos, créalos con ALTER TABLE o actualiza el schema de Drizzle:
+
+- mortality_stationary_threshold (default 50)
+- mortality_stationary_duration_hours (default 24)
+- detachment_x_threshold (default 200)
+- detachment_min_positions (default 5)
+- detachment_window_size (default 10)
+- fight_z_threshold (default -300)
+- fight_min_readings (default 2)
+- fight_window_minutes (default 120)
+- feeding_y_threshold (default 150)
+- feeding_min_readings (default 2)
+- feeding_window_minutes (default 20)
+- incubation_y_range_min (default -200)
+- incubation_y_range_max (default 200)
+- incubation_min_std_dev (default 30)
+- incubation_window_minutes (default 60)
+- incubation_min_sign_changes (default 3)
+
+PARTE C — ACTUALIZAR PÁGINA DE PERFILES DE ESPECIE
+
+En la página de perfiles de especie (admin), muestra los 5 tipos de evento con sus umbrales editables agrupados por secciones:
+
+Sección "Mortalidad":
+- Variación máxima: [input] (default 50)
+- Duración mínima (horas): [input] (default 24)
+
+Sección "Desprendimiento de emisor":
+- Umbral eje X: [input] (default 200)
+- Posiciones mínimas: [input] (default 5)
+- Ventana de posiciones: [input] (default 10)
+
+Sección "Pelea / Depredación":
+- Umbral eje Z: [input] (default -300)
+- Lecturas mínimas: [input] (default 2)
+- Ventana temporal (min): [input] (default 120)
+
+Sección "Alimentación":
+- Umbral eje Y: [input] (default 150)
+- Lecturas mínimas: [input] (default 2)
+- Ventana temporal (min): [input] (default 20)
+
+Sección "Incubación / Vuelo":
+- Rango eje Y: [input min] a [input max] (default -200 a 200)
+- Desviación estándar mínima: [input] (default 30)
+- Ventana temporal (min): [input] (default 60)
+- Cambios de signo mínimos: [input] (default 3)
+
+Cada sección con un switch para activar/desactivar ese tipo de detección.
+
+PARTE D — BOTÓN "DETECTAR EVENTOS" EN VISUALIZACIÓN
+
+En la página de visualización de datos, el botón "Detectar eventos" que ya existe debe:
+
+1. Llamar al EventDetector con los datos de acelerómetro del animal y rango de fechas seleccionados
+2. Usar los umbrales del perfil de especie del animal (si existe) o los defaults
+3. Mostrar los eventos detectados como marcadores en la gráfica de acelerómetro:
+   - Líneas verticales o zonas sombreadas en los puntos donde se detectó cada evento
+   - Colores por tipo: 🔴 mortalidad, 🟠 desprendimiento, 🟡 pelea, 🔵 alimentación, 🟢 incubación
+   - Tooltip con el tipo de evento y los valores del acelerómetro
+4. Mostrar los eventos detectados como marcadores en el mapa GPS:
+   - En las coordenadas correspondientes al timestamp del evento
+   - Popup con tipo, hora, valores
+5. Mostrar un resumen debajo: "Se detectaron X eventos: Y mortalidad, Z desprendimiento, etc."
+
+PARTE E — ENDPOINT Y CRON
+
+1. Endpoint POST /api/studies/:id/detect-events:
+   - Body: { individualId, startDate, endDate }
+   - Ejecuta EventDetector.analyzeAccelerometerData()
+   - Devuelve los eventos detectados
+
+2. Cron job cada 6 horas:
+   - Para cada estudio activo con datos de acelerómetro recientes
+   - Ejecuta detección de eventos en las últimas 24 horas
+   - Si detecta mortalidad o desprendimiento → envía email de alerta
+   - Guarda los eventos en detected_events
+
+Toda la UI en español. No rompas funcionalidad existente.

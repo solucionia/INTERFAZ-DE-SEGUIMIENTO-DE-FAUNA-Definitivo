@@ -220,6 +220,22 @@ function detectFeeding(
   return events;
 }
 
+function stdDev(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  return Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
+}
+
+function countSignChanges(values: number[]): number {
+  let changes = 0;
+  for (let i = 1; i < values.length; i++) {
+    if ((values[i] >= 0 && values[i - 1] < 0) || (values[i] < 0 && values[i - 1] >= 0)) {
+      changes++;
+    }
+  }
+  return changes;
+}
+
 function detectIncubation(
   samples: AccSample[],
   gpsPoints: GpsPoint[],
@@ -228,30 +244,42 @@ function detectIncubation(
   animalId: string
 ): InsertDetectedEvent[] {
   const events: InsertDetectedEvent[] = [];
-  const { yRangeLow, yRangeHigh, minVariance: minVar } = thresholds;
+  const { yRangeLow, yRangeHigh, minStdDev, windowMinutes, minSignChanges } = thresholds;
+  const windowMs = windowMinutes * 60 * 1000;
 
-  const chunkSize = 20;
-  for (let i = 0; i <= samples.length - chunkSize; i += chunkSize) {
-    const chunk = samples.slice(i, i + chunkSize);
-    const allInRange = chunk.every((s) => s.y >= yRangeLow && s.y <= yRangeHigh);
+  for (let i = 0; i < samples.length; i++) {
+    const windowEnd = samples[i].timestamp + windowMs;
+    const windowSamples: AccSample[] = [];
+    for (let j = i; j < samples.length && samples[j].timestamp <= windowEnd; j++) {
+      windowSamples.push(samples[j]);
+    }
+    if (windowSamples.length < 5) continue;
+
+    const allInRange = windowSamples.every((s) => s.y >= yRangeLow && s.y <= yRangeHigh);
     if (!allInRange) continue;
 
-    const yVar = variance(chunk.map((s) => s.y));
-    if (yVar >= minVar) {
-      const gp = findNearestGps(gpsPoints, chunk[0].timestamp);
-      events.push({
-        studyId,
-        individualLocalId: animalId,
-        eventType: "incubation" as EventType,
-        severity: EVENT_SEVERITY.incubation,
-        timestampStart: chunk[0].timestamp,
-        timestampEnd: chunk[chunk.length - 1].timestamp,
-        lat: gp?.lat ?? null,
-        lng: gp?.lng ?? null,
-        accValues: chunk.slice(0, 10).map((s) => ({ x: s.x, y: s.y, z: s.z })),
-        description: `Eje Y contenido (${yRangeLow} a ${yRangeHigh}) con varianza ${yVar.toFixed(1)} (movimiento contenido)`,
-      });
-    }
+    const yValues = windowSamples.map((s) => s.y);
+    const sd = stdDev(yValues);
+    if (sd < minStdDev) continue;
+
+    const signChanges = countSignChanges(yValues);
+    if (signChanges < minSignChanges) continue;
+
+    const gp = findNearestGps(gpsPoints, windowSamples[0].timestamp);
+    events.push({
+      studyId,
+      individualLocalId: animalId,
+      eventType: "incubation" as EventType,
+      severity: EVENT_SEVERITY.incubation,
+      timestampStart: windowSamples[0].timestamp,
+      timestampEnd: windowSamples[windowSamples.length - 1].timestamp,
+      lat: gp?.lat ?? null,
+      lng: gp?.lng ?? null,
+      accValues: windowSamples.slice(0, 10).map((s) => ({ x: s.x, y: s.y, z: s.z })),
+      description: `Eje Y contenido (${yRangeLow} a ${yRangeHigh}) con desv.est. ${sd.toFixed(1)}, ${signChanges} cambios de signo en ${windowMinutes} min`,
+    });
+    const lastTs = windowSamples[windowSamples.length - 1].timestamp;
+    while (i < samples.length - 1 && samples[i + 1].timestamp <= lastTs) i++;
   }
   return events;
 }
@@ -267,11 +295,11 @@ export function detectEvents(
   const gpsSorted = [...gpsSamples].sort((a, b) => a.timestamp - b.timestamp);
 
   const allEvents: InsertDetectedEvent[] = [
-    ...detectMortality(sorted, gpsSorted, thresholds.mortality, studyId, animalId),
-    ...detectDetachment(sorted, gpsSorted, thresholds.detachment, studyId, animalId),
-    ...detectFight(sorted, gpsSorted, thresholds.fight, studyId, animalId),
-    ...detectFeeding(sorted, gpsSorted, thresholds.feeding, studyId, animalId),
-    ...detectIncubation(sorted, gpsSorted, thresholds.incubation, studyId, animalId),
+    ...(thresholds.mortality.enabled !== false ? detectMortality(sorted, gpsSorted, thresholds.mortality, studyId, animalId) : []),
+    ...(thresholds.detachment.enabled !== false ? detectDetachment(sorted, gpsSorted, thresholds.detachment, studyId, animalId) : []),
+    ...(thresholds.fight.enabled !== false ? detectFight(sorted, gpsSorted, thresholds.fight, studyId, animalId) : []),
+    ...(thresholds.feeding.enabled !== false ? detectFeeding(sorted, gpsSorted, thresholds.feeding, studyId, animalId) : []),
+    ...(thresholds.incubation.enabled !== false ? detectIncubation(sorted, gpsSorted, thresholds.incubation, studyId, animalId) : []),
   ];
 
   return allEvents.sort((a, b) => a.timestampStart - b.timestampStart);

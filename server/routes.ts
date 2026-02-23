@@ -6,7 +6,7 @@ import multer from "multer";
 import { storage } from "./storage";
 import { setupAuth, requireAuth, requireSuperuser } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
@@ -930,11 +930,11 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Parámetros requeridos: individuals, timestamp_start, timestamp_end" });
       }
 
-      let thresholds: EventThresholds = DEFAULT_THRESHOLDS;
+      let thresholds: EventThresholds = { ...DEFAULT_THRESHOLDS };
       if (study.speciesProfileId) {
         const profile = await storage.getSpeciesProfile(study.speciesProfileId);
         if (profile) {
-          thresholds = profile.thresholds as EventThresholds;
+          thresholds = normalizeThresholds(profile.thresholds);
         }
       }
 

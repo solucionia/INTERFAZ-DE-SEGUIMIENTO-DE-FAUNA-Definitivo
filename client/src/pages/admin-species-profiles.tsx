@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { SpeciesProfile, EventThresholds } from "@shared/schema";
-import { DEFAULT_THRESHOLDS, EVENT_LABELS, EVENT_COLORS } from "@shared/schema";
+import { DEFAULT_THRESHOLDS, normalizeThresholds, EVENT_LABELS, EVENT_COLORS } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,6 +41,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Switch } from "@/components/ui/switch";
 import { Plus, Pencil, Trash2, Loader2, Dna, AlertTriangle, Zap, Utensils, Bird, Skull } from "lucide-react";
 
 const EVENT_ICONS: Record<string, any> = {
@@ -102,7 +103,7 @@ export default function AdminSpeciesProfiles() {
     setEditProfile(profile);
     setName(profile.name);
     setDescription(profile.description || "");
-    setThresholds(profile.thresholds as EventThresholds);
+    setThresholds(normalizeThresholds(profile.thresholds));
     setShowForm(true);
   };
 
@@ -142,7 +143,7 @@ export default function AdminSpeciesProfiles() {
   const updateThreshold = <K extends keyof EventThresholds>(
     category: K,
     field: keyof EventThresholds[K],
-    value: number
+    value: number | boolean
   ) => {
     setThresholds((prev) => ({
       ...prev,
@@ -200,16 +201,20 @@ export default function AdminSpeciesProfiles() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1 flex-wrap">
-                          {Object.keys(EVENT_LABELS).map((type) => (
-                            <Badge
-                              key={type}
-                              variant="outline"
-                              className="text-xs"
-                              style={{ borderColor: EVENT_COLORS[type as keyof typeof EVENT_COLORS], color: EVENT_COLORS[type as keyof typeof EVENT_COLORS] }}
-                            >
-                              {EVENT_LABELS[type as keyof typeof EVENT_LABELS].split("/")[0].trim()}
-                            </Badge>
-                          ))}
+                          {Object.keys(EVENT_LABELS).map((type) => {
+                            const t = (profile.thresholds as EventThresholds)?.[type as keyof EventThresholds];
+                            const isEnabled = t && (t as any).enabled !== false;
+                            return (
+                              <Badge
+                                key={type}
+                                variant="outline"
+                                className={`text-xs ${!isEnabled ? "opacity-30 line-through" : ""}`}
+                                style={{ borderColor: EVENT_COLORS[type as keyof typeof EVENT_COLORS], color: EVENT_COLORS[type as keyof typeof EVENT_COLORS] }}
+                              >
+                                {EVENT_LABELS[type as keyof typeof EVENT_LABELS].split("/")[0].trim()}
+                              </Badge>
+                            );
+                          })}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -274,8 +279,11 @@ export default function AdminSpeciesProfiles() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2 pb-3">
-                    <p className="text-xs text-muted-foreground mb-2">Acelerometro estacionario sin variacion significativa durante un periodo prolongado</p>
-                    <ThresholdField label="Varianza maxima" value={thresholds.mortality.stationaryVariance} onChange={(v) => updateThreshold("mortality", "stationaryVariance", v)} testId="input-mortality-variance" />
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">Acelerometro estacionario sin variacion significativa durante un periodo prolongado</p>
+                      <Switch checked={thresholds.mortality.enabled !== false} onCheckedChange={(v) => updateThreshold("mortality", "enabled", v)} data-testid="switch-mortality-enabled" />
+                    </div>
+                    <ThresholdField label="Variacion maxima" value={thresholds.mortality.stationaryVariance} onChange={(v) => updateThreshold("mortality", "stationaryVariance", v)} testId="input-mortality-variance" />
                     <ThresholdField label="Duracion minima" value={thresholds.mortality.durationHours} onChange={(v) => updateThreshold("mortality", "durationHours", v)} unit="horas" testId="input-mortality-duration" />
                   </AccordionContent>
                 </AccordionItem>
@@ -285,11 +293,14 @@ export default function AdminSpeciesProfiles() {
                     <div className="flex items-center gap-2">
                       <Zap className="w-4 h-4" style={{ color: EVENT_COLORS.detachment }} />
                       <span className="text-sm font-medium">Desprendimiento del emisor</span>
-                      <Badge variant="outline" className="text-xs" style={{ borderColor: EVENT_COLORS.detachment, color: EVENT_COLORS.detachment }}>Alta</Badge>
+                      <Badge variant="outline" className="text-xs" style={{ borderColor: EVENT_COLORS.detachment, color: EVENT_COLORS.detachment }}>Warning</Badge>
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2 pb-3">
-                    <p className="text-xs text-muted-foreground mb-2">Eje X fuera de rango durante multiples posiciones consecutivas</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">Eje X fuera de rango durante multiples posiciones consecutivas</p>
+                      <Switch checked={thresholds.detachment.enabled !== false} onCheckedChange={(v) => updateThreshold("detachment", "enabled", v)} data-testid="switch-detachment-enabled" />
+                    </div>
                     <ThresholdField label="Umbral X superior" value={thresholds.detachment.xThresholdHigh} onChange={(v) => updateThreshold("detachment", "xThresholdHigh", v)} testId="input-detach-high" />
                     <ThresholdField label="Umbral X inferior" value={thresholds.detachment.xThresholdLow} onChange={(v) => updateThreshold("detachment", "xThresholdLow", v)} testId="input-detach-low" />
                     <ThresholdField label="Min. posiciones" value={thresholds.detachment.minPositions} onChange={(v) => updateThreshold("detachment", "minPositions", v)} testId="input-detach-min" />
@@ -302,11 +313,14 @@ export default function AdminSpeciesProfiles() {
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="w-4 h-4" style={{ color: EVENT_COLORS.fight }} />
                       <span className="text-sm font-medium">Pelea / Depredacion</span>
-                      <Badge variant="outline" className="text-xs" style={{ borderColor: EVENT_COLORS.fight, color: EVENT_COLORS.fight }}>Alta</Badge>
+                      <Badge variant="outline" className="text-xs" style={{ borderColor: EVENT_COLORS.fight, color: EVENT_COLORS.fight }}>Warning</Badge>
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2 pb-3">
-                    <p className="text-xs text-muted-foreground mb-2">Eje Z con valores negativos extremos alternando con valores positivos</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">Eje Z con valores negativos extremos alternando con valores positivos</p>
+                      <Switch checked={thresholds.fight.enabled !== false} onCheckedChange={(v) => updateThreshold("fight", "enabled", v)} data-testid="switch-fight-enabled" />
+                    </div>
                     <ThresholdField label="Umbral Z negativo" value={thresholds.fight.zThreshold} onChange={(v) => updateThreshold("fight", "zThreshold", v)} testId="input-fight-z" />
                     <ThresholdField label="Min. ocurrencias" value={thresholds.fight.minOccurrences} onChange={(v) => updateThreshold("fight", "minOccurrences", v)} testId="input-fight-occur" />
                     <ThresholdField label="Ventana" value={thresholds.fight.windowMinutes} onChange={(v) => updateThreshold("fight", "windowMinutes", v)} unit="minutos" testId="input-fight-window" />
@@ -322,7 +336,10 @@ export default function AdminSpeciesProfiles() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2 pb-3">
-                    <p className="text-xs text-muted-foreground mb-2">Eje Y con valores positivos elevados en un periodo corto</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">Eje Y con valores positivos elevados en un periodo corto</p>
+                      <Switch checked={thresholds.feeding.enabled !== false} onCheckedChange={(v) => updateThreshold("feeding", "enabled", v)} data-testid="switch-feeding-enabled" />
+                    </div>
                     <ThresholdField label="Umbral Y positivo" value={thresholds.feeding.yThreshold} onChange={(v) => updateThreshold("feeding", "yThreshold", v)} testId="input-feed-y" />
                     <ThresholdField label="Min. ocurrencias" value={thresholds.feeding.minOccurrences} onChange={(v) => updateThreshold("feeding", "minOccurrences", v)} testId="input-feed-occur" />
                     <ThresholdField label="Ventana" value={thresholds.feeding.windowMinutes} onChange={(v) => updateThreshold("feeding", "windowMinutes", v)} unit="minutos" testId="input-feed-window" />
@@ -338,10 +355,15 @@ export default function AdminSpeciesProfiles() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="space-y-2 pb-3">
-                    <p className="text-xs text-muted-foreground mb-2">Eje Y contenido en rango con movimiento (no estacionario)</p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs text-muted-foreground">Eje Y contenido en rango con alternancia de valores (no estacionario)</p>
+                      <Switch checked={thresholds.incubation.enabled !== false} onCheckedChange={(v) => updateThreshold("incubation", "enabled", v)} data-testid="switch-incubation-enabled" />
+                    </div>
                     <ThresholdField label="Rango Y inferior" value={thresholds.incubation.yRangeLow} onChange={(v) => updateThreshold("incubation", "yRangeLow", v)} testId="input-incub-low" />
                     <ThresholdField label="Rango Y superior" value={thresholds.incubation.yRangeHigh} onChange={(v) => updateThreshold("incubation", "yRangeHigh", v)} testId="input-incub-high" />
-                    <ThresholdField label="Varianza minima" value={thresholds.incubation.minVariance} onChange={(v) => updateThreshold("incubation", "minVariance", v)} testId="input-incub-var" />
+                    <ThresholdField label="Desv. estandar min." value={thresholds.incubation.minStdDev} onChange={(v) => updateThreshold("incubation", "minStdDev", v)} testId="input-incub-stddev" />
+                    <ThresholdField label="Ventana" value={thresholds.incubation.windowMinutes} onChange={(v) => updateThreshold("incubation", "windowMinutes", v)} unit="minutos" testId="input-incub-window" />
+                    <ThresholdField label="Cambios de signo min." value={thresholds.incubation.minSignChanges} onChange={(v) => updateThreshold("incubation", "minSignChanges", v)} testId="input-incub-signs" />
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>

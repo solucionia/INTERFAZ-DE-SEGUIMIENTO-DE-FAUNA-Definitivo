@@ -84,41 +84,66 @@ export type Deployment = typeof deployments.$inferSelect;
 
 export const eventThresholdsSchema = z.object({
   mortality: z.object({
-    stationaryVariance: z.number().default(5),
+    enabled: z.boolean().default(true),
+    stationaryVariance: z.number().default(50),
     durationHours: z.number().default(24),
   }),
   detachment: z.object({
+    enabled: z.boolean().default(true),
     xThresholdHigh: z.number().default(200),
     xThresholdLow: z.number().default(-200),
     minPositions: z.number().default(5),
     windowSize: z.number().default(10),
   }),
   fight: z.object({
+    enabled: z.boolean().default(true),
     zThreshold: z.number().default(-300),
     minOccurrences: z.number().default(2),
     windowMinutes: z.number().default(120),
   }),
   feeding: z.object({
+    enabled: z.boolean().default(true),
     yThreshold: z.number().default(150),
     minOccurrences: z.number().default(2),
     windowMinutes: z.number().default(20),
   }),
   incubation: z.object({
+    enabled: z.boolean().default(true),
     yRangeLow: z.number().default(-200),
     yRangeHigh: z.number().default(200),
-    minVariance: z.number().default(3),
+    minStdDev: z.number().default(30),
+    windowMinutes: z.number().default(60),
+    minSignChanges: z.number().default(3),
   }),
 });
 
 export type EventThresholds = z.infer<typeof eventThresholdsSchema>;
 
 export const DEFAULT_THRESHOLDS: EventThresholds = {
-  mortality: { stationaryVariance: 5, durationHours: 24 },
-  detachment: { xThresholdHigh: 200, xThresholdLow: -200, minPositions: 5, windowSize: 10 },
-  fight: { zThreshold: -300, minOccurrences: 2, windowMinutes: 120 },
-  feeding: { yThreshold: 150, minOccurrences: 2, windowMinutes: 20 },
-  incubation: { yRangeLow: -200, yRangeHigh: 200, minVariance: 3 },
+  mortality: { enabled: true, stationaryVariance: 50, durationHours: 24 },
+  detachment: { enabled: true, xThresholdHigh: 200, xThresholdLow: -200, minPositions: 5, windowSize: 10 },
+  fight: { enabled: true, zThreshold: -300, minOccurrences: 2, windowMinutes: 120 },
+  feeding: { enabled: true, yThreshold: 150, minOccurrences: 2, windowMinutes: 20 },
+  incubation: { enabled: true, yRangeLow: -200, yRangeHigh: 200, minStdDev: 30, windowMinutes: 60, minSignChanges: 3 },
 };
+
+export function normalizeThresholds(stored: any): EventThresholds {
+  if (!stored || typeof stored !== "object") return { ...DEFAULT_THRESHOLDS };
+  const d = DEFAULT_THRESHOLDS;
+  return {
+    mortality: { ...d.mortality, ...stored.mortality },
+    detachment: { ...d.detachment, ...stored.detachment },
+    fight: { ...d.fight, ...stored.fight },
+    feeding: { ...d.feeding, ...stored.feeding },
+    incubation: {
+      ...d.incubation,
+      ...stored.incubation,
+      ...(stored.incubation?.minVariance !== undefined && stored.incubation?.minStdDev === undefined
+        ? { minStdDev: stored.incubation.minVariance }
+        : {}),
+    },
+  };
+}
 
 export const speciesProfiles = pgTable("species_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -138,8 +163,8 @@ export type EventType = typeof EVENT_TYPES[number];
 
 export const EVENT_SEVERITY: Record<EventType, string> = {
   mortality: "critical",
-  detachment: "high",
-  fight: "high",
+  detachment: "warning",
+  fight: "warning",
   feeding: "info",
   incubation: "info",
 };
