@@ -28,8 +28,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/components/animal-search.tsx` - Reusable animal search with autocomplete, multi/single select, accent-insensitive filtering
 - `client/src/components/global-animal-search.tsx` - Global Ctrl+K animal search dialog using cmdk
 - `client/src/pages/study-visualization.tsx` - Data visualization with accelerometer chart + GPS map + event overlay
-- `client/src/pages/admin-studies.tsx` - CRUD for studies with species profile assignment (superuser only)
-- `client/src/pages/admin-users.tsx` - User listing (superuser only)
+- `client/src/pages/admin-studies.tsx` - CRUD for studies with species profile assignment, optional Movebank credentials (superuser only)
+- `client/src/pages/admin-users.tsx` - User management: listing, role editing, password reset, study assignment (superuser only)
 - `client/src/pages/admin-species-profiles.tsx` - Species profile management with threshold editing (superuser only)
 - `client/src/pages/emission-monitor.tsx` - Emission monitor with search and configurable email alerts
 - `client/src/pages/immobility-monitor.tsx` - Immobility/mortality detector with GPS analysis, configurable thresholds, map, and alert tables

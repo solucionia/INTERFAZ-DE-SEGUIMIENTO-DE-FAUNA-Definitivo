@@ -186,9 +186,11 @@ export default function Dashboard() {
                       <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-xs text-muted-foreground">
-                        Movebank ID: {study.movebankStudyId}
-                      </span>
+                      {study.movebankStudyId && (
+                        <span className="text-xs text-muted-foreground">
+                          Movebank ID: {study.movebankStudyId}
+                        </span>
+                      )}
                       {study.active ? (
                         <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
                           Activo

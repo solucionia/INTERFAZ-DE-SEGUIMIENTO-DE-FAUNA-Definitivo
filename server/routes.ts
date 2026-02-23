@@ -89,9 +89,13 @@ function buildValoresCsv(resultData: any): string {
 function maskStudyCredentials(study: Study): Study {
   return {
     ...study,
-    movebankUsername: "••••••••",
-    movebankPassword: "••••••••",
+    movebankUsername: study.movebankUsername ? "••••••••" : null,
+    movebankPassword: study.movebankPassword ? "••••••••" : null,
   };
+}
+
+function hasMovebankCredentials(study: Study): boolean {
+  return !!(study.movebankStudyId && study.movebankUsername && study.movebankPassword);
 }
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
@@ -344,6 +348,10 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.query;
       if (!individualIds || !timestamp_start || !timestamp_end) {
         return res.status(400).json({ message: "Parametros requeridos: individuals, timestamp_start, timestamp_end" });
@@ -356,7 +364,7 @@ export async function registerRoutes(
       let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${study.name}</name>\n`;
 
       for (const animalId of ids) {
-        const gpsEvents = await fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId.trim(), 653, tsStart, tsEnd);
+        const gpsEvents = await fetchMovebankEvents(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!, animalId.trim(), 653, tsStart, tsEnd);
         const coords = gpsEvents
           .filter((r) => r.location_lat && r.location_long)
           .map((r) => `${r.location_long},${r.location_lat},0`)
@@ -572,7 +580,11 @@ export async function registerRoutes(
 
   app.post("/api/studies", requireSuperuser, async (req, res) => {
     try {
-      const parsed = insertStudySchema.safeParse(req.body);
+      const data = { ...req.body };
+      if (!data.movebankStudyId || data.movebankStudyId === 0) data.movebankStudyId = null;
+      if (!data.movebankUsername) data.movebankUsername = null;
+      if (!data.movebankPassword) data.movebankPassword = null;
+      const parsed = insertStudySchema.safeParse(data);
       if (!parsed.success) {
         return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
       }
@@ -686,6 +698,10 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+
       const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end, force } = req.query;
       if (!individualIds || !sensor_type || !timestamp_start || !timestamp_end) {
         return res.status(400).json({ message: "Parámetros requeridos: individuals, sensor_type, timestamp_start, timestamp_end" });
@@ -745,7 +761,7 @@ export async function registerRoutes(
               let movebankRows: Record<string, string>[] = [];
               for (const gap of gaps) {
                 const rows = await fetchMovebankEvents(
-                  study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+                  study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
                   trimmed, sensorTypeId, gap.start, gap.end
                 );
                 movebankRows = movebankRows.concat(rows);
@@ -833,7 +849,7 @@ export async function registerRoutes(
               }
             } else {
               const events = await fetchMovebankEvents(
-                study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+                study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
                 trimmed, sensorTypeId, tsStart, tsEnd
               );
 
@@ -971,6 +987,10 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.body;
       if (!individualIds || !timestamp_start || !timestamp_end) {
         return res.status(400).json({ message: "Parámetros requeridos: individuals, timestamp_start, timestamp_end" });
@@ -994,8 +1014,8 @@ export async function registerRoutes(
       for (const animalId of ids) {
         try {
           const [gpsRows, accRows] = await Promise.all([
-            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId, 653, tsStart, tsEnd),
-            fetchMovebankEvents(study.movebankStudyId, study.movebankUsername, study.movebankPassword, animalId, 2365683, tsStart, tsEnd),
+            fetchMovebankEvents(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!, animalId, 653, tsStart, tsEnd),
+            fetchMovebankEvents(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!, animalId, 2365683, tsStart, tsEnd),
           ]);
 
           const gpsSamples = gpsRows
@@ -1093,6 +1113,9 @@ export async function registerRoutes(
       }[] = [];
 
       for (const { study, activeIndividuals } of accessibleStudies) {
+        if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
+          continue;
+        }
         const decryptedUsername = decrypt(study.movebankUsername);
         const decryptedPassword = decrypt(study.movebankPassword);
         for (const animal of activeIndividuals) {
@@ -1209,14 +1232,18 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+
       log(`Conectando con Movebank, study_id: ${study.movebankStudyId}, estudio: ${study.name}`, "movebank");
 
-      const rawIndividuals = await fetchMovebankIndividuals(study.movebankStudyId, study.movebankUsername, study.movebankPassword);
+      const rawIndividuals = await fetchMovebankIndividuals(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
       log(`Movebank respondió individuos: ${rawIndividuals.length}`, "movebank");
 
       const [rawDeployments, depIndMap] = await Promise.all([
-        fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
-        fetchMovebankDeploymentIndividualMap(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+        fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
+        fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
       ]);
       log(`Movebank respondió despliegues: ${rawDeployments.length}, mappings evento→individuo: ${depIndMap.size}`, "movebank");
 
@@ -1285,9 +1312,13 @@ export async function registerRoutes(
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+
       const [rawDeployments, depIndMap] = await Promise.all([
-        fetchMovebankDeployments(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
-        fetchMovebankDeploymentIndividualMap(study.movebankStudyId, study.movebankUsername, study.movebankPassword),
+        fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
+        fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
       ]);
 
       log(`Repair: ${rawDeployments.length} deployments from Movebank, ${depIndMap.size} deployment→individual mappings from events`, "movebank");
@@ -1429,9 +1460,9 @@ export async function registerRoutes(
         } else {
           try {
             const gpsEvents = await fetchMovebankEvents(
-              study.movebankStudyId,
-              study.movebankUsername,
-              study.movebankPassword,
+              study.movebankStudyId!,
+              study.movebankUsername!,
+              study.movebankPassword!,
               animalId,
               653,
               timestampStart,
@@ -1550,7 +1581,7 @@ export async function registerRoutes(
         } else {
           try {
             const gpsEvents = await fetchMovebankEvents(
-              study.movebankStudyId, study.movebankUsername, study.movebankPassword,
+              study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
               animalId, 653, timestampStart, timestampEnd
             );
             for (const ev of gpsEvents) {

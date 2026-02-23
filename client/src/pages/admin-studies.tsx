@@ -58,9 +58,9 @@ import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-re
 
 const createStudyFormSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
-  movebankStudyId: z.coerce.number().int().positive("ID de estudio requerido"),
-  movebankUsername: z.string().min(1, "Usuario de Movebank requerido"),
-  movebankPassword: z.string().min(1, "Contraseña de Movebank requerida"),
+  movebankStudyId: z.coerce.number().int().nonnegative().optional().or(z.literal(0)),
+  movebankUsername: z.string().optional(),
+  movebankPassword: z.string().optional(),
   alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
   speciesProfileId: z.string().or(z.literal("")).optional(),
   active: z.boolean(),
@@ -68,7 +68,7 @@ const createStudyFormSchema = z.object({
 
 const editStudyFormSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
-  movebankStudyId: z.coerce.number().int().positive("ID de estudio requerido"),
+  movebankStudyId: z.coerce.number().int().nonnegative().optional().or(z.literal(0)),
   movebankUsername: z.string().optional(),
   movebankPassword: z.string().optional(),
   alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
@@ -133,7 +133,7 @@ export default function AdminStudies() {
     setEditStudy(study);
     form.reset({
       name: study.name,
-      movebankStudyId: study.movebankStudyId,
+      movebankStudyId: study.movebankStudyId ?? 0,
       movebankUsername: "",
       movebankPassword: "",
       alertEmail: study.alertEmail || "",
@@ -238,7 +238,7 @@ export default function AdminStudies() {
                   {studies.map((study) => (
                     <TableRow key={study.id} data-testid={`row-study-${study.id}`}>
                       <TableCell className="font-medium">{study.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{study.movebankStudyId}</TableCell>
+                      <TableCell className="text-muted-foreground">{study.movebankStudyId || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">{study.alertEmail || "—"}</TableCell>
                       <TableCell>
                         {study.active ? (
@@ -316,7 +316,7 @@ export default function AdminStudies() {
                 name="movebankStudyId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Study ID de Movebank</FormLabel>
+                    <FormLabel>Study ID de Movebank (opcional)</FormLabel>
                     <FormControl>
                       <Input type="number" placeholder="Ej: 12345678" data-testid="input-study-movebank-id" {...field} />
                     </FormControl>
@@ -329,7 +329,7 @@ export default function AdminStudies() {
                 name="movebankUsername"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Usuario de Movebank</FormLabel>
+                    <FormLabel>Usuario de Movebank (opcional)</FormLabel>
                     <FormControl>
                       <Input
                         type="password"
@@ -338,9 +338,7 @@ export default function AdminStudies() {
                         {...field}
                       />
                     </FormControl>
-                    {editStudy && (
-                      <FormDescription>Dejar vacío para mantener la credencial actual</FormDescription>
-                    )}
+                    <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : "Solo necesario si el estudio usa datos de Movebank"}</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -350,7 +348,7 @@ export default function AdminStudies() {
                 name="movebankPassword"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Contraseña de Movebank</FormLabel>
+                    <FormLabel>Contraseña de Movebank (opcional)</FormLabel>
                     <FormControl>
                       <Input
                         type="password"
@@ -359,9 +357,7 @@ export default function AdminStudies() {
                         {...field}
                       />
                     </FormControl>
-                    {editStudy && (
-                      <FormDescription>Dejar vacío para mantener la credencial actual</FormDescription>
-                    )}
+                    <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : "Solo necesario si el estudio usa datos de Movebank"}</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -153,8 +153,8 @@ export class DatabaseStorage implements IStorage {
   async createStudy(study: InsertStudy): Promise<Study> {
     const encrypted = {
       ...study,
-      movebankUsername: encrypt(study.movebankUsername),
-      movebankPassword: encrypt(study.movebankPassword),
+      movebankUsername: study.movebankUsername ? encrypt(study.movebankUsername) : null,
+      movebankPassword: study.movebankPassword ? encrypt(study.movebankPassword) : null,
     };
     const [created] = await db.insert(studies).values(encrypted).returning();
     return created;
@@ -177,8 +177,8 @@ export class DatabaseStorage implements IStorage {
     if (!study) return undefined;
     return {
       ...study,
-      movebankUsername: decrypt(study.movebankUsername),
-      movebankPassword: decrypt(study.movebankPassword),
+      movebankUsername: study.movebankUsername ? decrypt(study.movebankUsername) : null,
+      movebankPassword: study.movebankPassword ? decrypt(study.movebankPassword) : null,
     };
   }
 

@@ -322,9 +322,11 @@ export default function StudyDetail() {
               <Badge variant="outline" className="opacity-50">Inactivo</Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">
-            Movebank Study ID: {study.movebankStudyId}
-          </p>
+          {study.movebankStudyId && (
+            <p className="text-sm text-muted-foreground">
+              Movebank Study ID: {study.movebankStudyId}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href={`/study/${studyId}/visualize`}>

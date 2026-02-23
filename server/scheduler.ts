@@ -32,6 +32,11 @@ async function runEventDetection() {
       const sixHoursAgo = now - 6 * 60 * 60 * 1000;
       let studyEvents = 0;
 
+      if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
+        log(`Cron: Estudio "${study.name}" no tiene credenciales de Movebank, omitiendo`, "cron");
+        continue;
+      }
+
       let decryptedUsername: string;
       let decryptedPassword: string;
       try {
@@ -200,6 +205,10 @@ async function runEmissionCheck() {
         : studiesWithAnimals.filter((s) => userStudies.some((us) => us.id === s.study.id));
 
       for (const { study, activeIndividuals } of accessibleStudies) {
+        if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
+          continue;
+        }
+
         let emDecryptedUsername: string;
         let emDecryptedPassword: string;
         try {

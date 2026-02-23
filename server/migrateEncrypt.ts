@@ -9,6 +9,10 @@ export async function migrateEncryptCredentials(): Promise<void> {
     let migrated = 0;
 
     for (const study of allStudies) {
+      if (!study.movebankUsername || !study.movebankPassword) {
+        continue;
+      }
+
       const needsUsernameEncrypt = !isEncrypted(study.movebankUsername);
       const needsPasswordEncrypt = !isEncrypted(study.movebankPassword);
 

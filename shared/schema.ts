@@ -29,9 +29,9 @@ export type User = typeof users.$inferSelect;
 export const studies = pgTable("studies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  movebankStudyId: bigint("movebank_study_id", { mode: "number" }).notNull(),
-  movebankUsername: text("movebank_username").notNull(),
-  movebankPassword: text("movebank_password").notNull(),
+  movebankStudyId: bigint("movebank_study_id", { mode: "number" }),
+  movebankUsername: text("movebank_username"),
+  movebankPassword: text("movebank_password"),
   alertEmail: text("alert_email"),
   speciesProfileId: varchar("species_profile_id"),
   active: boolean("active").notNull().default(true),
