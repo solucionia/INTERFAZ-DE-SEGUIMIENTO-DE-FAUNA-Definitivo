@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2 } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -340,6 +340,12 @@ export default function StudyDetail() {
             <Button variant="outline" data-testid="button-geo-analysis">
               <Globe className="w-4 h-4 mr-2" />
               Analisis geoespacial
+            </Button>
+          </Link>
+          <Link href={`/last-positions/${studyId}`}>
+            <Button variant="outline" data-testid="button-last-positions">
+              <MapPin className="w-4 h-4 mr-2" />
+              Últimas posiciones
             </Button>
           </Link>
           <Link href={`/study/${studyId}/data`}>

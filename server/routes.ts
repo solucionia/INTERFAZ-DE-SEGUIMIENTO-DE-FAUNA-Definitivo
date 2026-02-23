@@ -4,6 +4,7 @@ import passport from "passport";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { storage } from "./storage";
+import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
@@ -627,6 +628,79 @@ export async function registerRoutes(
     const userId = (req.user as any).id;
     const allIndividuals = await storage.getAllIndividualsForUser(userId);
     return res.json(allIndividuals);
+  });
+
+  app.get("/api/studies/:id/last-positions", requireStudyAccess, async (req, res) => {
+    try {
+      const studyId = req.params.id;
+      const points = Math.min(Math.max(parseInt(req.query.points as string) || 5, 1), 50);
+
+      const individuals = await storage.getIndividuals(studyId);
+      const indMap = new Map(individuals.map(ind => [
+        ind.localIdentifier || `ID-${ind.movebankId}`,
+        { nickName: ind.nickName || null, taxon: ind.taxonCanonicalName || null }
+      ]));
+
+      const { rows: gpsRows } = await pool.query(
+        `SELECT individual_local_identifier, timestamp, latitude, longitude, ground_speed, heading, height_above_ellipsoid
+         FROM (
+           SELECT *, ROW_NUMBER() OVER (PARTITION BY individual_local_identifier ORDER BY timestamp DESC) AS rn
+           FROM cached_gps_events
+           WHERE study_id = $1
+         ) sub
+         WHERE rn <= $2
+         ORDER BY individual_local_identifier, timestamp DESC`,
+        [studyId, points]
+      );
+
+      const grouped = new Map<string, any[]>();
+      for (const r of gpsRows) {
+        const id = r.individual_local_identifier;
+        if (!grouped.has(id)) grouped.set(id, []);
+        grouped.get(id)!.push({
+          timestamp: Number(r.timestamp),
+          latitude: parseFloat(r.latitude),
+          longitude: parseFloat(r.longitude),
+          groundSpeed: r.ground_speed != null ? parseFloat(r.ground_speed) : null,
+          heading: r.heading != null ? parseFloat(r.heading) : null,
+          altitude: r.height_above_ellipsoid != null ? parseFloat(r.height_above_ellipsoid) : null,
+        });
+      }
+
+      const result: any[] = [];
+      let withData = 0;
+      let globalLastUpdate: number | null = null;
+
+      const identifiersWithData = new Set<string>();
+      for (const [id, pts] of grouped) {
+        identifiersWithData.add(id);
+        withData++;
+        const lastTs = pts[0].timestamp;
+        if (!globalLastUpdate || lastTs > globalLastUpdate) globalLastUpdate = lastTs;
+
+        const meta = indMap.get(id) || { nickName: null, taxon: null };
+        result.push({
+          individual: id,
+          nickName: meta.nickName,
+          taxon: meta.taxon,
+          points: pts,
+        });
+      }
+
+      const withoutData = Math.max(0, individuals.length - withData);
+
+      return res.json({
+        summary: {
+          totalIndividuals: individuals.length,
+          withData,
+          withoutData,
+          lastUpdate: globalLastUpdate,
+        },
+        animals: result,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
   });
 
   app.get("/api/studies/:id/individuals", requireStudyAccess, async (req, res) => {

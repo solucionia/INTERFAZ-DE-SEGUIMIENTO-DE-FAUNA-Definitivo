@@ -38,6 +38,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/geo-analysis.tsx` - Geospatial analysis UI with comprehensive metrics panels, graduated map colors, percentage toggles, multi-animal comparison table
 - `client/src/pages/alert-history.tsx` - Alert history with filtering, read/resolved status, pagination
 - `client/src/pages/raw-data.tsx` - Raw GPS/accelerometer data table with CSV export
+- `client/src/pages/last-positions.tsx` - Last known positions map with age-colored markers, polyline tracks, and detail table
 - `client/src/components/breadcrumbs.tsx` - Hierarchical breadcrumb navigation
 - `server/rateLimiter.ts` - Rate limiting middleware (auth: 5/min, API: 100/min, Movebank: 20/min)
 - `client/src/pages/import-csv.tsx` - CSV import page with drag-and-drop, preview, and results summary
@@ -127,6 +128,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - POST /api/studies/:id/import-csv (multipart/form-data: file + dataType, batch CSV import with duplicate detection)
 - POST /api/studies/:id/immobility-analysis (GPS-based immobility/mortality analysis with configurable thresholds)
 - GET /api/studies/:id/immobility-status (latest mortality events for study, last 30 days)
+- GET /api/studies/:id/last-positions?points=N (last N GPS points per individual, default 5, max 50)
 
 ## Data Cache
 - GPS and accelerometer data from Movebank is cached locally in `cached_gps_events` and `cached_acc_events` tables

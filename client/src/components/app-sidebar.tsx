@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -97,10 +97,10 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location === "/monitor"}>
-                  <Link href="/monitor" data-testid="link-emission-monitor">
-                    <WifiOff className="w-4 h-4" />
-                    <span>Monitor de emision</span>
+                <SidebarMenuButton asChild isActive={location.startsWith("/last-positions")}>
+                  <Link href="/last-positions" data-testid="link-last-positions">
+                    <MapPin className="w-4 h-4" />
+                    <span>Últimas posiciones</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -109,6 +109,14 @@ export function AppSidebar() {
                   <Link href="/immobility" data-testid="link-immobility-monitor">
                     <HeartPulse className="w-4 h-4" />
                     <span>Detector de mortalidad</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/monitor"}>
+                  <Link href="/monitor" data-testid="link-emission-monitor">
+                    <WifiOff className="w-4 h-4" />
+                    <span>Monitor de emision</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

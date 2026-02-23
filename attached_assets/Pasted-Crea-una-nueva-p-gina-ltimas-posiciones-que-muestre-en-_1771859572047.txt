@@ -1,0 +1,58 @@
+Crea una nueva página "Últimas posiciones" que muestre en un mapa la última posición conocida de cada animal del estudio.
+
+1. NUEVO ENDPOINT: GET /api/studies/:id/last-positions?points=5
+
+   - Para cada individuo del estudio que tenga datos en cached_gps_events:
+     * Obtén los últimos N puntos GPS (por defecto 5, configurable con query param "points", máximo 50)
+     * Devuelve: individual_local_identifier, nick_name, taxon, timestamp, latitude, longitude, ground_speed, heading, altitude
+   - Agrupa por individuo
+   - Devuelve también un resumen: { totalIndividuals, withData, withoutData, lastUpdate }
+   - Requiere autenticación (cualquier rol puede ver)
+
+2. NUEVA PÁGINA: client/src/pages/last-positions.tsx
+
+   a) Panel superior:
+      - Selector de estudio
+      - Input "Últimos N puntos" (1-50, default 5) con botones rápidos: 1, 5, 10, 25
+      - Botón "Actualizar"
+      - Tarjetas resumen: Total animales | Con datos | Sin datos | Última actualización
+
+   b) Mapa Leaflet grande (al menos 60% de la pantalla):
+      - Incluir el selector de capas (Callejero, Satélite, Satélite+Etiquetas, Terreno) como en los otros mapas
+      - Clic en mapa vacío abre Google Maps (como en los otros mapas)
+      - Un marcador por cada animal en su ÚLTIMA posición
+      - Color del marcador según antigüedad del último dato:
+        * 🟢 Verde: último dato hace < 24 horas
+        * 🟡 Amarillo: último dato hace entre 24h y 72h
+        * 🟠 Naranja: último dato hace entre 72h y 168h (1 semana)
+        * 🔴 Rojo: último dato hace > 1 semana
+      - Si N > 1, dibujar una polilínea con los últimos N puntos de cada animal (track reciente), del mismo color que el marcador
+      - Popup al hacer clic en un marcador:
+        * Nombre del animal (nick_name o local_identifier)
+        * Especie
+        * Fecha/hora del último dato
+        * "Hace X horas/días"
+        * Velocidad: X m/s
+        * Altitud: X m
+        * Coordenadas: lat, lon
+        * Enlace "Ver en Google Maps" → https://www.google.com/maps?q={lat},{lng}&z=18
+        * Enlace "Ver trayectoria completa" → navega a la página de visualización con este animal preseleccionado
+      - Zoom automático para que se vean todos los marcadores (fitBounds)
+      - Leyenda en la esquina inferior izquierda:
+        * 🟢 < 24h | 🟡 24-72h | 🟠 3-7 días | 🔴 > 7 días
+
+   c) Tabla debajo del mapa (colapsable con botón):
+      - Columnas: Animal | Especie | Última posición (fecha/hora) | Hace cuánto | Velocidad | Altitud | Coordenadas | Acciones
+      - Acciones: botón "Ver en Google Maps", botón "Centrar en mapa"
+      - Ordenada por fecha descendente (los más recientes primero)
+      - Al hacer clic en "Centrar en mapa", el mapa hace zoom al animal y abre su popup
+      - Buscador de animales en la tabla
+      - Paginación si hay muchos animales
+
+3. SIDEBAR: Añade "Últimas posiciones" con icono MapPin entre "Detector de mortalidad" y "Monitor de emisión"
+
+4. STUDY DETAIL: Añade un botón "Últimas posiciones" junto a los otros botones (Visualizar datos, Análisis geoespacial, Datos brutos, Importar CSV, Reparar vínculos) que navegue a esta página con el estudio preseleccionado.
+
+5. PERMISOS: Todos los roles pueden ver esta página (incluido observer). El observer NO puede exportar datos de esta página.
+
+UI en español. Usa los componentes Shadcn existentes y el mismo estilo que las otras páginas. No rompas funcionalidad existente.
