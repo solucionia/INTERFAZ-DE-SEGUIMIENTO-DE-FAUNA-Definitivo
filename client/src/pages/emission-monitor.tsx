@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface EmissionResult {
   animalId: string;
@@ -53,6 +54,7 @@ interface EmissionResult {
 export default function EmissionMonitor() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { canConfigureAlerts } = usePermissions();
   const [days, setDays] = useState("3");
   const [results, setResults] = useState<EmissionResult[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -139,10 +141,12 @@ export default function EmissionMonitor() {
             Detecta animales activos que han dejado de enviar datos
           </p>
         </div>
-        <Button variant="outline" onClick={() => setShowAlertDialog(true)} data-testid="button-configure-alert">
-          <Bell className="w-4 h-4 mr-2" />
-          Configurar alerta
-        </Button>
+        {canConfigureAlerts && (
+          <Button variant="outline" onClick={() => setShowAlertDialog(true)} data-testid="button-configure-alert">
+            <Bell className="w-4 h-4 mr-2" />
+            Configurar alerta
+          </Button>
+        )}
       </div>
 
       <Card>

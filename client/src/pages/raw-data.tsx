@@ -21,6 +21,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 import { AnimalSearch } from "@/components/animal-search";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -65,6 +66,7 @@ export default function RawData() {
   const [, params] = useRoute("/study/:id/data");
   const studyId = params?.id;
   const { toast } = useToast();
+  const { canExport } = usePermissions();
 
   const [selectedAnimal, setSelectedAnimal] = useState("");
   const [dateStart, setDateStart] = useState("");
@@ -232,16 +234,18 @@ export default function RawData() {
                 Acelerometro ({accRows.length})
               </TabsTrigger>
             </TabsList>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => downloadCSV(gpsRows, `${selectedAnimal}_gps.csv`)} disabled={gpsRows.length === 0} data-testid="button-export-gps-csv">
-                <FileDown className="w-4 h-4 mr-1.5" />
-                Exportar GPS CSV
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => downloadCSV(accRows, `${selectedAnimal}_acc.csv`)} disabled={accRows.length === 0} data-testid="button-export-acc-csv">
-                <FileDown className="w-4 h-4 mr-1.5" />
-                Exportar Acc CSV
-              </Button>
-            </div>
+            {canExport && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => downloadCSV(gpsRows, `${selectedAnimal}_gps.csv`)} disabled={gpsRows.length === 0} data-testid="button-export-gps-csv">
+                  <FileDown className="w-4 h-4 mr-1.5" />
+                  Exportar GPS CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => downloadCSV(accRows, `${selectedAnimal}_acc.csv`)} disabled={accRows.length === 0} data-testid="button-export-acc-csv">
+                  <FileDown className="w-4 h-4 mr-1.5" />
+                  Exportar Acc CSV
+                </Button>
+              </div>
+            )}
           </div>
 
           <TabsContent value="gps">

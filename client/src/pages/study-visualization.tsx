@@ -79,6 +79,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 import { AnimalSearch } from "@/components/animal-search";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
@@ -194,6 +195,7 @@ export default function StudyVisualization() {
   const [, params] = useRoute("/study/:id/visualize");
   const studyId = params?.id;
   const { toast } = useToast();
+  const { canExport, canDetectEvents, isObserver } = usePermissions();
 
   const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
   const [dateStart, setDateStart] = useState("");
@@ -757,7 +759,7 @@ export default function StudyVisualization() {
             {loading && !forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Cargar datos
           </Button>
-          {dataLoaded && (
+          {dataLoaded && !isObserver && (
             <Button
               variant="outline"
               onClick={() => loadData(true)}
@@ -768,7 +770,7 @@ export default function StudyVisualization() {
               Forzar recarga
             </Button>
           )}
-          {dataLoaded && (
+          {dataLoaded && canDetectEvents && (
             <Button
               variant="outline"
               onClick={() => detectMutation.mutate()}
@@ -779,7 +781,7 @@ export default function StudyVisualization() {
               Detectar eventos
             </Button>
           )}
-          {dataLoaded && (
+          {dataLoaded && canExport && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" disabled={exporting} data-testid="button-export-menu">

@@ -70,6 +70,7 @@ import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 import { AnimalSearch } from "@/components/animal-search";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const ANIMAL_COLORS = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6",
@@ -107,6 +108,7 @@ export default function GeoAnalysis() {
   const [, routeParams] = useRoute("/study/:id/analysis");
   const studyId = routeParams?.id || "";
   const { toast } = useToast();
+  const { canAnalyze, canExport } = usePermissions();
 
   const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
   const [analysisType, setAnalysisType] = useState<AnalysisType>("comprehensive");
@@ -386,7 +388,7 @@ export default function GeoAnalysis() {
           </p>
         </div>
         <div className="flex gap-2">
-          {resultData && resultData.analysisType === "comprehensive" && (
+          {canExport && resultData && resultData.analysisType === "comprehensive" && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" data-testid="button-export-dropdown">
@@ -419,7 +421,7 @@ export default function GeoAnalysis() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {resultData && resultData.analysisType !== "comprehensive" && (
+          {canExport && resultData && resultData.analysisType !== "comprehensive" && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" data-testid="button-export-csv">
@@ -440,7 +442,7 @@ export default function GeoAnalysis() {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {!resultData && selectedAnimals.length > 0 && dateStart && dateEnd && (
+          {canExport && !resultData && selectedAnimals.length > 0 && dateStart && dateEnd && (
             <Button variant="outline" onClick={exportValoresOnTheFly} disabled={exportingValores} data-testid="button-export-valores-direct">
               <Download className="w-4 h-4 mr-2" />
               {exportingValores ? "Generando..." : "Exportar VALORES"}
@@ -629,24 +631,26 @@ export default function GeoAnalysis() {
               )}
             </div>
 
-            <Button
-              className="w-full"
-              onClick={() => analysisMutation.mutate()}
-              disabled={!canExecute || analysisMutation.isPending}
-              data-testid="button-run-analysis"
-            >
-              {analysisMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Ejecutando...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-2" />
-                  Ejecutar analisis
-                </>
-              )}
-            </Button>
+            {canAnalyze && (
+              <Button
+                className="w-full"
+                onClick={() => analysisMutation.mutate()}
+                disabled={!canExecute || analysisMutation.isPending}
+                data-testid="button-run-analysis"
+              >
+                {analysisMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Ejecutando...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Ejecutar analisis
+                  </>
+                )}
+              </Button>
+            )}
           </CardContent>
         </Card>
 

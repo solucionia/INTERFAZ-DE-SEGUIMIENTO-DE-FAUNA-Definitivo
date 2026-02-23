@@ -98,3 +98,15 @@ export function requireSuperuser(req: any, res: any, next: any) {
   }
   next();
 }
+
+export function checkRole(...allowedRoles: string[]) {
+  return (req: any, res: any, next: any) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: "No tienes permisos para esta acción" });
+    }
+    next();
+  };
+}

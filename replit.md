@@ -11,7 +11,8 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 
 ## Project Structure
 - `shared/schema.ts` - Data models: users, studies, userStudies, individuals, deployments, speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, cachedGpsEvents, cachedAccEvents, cachedFetchRanges; EVENT_LABELS/EVENT_COLORS/EVENT_SEVERITY/ANALYSIS_TYPES/ANALYSIS_LABELS constants
-- `server/auth.ts` - Passport.js setup, session config, requireAuth/requireSuperuser middleware
+- `server/auth.ts` - Passport.js setup, session config, requireAuth/requireSuperuser/checkRole middleware
+- `client/src/hooks/use-permissions.ts` - usePermissions hook for role-based UI guards + ROLE_LABELS map
 - `server/storage.ts` - DatabaseStorage class implementing IStorage interface
 - `server/movebank.ts` - Movebank API integration (CSV parsing, Basic Auth)
 - `server/eventDetection.ts` - Event detection algorithms (mortality, detachment, fight, feeding, incubation) with configurable thresholds
@@ -42,7 +43,7 @@ Wildlife tracking system that connects to the Movebank API for monitoring animal
 - `client/src/pages/import-csv.tsx` - CSV import page with drag-and-drop, preview, and results summary
 
 ## Key Features
-1. Two roles: superuser (first registered user) and normal user
+1. Three roles: superuser (admin), user (investigador/researcher), observer (view-only)
 2. Study CRUD with Movebank credentials per study
 3. User-to-study assignment (superuser only)
 4. Movebank API sync for individuals and deployments

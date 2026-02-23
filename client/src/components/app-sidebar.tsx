@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { usePermissions, ROLE_LABELS } from "@/hooks/use-permissions";
 import type { Study } from "@shared/schema";
 import {
   Sidebar,
@@ -30,7 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function AppSidebar() {
   const { user, logout } = useAuth();
   const [location] = useLocation();
-  const isSuperuser = user?.role === "superuser";
+  const { isSuperuser, canImport } = usePermissions();
 
   const { data: studies, isLoading } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
@@ -119,14 +120,16 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location === "/import" || location.endsWith("/import")}>
-                  <Link href="/import" data-testid="link-import-csv">
-                    <Upload className="w-4 h-4" />
-                    <span>Importar datos</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              {canImport && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/import" || location.endsWith("/import")}>
+                    <Link href="/import" data-testid="link-import-csv">
+                      <Upload className="w-4 h-4" />
+                      <span>Importar datos</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -194,7 +197,7 @@ export function AppSidebar() {
           <DropdownMenuContent align="start" className="w-56">
             <div className="px-2 py-1.5">
               <p className="text-sm font-medium">{user?.name}</p>
-              <p className="text-xs text-muted-foreground">{user?.role === "superuser" ? "Superusuario" : "Usuario"}</p>
+              <p className="text-xs text-muted-foreground">{ROLE_LABELS[user?.role || "user"]}</p>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => logout()} data-testid="button-logout">

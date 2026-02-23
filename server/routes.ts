@@ -4,7 +4,7 @@ import passport from "passport";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { storage } from "./storage";
-import { setupAuth, requireAuth, requireSuperuser } from "./auth";
+import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
@@ -198,7 +198,8 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Este email ya esta registrado" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const assignRole = req.body.role === "superuser" ? "superuser" : "user";
+      const validRoles = ["superuser", "user", "observer"];
+      const assignRole = validRoles.includes(req.body.role) ? req.body.role : "user";
       const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null, role: assignRole });
       await storage.createActivityLog({ userId: req.user!.id, action: "create_user", resource: "user", resourceId: user.id, details: `Creo usuario ${name}` });
       const { password: _, ...safe } = user;
@@ -229,7 +230,7 @@ export async function registerRoutes(
       if (user.id === req.params.id) {
         return res.status(400).json({ message: "No puedes cambiar tu propio rol" });
       }
-      if (!["superuser", "user"].includes(req.body.role)) {
+      if (!["superuser", "user", "observer"].includes(req.body.role)) {
         return res.status(400).json({ message: "Rol inválido" });
       }
       updateData.role = req.body.role;
@@ -343,7 +344,7 @@ export async function registerRoutes(
     return res.json(result);
   });
 
-  app.get("/api/studies/:id/export-kml", requireStudyAccess, async (req, res) => {
+  app.get("/api/studies/:id/export-kml", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudy(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -379,7 +380,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/studies/:id/export-visualization", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/export-visualization", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const { z } = await import("zod");
       const bodySchema = z.object({
@@ -638,7 +639,7 @@ export async function registerRoutes(
     return res.json(deployments);
   });
 
-  app.patch("/api/individuals/:id", requireSuperuser, async (req, res) => {
+  app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
     try {
       const { nickName, sex, animalLifeStage } = req.body;
       const updated = await storage.updateIndividual(req.params.id, {
@@ -920,7 +921,7 @@ export async function registerRoutes(
   });
 
   // Detect events (trigger analysis)
-  app.post("/api/studies/:id/detect-events", movebankLimiter, requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/detect-events", checkRole("superuser", "user"), movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1113,7 +1114,7 @@ export async function registerRoutes(
     return res.json(alerts);
   });
 
-  app.post("/api/emission-alerts", requireAuth, async (req, res) => {
+  app.post("/api/emission-alerts", checkRole("superuser", "user"), async (req, res) => {
     try {
       const parsed = insertEmissionAlertSchema.safeParse({
         ...req.body,
@@ -1129,18 +1130,18 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/emission-alerts/:id", requireAuth, async (req, res) => {
+  app.patch("/api/emission-alerts/:id", checkRole("superuser", "user"), async (req, res) => {
     const alert = await storage.updateEmissionAlert(req.params.id, req.body);
     if (!alert) return res.status(404).json({ message: "Alerta no encontrada" });
     return res.json(alert);
   });
 
-  app.delete("/api/emission-alerts/:id", requireAuth, async (req, res) => {
+  app.delete("/api/emission-alerts/:id", checkRole("superuser", "user"), async (req, res) => {
     await storage.deleteEmissionAlert(req.params.id);
     return res.json({ ok: true });
   });
 
-  app.post("/api/studies/:id/sync", movebankLimiter, requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/sync", checkRole("superuser"), movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
       log(`Sync iniciado para estudio: ${req.params.id}`, "movebank");
       const study = await storage.getStudyDecrypted(req.params.id);
@@ -1285,7 +1286,7 @@ export async function registerRoutes(
   });
 
   // Immobility / Mortality Analysis
-  app.post("/api/studies/:id/immobility-analysis", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/immobility-analysis", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const { analyzeImmobility } = await import("./immobilityDetector");
       const { z } = await import("zod");
@@ -1332,7 +1333,7 @@ export async function registerRoutes(
   });
 
   // Geospatial Analysis
-  app.post("/api/studies/:id/analysis", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/analysis", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1467,7 +1468,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/studies/:id/export-valores", requireStudyAccess, async (req, res) => {
+  app.post("/api/studies/:id/export-valores", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1564,7 +1565,7 @@ export async function registerRoutes(
     return res.json(analysis);
   });
 
-  app.get("/api/analyses/:id/export-csv", requireAuth, async (req, res) => {
+  app.get("/api/analyses/:id/export-csv", checkRole("superuser", "user"), async (req, res) => {
     try {
       const analysis = await storage.getSavedAnalysis(req.params.id);
       if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
@@ -1615,7 +1616,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/analyses/:id/export-hrref", requireAuth, async (req, res) => {
+  app.get("/api/analyses/:id/export-hrref", checkRole("superuser", "user"), async (req, res) => {
     try {
       const analysis = await storage.getSavedAnalysis(req.params.id);
       if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
@@ -1646,7 +1647,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/analyses/:id/export-mpc", requireAuth, async (req, res) => {
+  app.get("/api/analyses/:id/export-mpc", checkRole("superuser", "user"), async (req, res) => {
     try {
       const analysis = await storage.getSavedAnalysis(req.params.id);
       if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
@@ -1677,7 +1678,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/analyses/:id/export-geojson", requireAuth, async (req, res) => {
+  app.get("/api/analyses/:id/export-geojson", checkRole("superuser", "user"), async (req, res) => {
     try {
       const analysis = await storage.getSavedAnalysis(req.params.id);
       if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
@@ -1699,7 +1700,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/analyses/:id", requireAuth, async (req, res) => {
+  app.delete("/api/analyses/:id", checkRole("superuser", "user"), async (req, res) => {
     const analysis = await storage.getSavedAnalysis(req.params.id);
     if (!analysis) return res.status(404).json({ message: "Analisis no encontrado" });
     const user = req.user!;
@@ -1712,7 +1713,7 @@ export async function registerRoutes(
 
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
-  app.post("/api/studies/:id/import-csv", requireStudyAccess, upload.single("file"), async (req, res) => {
+  app.post("/api/studies/:id/import-csv", checkRole("superuser", "user"), requireStudyAccess, upload.single("file"), async (req, res) => {
     try {
       const studyId = req.params.id;
       const study = await storage.getStudy(studyId);

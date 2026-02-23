@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -43,7 +44,7 @@ export default function StudyDetail() {
   const studyId = params?.id;
   const { toast } = useToast();
   const { user } = useAuth();
-  const isSuperuser = user?.role === "superuser";
+  const { isSuperuser, canSync, canImport, canEditIndividuals, canRepair } = usePermissions();
   const [syncing, setSyncing] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -347,13 +348,15 @@ export default function StudyDetail() {
               Datos brutos
             </Button>
           </Link>
-          <Link href={`/study/${studyId}/import`}>
-            <Button variant="outline" data-testid="button-import-csv">
-              <Upload className="w-4 h-4 mr-2" />
-              Importar CSV
-            </Button>
-          </Link>
-          {isSuperuser && unlinkedActiveCount > 0 && (
+          {canImport && (
+            <Link href={`/study/${studyId}/import`}>
+              <Button variant="outline" data-testid="button-import-csv">
+                <Upload className="w-4 h-4 mr-2" />
+                Importar CSV
+              </Button>
+            </Link>
+          )}
+          {canRepair && unlinkedActiveCount > 0 && (
             <Button
               variant="outline"
               onClick={handleRepair}
@@ -365,14 +368,16 @@ export default function StudyDetail() {
               {repairing ? "Reparando..." : "Reparar vinculos"}
             </Button>
           )}
-          <Button
-            onClick={handleSync}
-            disabled={syncing}
-            data-testid="button-sync-movebank"
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
-          </Button>
+          {canSync && (
+            <Button
+              onClick={handleSync}
+              disabled={syncing}
+              data-testid="button-sync-movebank"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -406,7 +411,7 @@ export default function StudyDetail() {
                       <Link2 className="w-3 h-3 mr-1" />
                       {unlinkedActiveCount} sin vincular (requieren Movebank)
                     </Badge>
-                    {isSuperuser && (
+                    {canRepair && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -489,7 +494,7 @@ export default function StudyDetail() {
                     <TableHead>Sexo</TableHead>
                     <TableHead>Etapa</TableHead>
                     <TableHead>Estado</TableHead>
-                    {isSuperuser && <TableHead className="w-10"></TableHead>}
+                    {canEditIndividuals && <TableHead className="w-10"></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -548,7 +553,7 @@ export default function StudyDetail() {
                             )}
                           </div>
                         </TableCell>
-                        {isSuperuser && (
+                        {canEditIndividuals && (
                           <TableCell>
                             <Button
                               size="icon"

@@ -1,0 +1,117 @@
+Añade un tercer rol de usuario "Observador" con permisos de solo visualización. Actualmente hay dos roles: superuser y user. Ahora serán tres: superuser, user, observer.
+
+PERMISOS POR ROL:
+
+Superusuario (superuser) — Administrador:
+- Todo sin restricciones
+
+Usuario (user) — Investigador:
+- Ver y analizar datos de sus estudios asignados
+- Ejecutar análisis geoespacial y detección de eventos
+- Exportar datos (CSV, KMZ, SHP, GeoJSON, PNG, PDF)
+- Importar CSV
+- Editar datos de individuos (apodo, sexo, etapa)
+- Ver y usar monitor de emisión y detector de mortalidad
+- Ver alertas
+- NO puede crear/editar/eliminar estudios
+- NO puede gestionar usuarios ni perfiles de especie
+- NO puede sincronizar con Movebank
+- NO puede reparar deployments
+
+Observador (observer) — Solo visualización:
+- SOLO ver estudios asignados
+- SOLO visualizar datos (gráficas, mapas, acelerómetro, track GPS)
+- SOLO ver resultados de análisis ya ejecutados
+- SOLO ver alertas y monitor de emisión (sin configurar ni ejecutar)
+- NO puede exportar ni descargar ningún archivo
+- NO puede importar CSV
+- NO puede ejecutar análisis geoespacial
+- NO puede detectar eventos
+- NO puede editar nada (ni individuos, ni estudios, ni perfiles)
+- NO puede sincronizar, reparar ni configurar alertas
+
+IMPLEMENTACIÓN:
+
+1. SCHEMA: Actualiza el campo role en la tabla users para aceptar: 'superuser' | 'user' | 'observer'. Ejecuta la migración.
+
+2. BACKEND — Middleware de autorización:
+   Crea una función middleware checkRole(...allowedRoles) que verifique el rol del usuario autenticado.
+   
+   Aplica en los endpoints:
+   - GET (lectura): todos los roles autenticados
+   - POST /api/studies (crear estudio): solo superuser
+   - PATCH /api/studies/:id (editar estudio): solo superuser
+   - DELETE /api/studies/:id (eliminar estudio): solo superuser
+   - POST /api/studies/:id/sync (sincronizar): solo superuser
+   - POST /api/studies/:id/repair-deployments-local (reparar): solo superuser
+   - POST /api/studies/:id/import-csv (importar): superuser y user
+   - POST /api/studies/:id/export-visualization (exportar): superuser y user
+   - POST /api/studies/:id/export-valores (exportar): superuser y user
+   - POST /api/studies/:id/geospatial-analysis (análisis): superuser y user
+   - POST /api/studies/:id/detect-events (detectar): superuser y user
+   - POST /api/studies/:id/immobility-analysis (mortalidad): superuser y user
+   - PATCH /api/individuals/:id (editar individuo): superuser y user
+   - CRUD /api/users (gestionar usuarios): solo superuser
+   - CRUD /api/species-profiles (perfiles especie): solo superuser
+   
+   Si un observer intenta una acción bloqueada: 403 { message: "No tienes permisos para esta acción" }
+
+3. FRONTEND — Hook de permisos:
+   Crea un hook usePermissions() basado en el rol del usuario autenticado:
+   
+   const usePermissions = () => {
+     const user = useAuth();
+     const role = user?.role;
+     return {
+       canExport: role === 'superuser' || role === 'user',
+       canImport: role === 'superuser' || role === 'user',
+       canAnalyze: role === 'superuser' || role === 'user',
+       canDetectEvents: role === 'superuser' || role === 'user',
+       canEditStudies: role === 'superuser',
+       canEditIndividuals: role === 'superuser' || role === 'user',
+       canManageUsers: role === 'superuser',
+       canManageProfiles: role === 'superuser',
+       canSync: role === 'superuser',
+       canRepair: role === 'superuser',
+       canConfigureAlerts: role === 'superuser' || role === 'user',
+       isObserver: role === 'observer',
+     };
+   };
+
+4. FRONTEND — Ocultar/mostrar elementos por rol:
+   
+   Visualización de datos:
+   - Observer: ocultar "Exportar", "Detectar eventos", "Forzar recarga"
+   
+   Análisis geoespacial:
+   - Observer: ocultar "Ejecutar análisis", "Exportar". Mostrar solo resultados previos si los hay
+   
+   Detalle del estudio:
+   - Observer: ocultar "Sincronizar con Movebank", "Reparar vínculos", "Importar CSV", iconos de edición de individuos (lápiz)
+   
+   Monitor de emisión:
+   - Observer: ocultar "Configurar alerta"
+   
+   Detector de mortalidad:
+   - Observer: ocultar "Ejecutar análisis"
+   
+   Datos brutos:
+   - Observer: ocultar botón exportar CSV
+   
+   Sidebar:
+   - Observer: ocultar "Gestionar estudios", "Usuarios", "Perfiles de especie"
+   - User: ocultar "Gestionar estudios", "Usuarios", "Perfiles de especie"
+
+5. GESTIÓN DE USUARIOS (admin):
+   - Selector de rol con tres opciones: Superusuario, Investigador, Observador
+   - Mostrar rol con badge de color:
+     * Superusuario: badge rojo
+     * Investigador: badge azul
+     * Observador: badge gris
+   - La asignación de estudios funciona igual para user y observer
+
+6. PROTECCIÓN DE RUTAS:
+   - Si observer accede a /admin/studies o /admin/users o /admin/species directamente por URL → redirigir al dashboard
+   - Si user accede a /admin/studies o /admin/users directamente → redirigir al dashboard
+
+Toda la UI en español. En la interfaz mostrar: "Superusuario", "Investigador", "Observador". Internamente mantener: 'superuser', 'user', 'observer'. No rompas funcionalidad existente.

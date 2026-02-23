@@ -48,6 +48,7 @@ import {
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { usePermissions } from "@/hooks/use-permissions";
 import "leaflet/dist/leaflet.css";
 
 interface ImmobilityAlert {
@@ -141,6 +142,7 @@ function MapFitter({ points }: { points: { lat: number; lng: number }[] }) {
 
 export default function ImmobilityMonitor() {
   const { toast } = useToast();
+  const { canAnalyze } = usePermissions();
   const [selectedStudyId, setSelectedStudyId] = useState<string>("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [showActiveAnimals, setShowActiveAnimals] = useState(false);
@@ -320,24 +322,26 @@ export default function ImmobilityMonitor() {
               />
             </div>
 
-            <Button
-              onClick={() => analysisMutation.mutate()}
-              disabled={!selectedStudyId || analysisMutation.isPending}
-              className="w-full bg-red-600 hover:bg-red-700 text-white"
-              data-testid="button-run-analysis"
-            >
-              {analysisMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Analizando...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-2" />
-                  Ejecutar análisis
-                </>
-              )}
-            </Button>
+            {canAnalyze && (
+              <Button
+                onClick={() => analysisMutation.mutate()}
+                disabled={!selectedStudyId || analysisMutation.isPending}
+                className="w-full bg-red-600 hover:bg-red-700 text-white"
+                data-testid="button-run-analysis"
+              >
+                {analysisMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analizando...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Ejecutar análisis
+                  </>
+                )}
+              </Button>
+            )}
           </CardContent>
         </Card>
 

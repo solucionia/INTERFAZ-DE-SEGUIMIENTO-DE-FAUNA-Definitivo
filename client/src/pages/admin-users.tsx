@@ -19,8 +19,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Shield, Plus, UserPlus, Radio, Loader2, MoreVertical, KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
+import { Users, Shield, Plus, UserPlus, Radio, Loader2, MoreVertical, KeyRound, ShieldCheck, ShieldOff, Eye } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { ROLE_LABELS } from "@/hooks/use-permissions";
 
 export default function AdminUsers() {
   const { toast } = useToast();
@@ -159,8 +160,9 @@ export default function AdminUsers() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user">Usuario</SelectItem>
                     <SelectItem value="superuser">Superusuario</SelectItem>
+                    <SelectItem value="user">Investigador</SelectItem>
+                    <SelectItem value="observer">Observador</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -223,12 +225,19 @@ export default function AdminUsers() {
                         <TableCell className="text-muted-foreground">{u.email}</TableCell>
                         <TableCell>
                           {u.role === "superuser" ? (
-                            <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20">
+                            <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">
                               <Shield className="w-3 h-3 mr-1" />
                               Superusuario
                             </Badge>
+                          ) : u.role === "observer" ? (
+                            <Badge variant="outline" className="bg-gray-500/10 text-gray-500 border-gray-500/20">
+                              <Eye className="w-3 h-3 mr-1" />
+                              Observador
+                            </Badge>
                           ) : (
-                            <Badge variant="outline">Usuario</Badge>
+                            <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
+                              Investigador
+                            </Badge>
                           )}
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
@@ -245,21 +254,31 @@ export default function AdminUsers() {
                               <DropdownMenuContent align="end">
                                 {!isCurrentUser && (
                                   <>
-                                    {u.role === "user" ? (
+                                    {u.role !== "superuser" && (
                                       <DropdownMenuItem
                                         onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "superuser" })}
-                                        data-testid={`button-promote-${u.id}`}
+                                        data-testid={`button-role-superuser-${u.id}`}
                                       >
                                         <ShieldCheck className="w-4 h-4 mr-2" />
-                                        Promover a superusuario
+                                        Cambiar a Superusuario
                                       </DropdownMenuItem>
-                                    ) : (
+                                    )}
+                                    {u.role !== "user" && (
                                       <DropdownMenuItem
                                         onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "user" })}
-                                        data-testid={`button-demote-${u.id}`}
+                                        data-testid={`button-role-user-${u.id}`}
                                       >
                                         <ShieldOff className="w-4 h-4 mr-2" />
-                                        Cambiar a usuario normal
+                                        Cambiar a Investigador
+                                      </DropdownMenuItem>
+                                    )}
+                                    {u.role !== "observer" && (
+                                      <DropdownMenuItem
+                                        onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "observer" })}
+                                        data-testid={`button-role-observer-${u.id}`}
+                                      >
+                                        <Eye className="w-4 h-4 mr-2" />
+                                        Cambiar a Observador
                                       </DropdownMenuItem>
                                     )}
                                     <DropdownMenuSeparator />

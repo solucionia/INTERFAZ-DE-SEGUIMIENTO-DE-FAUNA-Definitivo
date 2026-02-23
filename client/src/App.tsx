@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -24,6 +24,15 @@ import ImportCsv from "@/pages/import-csv";
 import ImmobilityMonitor from "@/pages/immobility-monitor";
 import { Loader2, Search } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
+import type { ComponentType } from "react";
+
+function RoleGuard({ component: Component, allowed }: { component: ComponentType; allowed: string[] }) {
+  const { user } = useAuth();
+  if (!user || !allowed.includes(user.role)) {
+    return <Redirect to="/" />;
+  }
+  return <Component />;
+}
 
 function AuthenticatedRouter() {
   return (
@@ -33,11 +42,11 @@ function AuthenticatedRouter() {
       <Route path="/study/:id/visualize" component={StudyVisualization} />
       <Route path="/study/:id/analysis" component={GeoAnalysis} />
       <Route path="/study/:id/data" component={RawData} />
-      <Route path="/study/:id/import" component={ImportCsv} />
-      <Route path="/import" component={ImportCsv} />
-      <Route path="/admin/studies" component={AdminStudies} />
-      <Route path="/admin/species-profiles" component={AdminSpeciesProfiles} />
-      <Route path="/admin/users" component={AdminUsers} />
+      <Route path="/study/:id/import">{() => <RoleGuard component={ImportCsv} allowed={["superuser", "user"]} />}</Route>
+      <Route path="/import">{() => <RoleGuard component={ImportCsv} allowed={["superuser", "user"]} />}</Route>
+      <Route path="/admin/studies">{() => <RoleGuard component={AdminStudies} allowed={["superuser"]} />}</Route>
+      <Route path="/admin/species-profiles">{() => <RoleGuard component={AdminSpeciesProfiles} allowed={["superuser"]} />}</Route>
+      <Route path="/admin/users">{() => <RoleGuard component={AdminUsers} allowed={["superuser"]} />}</Route>
       <Route path="/monitor" component={EmissionMonitor} />
       <Route path="/immobility" component={ImmobilityMonitor} />
       <Route path="/alerts" component={AlertHistory} />

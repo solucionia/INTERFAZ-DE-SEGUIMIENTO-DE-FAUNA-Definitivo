@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useToast } from "@/hooks/use-toast";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
@@ -72,6 +73,7 @@ export default function ImportCsv() {
   const preselectedStudyId = params?.id;
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { canImport } = usePermissions();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedStudyId, setSelectedStudyId] = useState<string>(preselectedStudyId || "");
@@ -208,6 +210,24 @@ export default function ImportCsv() {
   const breadcrumbs = preselectedStudyId && selectedStudy
     ? [{ label: selectedStudy.name, href: `/study/${preselectedStudyId}` }, { label: "Importar CSV" }]
     : [{ label: "Importar CSV" }];
+
+  if (!canImport) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto space-y-6">
+        <Breadcrumbs items={breadcrumbs} />
+        <div>
+          <h1 className="text-2xl font-bold text-foreground" data-testid="text-import-title">Importar datos CSV</h1>
+        </div>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Upload className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
+            <p className="text-lg font-medium text-muted-foreground">Acceso restringido</p>
+            <p className="text-sm text-muted-foreground mt-1">No tienes permisos para importar datos. Contacta a un administrador.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
