@@ -194,7 +194,8 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Este email ya esta registrado" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null });
+      const assignRole = req.body.role === "superuser" ? "superuser" : "user";
+      const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null, role: assignRole });
       await storage.createActivityLog({ userId: req.user!.id, action: "create_user", resource: "user", resourceId: user.id, details: `Creo usuario ${name}` });
       const { password: _, ...safe } = user;
       return res.json(safe);
@@ -208,8 +209,43 @@ export async function registerRoutes(
     if (user.role !== "superuser" && user.id !== req.params.id) {
       return res.status(403).json({ message: "Acceso denegado" });
     }
-    const { alertEmail } = req.body;
-    const updated = await storage.updateUser(req.params.id, { alertEmail });
+    const updateData: Partial<{ alertEmail: string | null; role: string; password: string; name: string }> = {};
+
+    if (req.body.alertEmail !== undefined) {
+      updateData.alertEmail = req.body.alertEmail;
+    }
+    if (req.body.name !== undefined) {
+      updateData.name = req.body.name;
+    }
+
+    if (req.body.role !== undefined) {
+      if (user.role !== "superuser") {
+        return res.status(403).json({ message: "Solo superusuarios pueden cambiar roles" });
+      }
+      if (user.id === req.params.id) {
+        return res.status(400).json({ message: "No puedes cambiar tu propio rol" });
+      }
+      if (!["superuser", "user"].includes(req.body.role)) {
+        return res.status(400).json({ message: "Rol inválido" });
+      }
+      updateData.role = req.body.role;
+    }
+
+    if (req.body.newPassword !== undefined) {
+      if (user.role !== "superuser" && user.id !== req.params.id) {
+        return res.status(403).json({ message: "Acceso denegado" });
+      }
+      if (req.body.newPassword.length < 6) {
+        return res.status(400).json({ message: "La contraseña debe tener al menos 6 caracteres" });
+      }
+      updateData.password = await bcrypt.hash(req.body.newPassword, 10);
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ message: "No hay datos para actualizar" });
+    }
+
+    const updated = await storage.updateUser(req.params.id, updateData);
     if (!updated) return res.status(404).json({ message: "Usuario no encontrado" });
     const { password: _, ...safe } = updated;
     return res.json(safe);

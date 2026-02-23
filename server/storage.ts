@@ -74,7 +74,7 @@ export interface IStorage {
   createSavedAnalysis(analysis: InsertSavedAnalysis): Promise<SavedAnalysis>;
   deleteSavedAnalysis(id: string): Promise<void>;
 
-  updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null }>): Promise<User | undefined>;
+  updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null; role: string; password: string }>): Promise<User | undefined>;
 
   updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean }>): Promise<DetectedEvent | undefined>;
   getAllDetectedEvents(filters?: {
@@ -573,7 +573,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(savedAnalyses).where(eq(savedAnalyses.id, id));
   }
 
-  async updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null }>): Promise<User | undefined> {
+  async updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null; role: string; password: string }>): Promise<User | undefined> {
     const [updated] = await db.update(users).set(data).where(eq(users.id, id)).returning();
     return updated;
   }

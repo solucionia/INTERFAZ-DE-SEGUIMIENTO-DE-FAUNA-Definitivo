@@ -11,22 +11,32 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Shield, Plus, UserPlus, Radio, X, Loader2 } from "lucide-react";
+import { Users, Shield, Plus, UserPlus, Radio, Loader2, MoreVertical, KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 export default function AdminUsers() {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newAlertEmail, setNewAlertEmail] = useState("");
+  const [newRole, setNewRole] = useState("user");
   const [assignUserId, setAssignUserId] = useState<string | null>(null);
   const [selectedStudy, setSelectedStudy] = useState("");
+  const [resetPasswordUserId, setResetPasswordUserId] = useState<string | null>(null);
+  const [resetPasswordName, setResetPasswordName] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
 
   const { data: users, isLoading } = useQuery<User[]>({ queryKey: ["/api/users"] });
   const { data: studies } = useQuery<Study[]>({ queryKey: ["/api/studies"] });
@@ -38,6 +48,7 @@ export default function AdminUsers() {
         email: newEmail,
         password: newPassword,
         alertEmail: newAlertEmail || null,
+        role: newRole,
       });
       return res.json();
     },
@@ -45,7 +56,7 @@ export default function AdminUsers() {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({ title: "Usuario creado exitosamente" });
       setShowCreate(false);
-      setNewName(""); setNewEmail(""); setNewPassword(""); setNewAlertEmail("");
+      setNewName(""); setNewEmail(""); setNewPassword(""); setNewAlertEmail(""); setNewRole("user");
     },
     onError: (e: any) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -66,9 +77,42 @@ export default function AdminUsers() {
     },
   });
 
+  const changeRoleMutation = useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const res = await apiRequest("PATCH", `/api/users/${userId}`, { role });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Rol actualizado exitosamente" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async ({ userId, newPassword }: { userId: string; newPassword: string }) => {
+      const res = await apiRequest("PATCH", `/api/users/${userId}`, { newPassword });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Contraseña restablecida exitosamente" });
+      setResetPasswordUserId(null);
+      setResetNewPassword("");
+      setResetConfirmPassword("");
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const canResetPassword = resetNewPassword.length >= 6 && resetNewPassword === resetConfirmPassword;
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
-      <Breadcrumbs items={[{ label: "Administracion", href: "/admin/studies" }, { label: "Usuarios" }]} />
+      <Breadcrumbs items={[{ label: "Administración", href: "/admin/studies" }, { label: "Usuarios" }]} />
 
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
@@ -76,10 +120,10 @@ export default function AdminUsers() {
             Usuarios
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Gestiona los usuarios del sistema y asignales estudios
+            Gestiona los usuarios del sistema, sus roles y asignaciones de estudios
           </p>
         </div>
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <Dialog open={showCreate} onOpenChange={(open) => { setShowCreate(open); if (!open) { setNewName(""); setNewEmail(""); setNewPassword(""); setNewAlertEmail(""); setNewRole("user"); } }}>
           <DialogTrigger asChild>
             <Button data-testid="button-create-user">
               <UserPlus className="w-4 h-4 mr-2" />
@@ -89,6 +133,7 @@ export default function AdminUsers() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Crear nuevo usuario</DialogTitle>
+              <DialogDescription>Completa los datos para registrar un nuevo usuario en el sistema</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div className="space-y-1">
@@ -100,12 +145,24 @@ export default function AdminUsers() {
                 <Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="correo@ejemplo.com" data-testid="input-new-user-email" />
               </div>
               <div className="space-y-1">
-                <Label>Contrasena</Label>
-                <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Minimo 6 caracteres" data-testid="input-new-user-password" />
+                <Label>Contraseña</Label>
+                <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" data-testid="input-new-user-password" />
               </div>
               <div className="space-y-1">
                 <Label>Email para alertas (opcional)</Label>
                 <Input type="email" value={newAlertEmail} onChange={(e) => setNewAlertEmail(e.target.value)} placeholder="alertas@ejemplo.com" data-testid="input-new-user-alert-email" />
+              </div>
+              <div className="space-y-1">
+                <Label>Rol</Label>
+                <Select value={newRole} onValueChange={setNewRole}>
+                  <SelectTrigger data-testid="select-new-user-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">Usuario</SelectItem>
+                    <SelectItem value="superuser">Superusuario</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <DialogFooter>
@@ -134,7 +191,7 @@ export default function AdminUsers() {
                     <TableHead>Email</TableHead>
                     <TableHead>Rol</TableHead>
                     <TableHead>Email alertas</TableHead>
-                    <TableHead>Acciones</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -145,6 +202,7 @@ export default function AdminUsers() {
                       .join("")
                       .toUpperCase()
                       .slice(0, 2);
+                    const isCurrentUser = currentUser?.id === u.id;
                     return (
                       <TableRow key={u.id} data-testid={`row-user-${u.id}`}>
                         <TableCell>
@@ -154,7 +212,12 @@ export default function AdminUsers() {
                                 {initials}
                               </AvatarFallback>
                             </Avatar>
-                            <span className="font-medium">{u.name}</span>
+                            <div>
+                              <span className="font-medium">{u.name}</span>
+                              {isCurrentUser && (
+                                <span className="ml-2 text-xs text-muted-foreground">(tú)</span>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">{u.email}</TableCell>
@@ -171,43 +234,64 @@ export default function AdminUsers() {
                         <TableCell className="text-muted-foreground text-sm">
                           {(u as any).alertEmail || "-"}
                         </TableCell>
-                        <TableCell>
-                          {u.role !== "superuser" && (
-                            <Dialog open={assignUserId === u.id} onOpenChange={(open) => { setAssignUserId(open ? u.id : null); setSelectedStudy(""); }}>
-                              <DialogTrigger asChild>
-                                <Button variant="ghost" size="sm" data-testid={`button-assign-study-${u.id}`}>
-                                  <Radio className="w-4 h-4 mr-1" />
-                                  Asignar estudio
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" data-testid={`button-user-actions-${u.id}`}>
+                                  <MoreVertical className="w-4 h-4" />
                                 </Button>
-                              </DialogTrigger>
-                              <DialogContent>
-                                <DialogHeader>
-                                  <DialogTitle>Asignar estudio a {u.name}</DialogTitle>
-                                </DialogHeader>
-                                <div className="space-y-3 py-2">
-                                  <Label>Seleccionar estudio</Label>
-                                  <Select value={selectedStudy} onValueChange={setSelectedStudy}>
-                                    <SelectTrigger data-testid="select-assign-study"><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                                    <SelectContent>
-                                      {(studies || []).map((s) => (
-                                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <DialogFooter>
-                                  <Button variant="outline" onClick={() => setAssignUserId(null)}>Cancelar</Button>
-                                  <Button
-                                    onClick={() => assignStudyMutation.mutate({ userId: u.id, studyId: selectedStudy })}
-                                    disabled={!selectedStudy || assignStudyMutation.isPending}
-                                    data-testid="button-submit-assign"
-                                  >
-                                    Asignar
-                                  </Button>
-                                </DialogFooter>
-                              </DialogContent>
-                            </Dialog>
-                          )}
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {!isCurrentUser && (
+                                  <>
+                                    {u.role === "user" ? (
+                                      <DropdownMenuItem
+                                        onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "superuser" })}
+                                        data-testid={`button-promote-${u.id}`}
+                                      >
+                                        <ShieldCheck className="w-4 h-4 mr-2" />
+                                        Promover a superusuario
+                                      </DropdownMenuItem>
+                                    ) : (
+                                      <DropdownMenuItem
+                                        onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "user" })}
+                                        data-testid={`button-demote-${u.id}`}
+                                      >
+                                        <ShieldOff className="w-4 h-4 mr-2" />
+                                        Cambiar a usuario normal
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuSeparator />
+                                  </>
+                                )}
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setResetPasswordUserId(u.id);
+                                    setResetPasswordName(u.name);
+                                    setResetNewPassword("");
+                                    setResetConfirmPassword("");
+                                  }}
+                                  data-testid={`button-reset-password-${u.id}`}
+                                >
+                                  <KeyRound className="w-4 h-4 mr-2" />
+                                  Restablecer contraseña
+                                </DropdownMenuItem>
+                                {u.role !== "superuser" && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => { setAssignUserId(u.id); setSelectedStudy(""); }}
+                                      data-testid={`button-assign-study-${u.id}`}
+                                    >
+                                      <Radio className="w-4 h-4 mr-2" />
+                                      Asignar estudio
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -223,6 +307,83 @@ export default function AdminUsers() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!resetPasswordUserId} onOpenChange={(open) => { if (!open) { setResetPasswordUserId(null); setResetNewPassword(""); setResetConfirmPassword(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Restablecer contraseña</DialogTitle>
+            <DialogDescription>
+              Establece una nueva contraseña para <strong>{resetPasswordName}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label>Nueva contraseña</Label>
+              <Input
+                type="password"
+                value={resetNewPassword}
+                onChange={(e) => setResetNewPassword(e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                data-testid="input-reset-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Confirmar contraseña</Label>
+              <Input
+                type="password"
+                value={resetConfirmPassword}
+                onChange={(e) => setResetConfirmPassword(e.target.value)}
+                placeholder="Repite la contraseña"
+                data-testid="input-reset-password-confirm"
+              />
+              {resetConfirmPassword.length > 0 && resetNewPassword !== resetConfirmPassword && (
+                <p className="text-xs text-destructive mt-1">Las contraseñas no coinciden</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetPasswordUserId(null)}>Cancelar</Button>
+            <Button
+              onClick={() => resetPasswordUserId && resetPasswordMutation.mutate({ userId: resetPasswordUserId, newPassword: resetNewPassword })}
+              disabled={!canResetPassword || resetPasswordMutation.isPending}
+              data-testid="button-submit-reset-password"
+            >
+              {resetPasswordMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <KeyRound className="w-4 h-4 mr-2" />}
+              Restablecer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!assignUserId} onOpenChange={(open) => { if (!open) { setAssignUserId(null); setSelectedStudy(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Asignar estudio</DialogTitle>
+            <DialogDescription>Selecciona el estudio a asignar</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label>Seleccionar estudio</Label>
+            <Select value={selectedStudy} onValueChange={setSelectedStudy}>
+              <SelectTrigger data-testid="select-assign-study"><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+              <SelectContent>
+                {(studies || []).map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignUserId(null)}>Cancelar</Button>
+            <Button
+              onClick={() => assignUserId && assignStudyMutation.mutate({ userId: assignUserId, studyId: selectedStudy })}
+              disabled={!selectedStudy || assignStudyMutation.isPending}
+              data-testid="button-submit-assign"
+            >
+              Asignar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
