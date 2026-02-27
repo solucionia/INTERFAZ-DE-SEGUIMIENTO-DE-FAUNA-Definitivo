@@ -59,11 +59,6 @@ import {
   ReferenceDot,
 } from "recharts";
 import {
-  Panel,
-  PanelGroup,
-  PanelResizeHandle,
-} from "react-resizable-panels";
-import {
   MapContainer,
   TileLayer,
   Polyline,
@@ -878,11 +873,11 @@ export default function StudyVisualization() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0">
           <div className="flex-1 min-w-0">
-            <PanelGroup direction="vertical" className="h-full">
-              <Panel defaultSize={45} minSize={20}>
-                <div className="h-full flex flex-col p-3">
+            <div className="flex flex-col">
+              <div>
+                <div className="flex flex-col p-3" style={{ height: "400px" }}>
                   <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Activity className="w-4 h-4" />
@@ -972,12 +967,9 @@ export default function StudyVisualization() {
                     </div>
                   )}
                 </div>
-              </Panel>
-              <PanelResizeHandle className="h-2 bg-border hover:bg-primary/30 transition-colors cursor-row-resize flex items-center justify-center">
-                <div className="w-8 h-1 rounded-full bg-muted-foreground/30" />
-              </PanelResizeHandle>
-              <Panel defaultSize={55} minSize={20}>
-                <div className="h-full p-3 flex flex-col">
+              </div>
+              <div>
+                <div className="p-3 flex flex-col" style={{ height: "500px" }}>
                   <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5 mb-2">
                     <MapPin className="w-4 h-4" />
                     Track GPS
@@ -1034,8 +1026,8 @@ export default function StudyVisualization() {
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1 text-center">Clic en el mapa para abrir en Google Maps</p>
                 </div>
-              </Panel>
-            </PanelGroup>
+              </div>
+            </div>
           </div>
 
           {detectedEvents.length > 0 && (
