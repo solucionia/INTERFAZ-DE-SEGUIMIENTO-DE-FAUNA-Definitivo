@@ -31,6 +31,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import {
   Loader2,
@@ -49,7 +51,12 @@ import {
   Info,
   FileText,
   FileJson,
+  Image,
+  FileCode,
+  Table2,
 } from "lucide-react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import { MapLayerControl, GoogleMapsClick } from "@/components/map-layers";
 import {
@@ -125,6 +132,9 @@ export default function GeoAnalysis() {
   const [showKernelPcts, setShowKernelPcts] = useState<number[]>([50, 95]);
   const [showMcpPcts, setShowMcpPcts] = useState<number[]>([95, 100]);
   const [mapLayer, setMapLayer] = useState<"kernel" | "mcp">("kernel");
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
 
   const { data: individuals, isLoading: loadingIndividuals } = useQuery<Individual[]>({
     queryKey: ["/api/studies", studyId, "individuals"],
@@ -326,6 +336,119 @@ export default function GeoAnalysis() {
     }
   };
 
+  const exportChartPng = async () => {
+    const el = chartContainerRef.current;
+    if (!el) { toast({ title: "Error", description: "No hay gráfica visible para exportar", variant: "destructive" }); return; }
+    try {
+      const canvas = await html2canvas(el, { backgroundColor: null, scale: 2 });
+      const link = document.createElement("a");
+      link.download = `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportado", description: "Gráfica exportada como PNG" });
+    } catch { toast({ title: "Error", description: "No se pudo exportar la gráfica", variant: "destructive" }); }
+  };
+
+  const exportMapPng = async () => {
+    const el = mapContainerRef.current;
+    if (!el) { toast({ title: "Error", description: "No hay mapa visible para exportar", variant: "destructive" }); return; }
+    try {
+      const canvas = await html2canvas(el, { backgroundColor: null, scale: 2, useCORS: true });
+      const link = document.createElement("a");
+      link.download = `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportado", description: "Mapa exportado como PNG" });
+    } catch { toast({ title: "Error", description: "No se pudo exportar el mapa", variant: "destructive" }); }
+  };
+
+  const exportPdf = async () => {
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+
+      pdf.setFontSize(16);
+      pdf.text("Análisis Geoespacial", margin, 15);
+      pdf.setFontSize(10);
+      pdf.text(`Tipo: ${analysisType.toUpperCase()}`, margin, 22);
+      pdf.text(`Animales: ${selectedAnimals.join(", ")}`, margin, 28);
+      pdf.text(`Periodo: ${dateStart} a ${dateEnd}`, margin, 34);
+      pdf.text(`Fecha: ${new Date().toLocaleString("es-ES")}`, margin, 40);
+
+      let yOffset = 48;
+
+      const chartEl = chartContainerRef.current;
+      if (chartEl) {
+        const chartCanvas = await html2canvas(chartEl, { backgroundColor: "#ffffff", scale: 2 });
+        const chartImg = chartCanvas.toDataURL("image/png");
+        const aspect = chartCanvas.width / chartCanvas.height;
+        const imgW = pageW - margin * 2;
+        const imgH = Math.min(imgW / aspect, pageH - yOffset - margin);
+        pdf.addImage(chartImg, "PNG", margin, yOffset, imgW, imgH);
+        yOffset += imgH + 5;
+      }
+
+      const mapEl = mapContainerRef.current;
+      if (mapEl) {
+        if (yOffset + 60 > pageH) { pdf.addPage(); yOffset = margin; }
+        const mapCanvas = await html2canvas(mapEl, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
+        const mapImg = mapCanvas.toDataURL("image/png");
+        const aspect = mapCanvas.width / mapCanvas.height;
+        const imgW = pageW - margin * 2;
+        const imgH = Math.min(imgW / aspect, pageH - yOffset - margin);
+        pdf.addImage(mapImg, "PNG", margin, yOffset, imgW, imgH);
+      }
+
+      pdf.save(`analisis_geoespacial_${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast({ title: "Exportado", description: "Informe PDF generado" });
+    } catch { toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" }); }
+  };
+
+  const exportGeoData = async (format: "csv" | "kmz" | "shp" | "geojson") => {
+    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) {
+      toast({ title: "Error", description: "Selecciona animales y rango de fechas", variant: "destructive" });
+      return;
+    }
+    setExporting(true);
+    try {
+      const tsStart = new Date(dateStart).getTime();
+      const tsEnd = new Date(dateEnd + "T23:59:59.999").getTime();
+      const res = await fetch(`/api/studies/${studyId}/export-geospatial`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          individualIds: selectedAnimals,
+          startDate: tsStart,
+          endDate: tsEnd,
+          analysisType,
+          format,
+          mcpPercent: parseInt(mcpPercent) || 95,
+          bandwidthMethod,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || "Error exportando");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ext = format === "kmz" ? "kmz" : format === "shp" ? "zip" : format;
+      a.download = `geo_${analysisType}_${new Date().toISOString().slice(0, 10)}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Exportado", description: `Datos exportados como ${format.toUpperCase()}` });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message || "No se pudo exportar", variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleQuickRange = (range: QuickRange, start: string, end: string) => {
     setDateStart(start);
     setDateEnd(end);
@@ -388,65 +511,75 @@ export default function GeoAnalysis() {
           </p>
         </div>
         <div className="flex gap-2">
-          {canExport && resultData && resultData.analysisType === "comprehensive" && (
+          {canExport && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" data-testid="button-export-dropdown">
+                <Button variant="outline" disabled={exporting} data-testid="button-export-dropdown">
                   <Download className="w-4 h-4 mr-2" />
-                  Exportar
+                  {exporting ? "Exportando..." : "Exportar"}
                   <ChevronDown className="w-3 h-3 ml-1" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={exportCsvComprehensive} data-testid="menu-export-valores">
-                  <FileText className="w-4 h-4 mr-2" />
-                  VALORES.csv
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Imágenes</DropdownMenuLabel>
+                <DropdownMenuItem onClick={exportChartPng} disabled={!chartContainerRef.current} data-testid="menu-export-chart-png">
+                  <Image className="w-4 h-4 mr-2" />
+                  Gráfica como PNG
                 </DropdownMenuItem>
-                {resultData.id && (
+                <DropdownMenuItem onClick={exportMapPng} disabled={!mapContainerRef.current} data-testid="menu-export-map-png">
+                  <Image className="w-4 h-4 mr-2" />
+                  Mapa como PNG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportPdf} data-testid="menu-export-pdf">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Informe PDF
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Exportar datos como...</DropdownMenuLabel>
+                {resultData && resultData.analysisType === "comprehensive" && (
                   <>
-                    <DropdownMenuItem onClick={() => downloadExport("hrref")} data-testid="menu-export-hrref">
-                      <FileText className="w-4 h-4 mr-2" />
-                      HRREF.csv
+                    <DropdownMenuItem onClick={exportCsvComprehensive} data-testid="menu-export-valores">
+                      <Table2 className="w-4 h-4 mr-2" />
+                      VALORES.csv
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => downloadExport("mpc")} data-testid="menu-export-mpc">
-                      <FileText className="w-4 h-4 mr-2" />
-                      MPC.csv
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => downloadExport("geojson")} data-testid="menu-export-geojson">
-                      <FileJson className="w-4 h-4 mr-2" />
-                      GeoJSON
-                    </DropdownMenuItem>
+                    {resultData.id && (
+                      <>
+                        <DropdownMenuItem onClick={() => downloadExport("hrref")} data-testid="menu-export-hrref">
+                          <FileText className="w-4 h-4 mr-2" />
+                          HRREF.csv
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => downloadExport("mpc")} data-testid="menu-export-mpc">
+                          <FileText className="w-4 h-4 mr-2" />
+                          MPC.csv
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </>
                 )}
+                {resultData && resultData.analysisType !== "comprehensive" && (
+                  <DropdownMenuItem onClick={exportCsvLegacy} data-testid="menu-export-current">
+                    <Table2 className="w-4 h-4 mr-2" />
+                    Métricas del análisis actual
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => exportGeoData("csv")} disabled={!canExecute} data-testid="menu-export-csv">
+                  <FileText className="w-4 h-4 mr-2" />
+                  CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportGeoData("kmz")} disabled={!canExecute} data-testid="menu-export-kmz">
+                  <Globe className="w-4 h-4 mr-2" />
+                  KMZ (Google Earth)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportGeoData("shp")} disabled={!canExecute} data-testid="menu-export-shp">
+                  <FileCode className="w-4 h-4 mr-2" />
+                  Shapefile (SHP)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportGeoData("geojson")} disabled={!canExecute} data-testid="menu-export-geojson">
+                  <FileJson className="w-4 h-4 mr-2" />
+                  GeoJSON
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
-          {canExport && resultData && resultData.analysisType !== "comprehensive" && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" data-testid="button-export-csv">
-                  <Download className="w-4 h-4 mr-2" />
-                  Exportar
-                  <ChevronDown className="w-3 h-3 ml-1" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={exportCsvLegacy} data-testid="menu-export-current">
-                  <FileText className="w-4 h-4 mr-2" />
-                  Métricas del análisis actual
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={exportValoresOnTheFly} disabled={exportingValores} data-testid="menu-export-valores-full">
-                  <FileText className="w-4 h-4 mr-2" />
-                  {exportingValores ? "Generando VALORES..." : "VALORES completo (todas las métricas)"}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {canExport && !resultData && selectedAnimals.length > 0 && dateStart && dateEnd && (
-            <Button variant="outline" onClick={exportValoresOnTheFly} disabled={exportingValores} data-testid="button-export-valores-direct">
-              <Download className="w-4 h-4 mr-2" />
-              {exportingValores ? "Generando..." : "Exportar VALORES"}
-            </Button>
           )}
           <Button
             variant="outline"
@@ -668,7 +801,7 @@ export default function GeoAnalysis() {
           )}
 
           {resultData && !analysisMutation.isPending && (
-            <>
+            <div ref={chartContainerRef}>
               {resultData.analysisType === "comprehensive" ? (
                 <ComprehensiveResults
                   data={resultData}
@@ -695,7 +828,7 @@ export default function GeoAnalysis() {
                         </CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="h-[400px] rounded-md overflow-hidden border">
+                        <div className="h-[400px] rounded-md overflow-hidden border" ref={mapContainerRef}>
                           <MapContainer
                             center={[0, 0]}
                             zoom={2}
@@ -749,7 +882,7 @@ export default function GeoAnalysis() {
                   <AnalysisResultTable data={resultData} />
                 </>
               )}
-            </>
+            </div>
           )}
 
           {!resultData && !analysisMutation.isPending && (
@@ -929,7 +1062,7 @@ function ComprehensiveResults({
               </div>
             )}
 
-            <div className="h-[450px] rounded-md overflow-hidden border">
+            <div className="h-[450px] rounded-md overflow-hidden border" ref={mapContainerRef}>
               <MapContainer
                 center={[0, 0]}
                 zoom={2}

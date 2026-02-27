@@ -555,6 +555,281 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/studies/:id/export-geospatial", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
+    try {
+      const { z } = await import("zod");
+      const bodySchema = z.object({
+        individualIds: z.array(z.string()).min(1),
+        startDate: z.coerce.number(),
+        endDate: z.coerce.number(),
+        analysisType: z.enum(["mcp", "kernel", "distance", "speed", "comprehensive"]),
+        format: z.enum(["csv", "kmz", "shp", "geojson"]),
+        mcpPercent: z.number().optional(),
+        bandwidthMethod: z.string().optional(),
+      });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
+      }
+      const { individualIds, startDate, endDate, analysisType, format: fmt, mcpPercent, bandwidthMethod } = parsed.data;
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+
+      const { runAnalysis } = await import("./geoAnalysis");
+      const allPoints: { lat: number; lng: number; timestamp: number; individual: string; speed: number | null; altitude: number | null }[] = [];
+      for (const animalId of individualIds) {
+        const events = await storage.getCachedGpsEvents(req.params.id, animalId, startDate, endDate);
+        for (const e of events) {
+          allPoints.push({
+            individual: e.individualLocalIdentifier,
+            timestamp: e.timestamp,
+            lat: e.latitude,
+            lng: e.longitude,
+            speed: e.groundSpeed,
+            altitude: e.heightAboveEllipsoid,
+          });
+        }
+      }
+
+      if (allPoints.length === 0) {
+        return res.status(404).json({ message: "No hay datos GPS en caché para los individuos y rango seleccionados" });
+      }
+
+      const gpsForAnalysis = allPoints.map(p => ({ individual_id: p.individual, timestamp: p.timestamp, latitude: p.lat, longitude: p.lng }));
+      const analysisResult = runAnalysis(analysisType as any, gpsForAnalysis, {
+        mcpPercent: mcpPercent || 95,
+        bandwidthMethod: (bandwidthMethod as any) || "href",
+      });
+
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const animalLabel = individualIds.length === 1 ? individualIds[0].replace(/[^a-zA-Z0-9_-]/g, "_") : `${individualIds.length}_animales`;
+      const dateStartStr = new Date(startDate).toISOString().slice(0, 10);
+      const dateEndStr = new Date(endDate).toISOString().slice(0, 10);
+
+      if (fmt === "csv") {
+        let csv = "";
+        if (analysisType === "comprehensive" && analysisResult.perIndividual) {
+          csv = "Animal,Eccentricidad,Linealidad,h_HREF,h_LSCV";
+          const kernelPcts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+          const mcpPcts = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+          for (const p of kernelPcts) csv += `,Kernel_HREF_${p}%_km2`;
+          for (const p of kernelPcts) csv += `,Kernel_LSCV_${p}%_km2`;
+          for (const p of mcpPcts) csv += `,MPC_${p}%_km2`;
+          csv += ",Distancia_total_km,Velocidad_media_ms,Puntos\n";
+          for (const ind of analysisResult.perIndividual) {
+            csv += `"${ind.individual}",${ind.eccentricity?.toFixed(4) ?? ""},${ind.linearity?.toFixed(4) ?? ""},${ind.hHref?.toFixed(2) ?? ""},${ind.hLscv?.toFixed(2) ?? ""}`;
+            for (const p of kernelPcts) csv += `,${ind.kernelHrefAreas?.[String(p)]?.toFixed(6) ?? ""}`;
+            for (const p of kernelPcts) csv += `,${ind.kernelLscvAreas?.[String(p)]?.toFixed(6) ?? ""}`;
+            for (const p of mcpPcts) csv += `,${ind.mcpAreas?.[String(p)]?.toFixed(6) ?? ""}`;
+            csv += `,${ind.totalDistance?.toFixed(3) ?? ""},${ind.meanSpeed?.toFixed(4) ?? ""},${ind.numPoints ?? ""}\n`;
+          }
+        } else if (analysisResult.areas) {
+          const keys = Object.keys(analysisResult.areas[0] || {});
+          csv = keys.join(",") + "\n";
+          for (const row of analysisResult.areas) {
+            csv += keys.map(k => {
+              const v = (row as any)[k];
+              return typeof v === "string" ? `"${v}"` : (v ?? "");
+            }).join(",") + "\n";
+          }
+        } else {
+          csv = "analysis_type,result\n";
+          csv += `"${analysisType}","No tabular data available"\n`;
+        }
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="geo_${analysisType}_${animalLabel}_${dateStr}.csv"`);
+        return res.send(csv);
+      }
+
+      const polygonFeatures: any[] = [];
+      const pointFeatures: any[] = [];
+
+      if (analysisResult.geojson?.features) {
+        for (const f of analysisResult.geojson.features) {
+          const geomType = f.geometry?.type;
+          if (geomType === "Polygon" || geomType === "MultiPolygon") {
+            polygonFeatures.push({
+              ...f,
+              properties: {
+                ...f.properties,
+                analysis_type: analysisType,
+                study_name: study.name,
+                date_start: dateStartStr,
+                date_end: dateEndStr,
+              },
+            });
+          }
+        }
+      }
+
+      if (analysisResult.perIndividual) {
+        for (const ind of analysisResult.perIndividual) {
+          if (ind.geojson?.features) {
+            for (const f of ind.geojson.features) {
+              const geomType = f.geometry?.type;
+              if (geomType === "Polygon" || geomType === "MultiPolygon") {
+                polygonFeatures.push({
+                  ...f,
+                  properties: {
+                    ...f.properties,
+                    analysis_type: analysisType,
+                    study_name: study.name,
+                    date_start: dateStartStr,
+                    date_end: dateEndStr,
+                  },
+                });
+              }
+            }
+          }
+        }
+      }
+
+      for (const p of allPoints) {
+        pointFeatures.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [p.lng, p.lat, p.altitude ?? 0] },
+          properties: {
+            individual: p.individual,
+            timestamp: p.timestamp,
+            datetime: new Date(p.timestamp).toISOString(),
+            speed: p.speed,
+            altitude: p.altitude,
+          },
+        });
+      }
+
+      if (fmt === "geojson") {
+        const geojson = { type: "FeatureCollection", features: [...polygonFeatures, ...pointFeatures] };
+        res.setHeader("Content-Type", "application/geo+json");
+        res.setHeader("Content-Disposition", `attachment; filename="geo_${analysisType}_${animalLabel}_${dateStr}.geojson"`);
+        return res.send(JSON.stringify(geojson, null, 2));
+      }
+
+      if (fmt === "kmz") {
+        const JSZip = (await import("jszip")).default;
+        const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${esc(study.name || "")} - ${analysisType.toUpperCase()}</name>\n`;
+        kml += `<Style id="point-style"><IconStyle><scale>0.5</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/ylw-circle.png</href></Icon></IconStyle></Style>\n`;
+        kml += `<Style id="polygon-style"><LineStyle><color>ff0000ff</color><width>2</width></LineStyle><PolyStyle><color>400000ff</color></PolyStyle></Style>\n`;
+        kml += `<Style id="line-style"><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>\n`;
+
+        if (polygonFeatures.length > 0) {
+          kml += `<Folder>\n<name>Polígonos ${analysisType.toUpperCase()}</name>\n`;
+          for (const f of polygonFeatures) {
+            const props = f.properties || {};
+            const name = props.id || props.individual || "Polygon";
+            const pType = props.type || analysisType;
+            const pct = props.percent || props.level || "";
+            const area = props.area_km2 !== undefined ? `${props.area_km2.toFixed(3)} km²` : "";
+            kml += `<Placemark>\n<name>${esc(`${name} - ${pType} ${pct}`)}</name>\n<styleUrl>#polygon-style</styleUrl>\n`;
+            kml += `<description>${esc(`Tipo: ${pType}\nPorcentaje: ${pct}\nÁrea: ${area}\nPeriodo: ${dateStartStr} a ${dateEndStr}`)}</description>\n`;
+            const geom = f.geometry;
+            if (geom.type === "Polygon") {
+              const coords = geom.coordinates[0].map((c: number[]) => `${c[0]},${c[1]},0`).join("\n");
+              kml += `<Polygon>\n<outerBoundaryIs>\n<LinearRing>\n<coordinates>\n${coords}\n</coordinates>\n</LinearRing>\n</outerBoundaryIs>\n</Polygon>\n`;
+            } else if (geom.type === "MultiPolygon") {
+              kml += `<MultiGeometry>\n`;
+              for (const poly of geom.coordinates) {
+                const coords = poly[0].map((c: number[]) => `${c[0]},${c[1]},0`).join("\n");
+                kml += `<Polygon>\n<outerBoundaryIs>\n<LinearRing>\n<coordinates>\n${coords}\n</coordinates>\n</LinearRing>\n</outerBoundaryIs>\n</Polygon>\n`;
+              }
+              kml += `</MultiGeometry>\n`;
+            }
+            kml += `</Placemark>\n`;
+          }
+          kml += `</Folder>\n`;
+        }
+
+        const byAnimal: Record<string, typeof allPoints> = {};
+        for (const p of allPoints) {
+          if (!byAnimal[p.individual]) byAnimal[p.individual] = [];
+          byAnimal[p.individual].push(p);
+        }
+        kml += `<Folder>\n<name>Puntos GPS</name>\n`;
+        for (const [animal, pts] of Object.entries(byAnimal)) {
+          const safeAnimal = esc(animal);
+          kml += `<Folder>\n<name>${safeAnimal}</name>\n`;
+          for (const p of pts) {
+            const dt = new Date(p.timestamp).toISOString();
+            kml += `<Placemark>\n<name>${safeAnimal}</name>\n<styleUrl>#point-style</styleUrl>\n`;
+            kml += `<TimeStamp><when>${dt}</when></TimeStamp>\n`;
+            kml += `<Point><coordinates>${p.lng},${p.lat},${p.altitude ?? 0}</coordinates></Point>\n`;
+            kml += `</Placemark>\n`;
+          }
+          if (pts.length >= 2) {
+            const coords = pts.map(p => `${p.lng},${p.lat},${p.altitude ?? 0}`).join("\n");
+            kml += `<Placemark>\n<name>Trayectoria ${safeAnimal}</name>\n<styleUrl>#line-style</styleUrl>\n`;
+            kml += `<LineString>\n<tessellate>1</tessellate>\n<coordinates>\n${coords}\n</coordinates>\n</LineString>\n`;
+            kml += `</Placemark>\n`;
+          }
+          kml += `</Folder>\n`;
+        }
+        kml += `</Folder>\n`;
+        kml += `</Document>\n</kml>`;
+
+        const zip = new JSZip();
+        zip.file("doc.kml", kml);
+        const kmzBuffer = await zip.generateAsync({ type: "nodebuffer" });
+        res.setHeader("Content-Type", "application/vnd.google-earth.kmz");
+        res.setHeader("Content-Disposition", `attachment; filename="geo_${analysisType}_${animalLabel}_${dateStr}.kmz"`);
+        return res.send(kmzBuffer);
+      }
+
+      if (fmt === "shp") {
+        const JSZip = (await import("jszip")).default;
+        const zip = new JSZip();
+        const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]`;
+
+        const polygonGeoJson = { type: "FeatureCollection", features: polygonFeatures.map(f => ({
+          ...f,
+          properties: {
+            name: f.properties?.id || f.properties?.individual || "",
+            type: f.properties?.type || analysisType,
+            percent: String(f.properties?.percent || f.properties?.level || ""),
+            area_km2: f.properties?.area_km2 ?? 0,
+            analysis: analysisType,
+            study: study.name || "",
+            start: dateStartStr,
+            end: dateEndStr,
+          },
+        })) };
+        zip.file("polygons.geojson", JSON.stringify(polygonGeoJson, null, 2));
+        zip.file("polygons.prj", prjContent);
+
+        const pointGeoJson = { type: "FeatureCollection", features: pointFeatures.map(f => ({
+          ...f,
+          properties: {
+            name: f.properties?.individual || "",
+            timestamp: f.properties?.timestamp || 0,
+            datetime: f.properties?.datetime || "",
+            latitude: f.geometry?.coordinates?.[1] || 0,
+            longitude: f.geometry?.coordinates?.[0] || 0,
+            speed: f.properties?.speed ?? 0,
+            altitude: f.properties?.altitude ?? 0,
+          },
+        })) };
+        zip.file("gps_points.geojson", JSON.stringify(pointGeoJson, null, 2));
+        zip.file("gps_points.prj", prjContent);
+
+        let csvContent = "individual,timestamp,datetime,latitude,longitude,speed,altitude\n";
+        for (const p of allPoints) {
+          csvContent += `"${p.individual}",${p.timestamp},"${new Date(p.timestamp).toISOString()}",${p.lat},${p.lng},${p.speed ?? 0},${p.altitude ?? 0}\n`;
+        }
+        zip.file("gps_points.csv", csvContent);
+
+        const shpBuf = await zip.generateAsync({ type: "nodebuffer" });
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="geo_${analysisType}_${animalLabel}_${dateStr}_shp.zip"`);
+        return res.send(shpBuf);
+      }
+
+      return res.status(400).json({ message: "Formato no soportado" });
+    } catch (e: any) {
+      log(`Export geospatial error: ${e.message}`, "routes");
+      return res.status(500).json({ message: `Error al exportar: ${e.message}` });
+    }
+  });
+
   app.get("/api/studies", requireAuth, async (req, res) => {
     const user = req.user!;
     let studyList: Study[];
