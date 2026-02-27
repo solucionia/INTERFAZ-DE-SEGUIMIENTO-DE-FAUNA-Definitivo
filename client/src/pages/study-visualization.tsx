@@ -936,9 +936,9 @@ export default function StudyVisualization() {
                             contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "12px", color: "hsl(var(--foreground))" }}
                           />
                           <Legend wrapperStyle={{ fontSize: "11px" }} />
-                          <Line type="monotone" dataKey="x" stroke="#ef4444" name="Eje X" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                          <Line type="monotone" dataKey="y" stroke="#22c55e" name="Eje Y" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                          <Line type="monotone" dataKey="z" stroke="#3b82f6" name="Eje Z" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                          <Line type="monotone" dataKey="x" stroke="#3B82F6" name="Eje X" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                          <Line type="monotone" dataKey="y" stroke="#EF4444" name="Eje Y" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                          <Line type="monotone" dataKey="z" stroke="#EAB308" name="Eje Z" dot={false} strokeWidth={1.5} isAnimationActive={false} />
 
                           {chartEventBands.map((ev) => (
                             <ReferenceArea

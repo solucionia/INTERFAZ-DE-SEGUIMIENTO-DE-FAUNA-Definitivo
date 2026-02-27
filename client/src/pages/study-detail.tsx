@@ -49,7 +49,7 @@ export default function StudyDetail() {
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingIndividual, setEditingIndividual] = useState<Individual | null>(null);
-  const [editForm, setEditForm] = useState({ nickName: "", sex: "", animalLifeStage: "" });
+  const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "" });
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
   const [saving, setSaving] = useState(false);
@@ -230,6 +230,7 @@ export default function StudyDetail() {
     setEditingIndividual(ind);
     setEditForm({
       nickName: ind.nickName || "",
+      taxon: ind.taxonCanonicalName || "",
       sex: ind.sex || "",
       animalLifeStage: ind.animalLifeStage || "",
     });
@@ -243,6 +244,7 @@ export default function StudyDetail() {
     try {
       await apiRequest("PATCH", `/api/individuals/${editingIndividual.id}`, {
         nickName: editForm.nickName || null,
+        taxonCanonicalName: editForm.taxon || null,
         sex: editForm.sex || null,
         animalLifeStage: editForm.animalLifeStage || null,
       });
@@ -611,6 +613,16 @@ export default function StudyDetail() {
                 onChange={(e) => setEditForm({ ...editForm, nickName: e.target.value })}
                 placeholder="Nombre descriptivo"
                 data-testid="input-edit-nickname"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-taxon">Especie</Label>
+              <Input
+                id="edit-taxon"
+                value={editForm.taxon}
+                onChange={(e) => setEditForm({ ...editForm, taxon: e.target.value })}
+                placeholder="Nombre científico (ej: Aquila chrysaetos)"
+                data-testid="input-edit-taxon"
               />
             </div>
             <div className="space-y-2">

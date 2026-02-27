@@ -715,9 +715,10 @@ export async function registerRoutes(
 
   app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
     try {
-      const { nickName, sex, animalLifeStage } = req.body;
+      const { nickName, taxonCanonicalName, sex, animalLifeStage } = req.body;
       const updated = await storage.updateIndividual(req.params.id, {
         ...(nickName !== undefined && { nickName }),
+        ...(taxonCanonicalName !== undefined && { taxonCanonicalName }),
         ...(sex !== undefined && { sex }),
         ...(animalLifeStage !== undefined && { animalLifeStage }),
       });

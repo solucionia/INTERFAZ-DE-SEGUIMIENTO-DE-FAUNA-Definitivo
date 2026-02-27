@@ -38,7 +38,7 @@ export interface IStorage {
   getIndividualById(id: string): Promise<Individual | undefined>;
   getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
-  updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined>;
+  updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
   createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
@@ -319,7 +319,7 @@ export class DatabaseStorage implements IStorage {
     return ind;
   }
 
-  async updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined> {
+  async updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined> {
     const [updated] = await db.update(individuals).set(data).where(eq(individuals.id, id)).returning();
     return updated;
   }
