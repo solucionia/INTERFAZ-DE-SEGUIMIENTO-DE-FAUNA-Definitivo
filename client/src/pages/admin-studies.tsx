@@ -63,6 +63,11 @@ const createStudyFormSchema = z.object({
   movebankPassword: z.string().optional(),
   alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
   speciesProfileId: z.string().or(z.literal("")).optional(),
+  ornitelaEnabled: z.boolean(),
+  ornitelaPanelUrl: z.string().optional(),
+  ornitelaUsername: z.string().optional(),
+  ornitelaPassword: z.string().optional(),
+  ornitelaSyncIntervalHours: z.coerce.number().optional(),
   active: z.boolean(),
 });
 
@@ -73,6 +78,11 @@ const editStudyFormSchema = z.object({
   movebankPassword: z.string().optional(),
   alertEmail: z.string().email("Email inválido").or(z.literal("")).optional(),
   speciesProfileId: z.string().or(z.literal("")).optional(),
+  ornitelaEnabled: z.boolean(),
+  ornitelaPanelUrl: z.string().optional(),
+  ornitelaUsername: z.string().optional(),
+  ornitelaPassword: z.string().optional(),
+  ornitelaSyncIntervalHours: z.coerce.number().optional(),
   active: z.boolean(),
 });
 
@@ -111,6 +121,11 @@ export default function AdminStudies() {
       movebankPassword: "",
       alertEmail: "",
       speciesProfileId: "",
+      ornitelaEnabled: false,
+      ornitelaPanelUrl: "https://cpanel.glosendas.net",
+      ornitelaUsername: "",
+      ornitelaPassword: "",
+      ornitelaSyncIntervalHours: 6,
       active: true,
     },
   });
@@ -124,6 +139,11 @@ export default function AdminStudies() {
       movebankPassword: "",
       alertEmail: "",
       speciesProfileId: "",
+      ornitelaEnabled: false,
+      ornitelaPanelUrl: "https://cpanel.glosendas.net",
+      ornitelaUsername: "",
+      ornitelaPassword: "",
+      ornitelaSyncIntervalHours: 6,
       active: true,
     });
     setShowForm(true);
@@ -138,6 +158,11 @@ export default function AdminStudies() {
       movebankPassword: "",
       alertEmail: study.alertEmail || "",
       speciesProfileId: study.speciesProfileId || "",
+      ornitelaEnabled: study.ornitelaEnabled ?? false,
+      ornitelaPanelUrl: study.ornitelaPanelUrl || "https://cpanel.glosendas.net",
+      ornitelaUsername: "",
+      ornitelaPassword: "",
+      ornitelaSyncIntervalHours: study.ornitelaSyncIntervalHours ?? 6,
       active: study.active,
     });
     setShowForm(true);
@@ -400,6 +425,96 @@ export default function AdminStudies() {
                   </FormItem>
                 )}
               />
+              <div className="border-t pt-4 mt-4">
+                <p className="text-sm font-medium mb-3">Configuración Ornitela</p>
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="ornitelaEnabled"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center justify-between">
+                        <FormLabel>Sincronización con Ornitela</FormLabel>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-ornitela-enabled" />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="ornitelaPanelUrl"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>URL del panel</FormLabel>
+                        <FormControl>
+                          <Input placeholder="https://cpanel.glosendas.net" data-testid="input-ornitela-panel-url" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="ornitelaUsername"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username Ornitela</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario"}
+                            data-testid="input-ornitela-username"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="ornitelaPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password Ornitela</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
+                            data-testid="input-ornitela-password"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="ornitelaSyncIntervalHours"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Intervalo de sincronización</FormLabel>
+                        <FormControl>
+                          <Select value={String(field.value || 6)} onValueChange={(v) => field.onChange(Number(v))}>
+                            <SelectTrigger data-testid="select-ornitela-sync-interval">
+                              <SelectValue placeholder="Seleccionar intervalo" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="1">Cada 1 hora</SelectItem>
+                              <SelectItem value="3">Cada 3 horas</SelectItem>
+                              <SelectItem value="6">Cada 6 horas</SelectItem>
+                              <SelectItem value="12">Cada 12 horas</SelectItem>
+                              <SelectItem value="24">Cada 24 horas</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
               <FormField
                 control={form.control}
                 name="active"

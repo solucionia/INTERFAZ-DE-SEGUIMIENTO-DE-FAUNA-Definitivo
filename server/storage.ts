@@ -155,6 +155,8 @@ export class DatabaseStorage implements IStorage {
       ...study,
       movebankUsername: study.movebankUsername ? encrypt(study.movebankUsername) : null,
       movebankPassword: study.movebankPassword ? encrypt(study.movebankPassword) : null,
+      ornitelaUsername: study.ornitelaUsername ? encrypt(study.ornitelaUsername) : null,
+      ornitelaPassword: study.ornitelaPassword ? encrypt(study.ornitelaPassword) : null,
     };
     const [created] = await db.insert(studies).values(encrypted).returning();
     return created;
@@ -168,6 +170,12 @@ export class DatabaseStorage implements IStorage {
     if (toUpdate.movebankPassword) {
       toUpdate.movebankPassword = encrypt(toUpdate.movebankPassword);
     }
+    if (toUpdate.ornitelaUsername) {
+      toUpdate.ornitelaUsername = encrypt(toUpdate.ornitelaUsername);
+    }
+    if (toUpdate.ornitelaPassword) {
+      toUpdate.ornitelaPassword = encrypt(toUpdate.ornitelaPassword);
+    }
     const [updated] = await db.update(studies).set(toUpdate).where(eq(studies.id, id)).returning();
     return updated;
   }
@@ -179,6 +187,8 @@ export class DatabaseStorage implements IStorage {
       ...study,
       movebankUsername: study.movebankUsername ? decrypt(study.movebankUsername) : null,
       movebankPassword: study.movebankPassword ? decrypt(study.movebankPassword) : null,
+      ornitelaUsername: study.ornitelaUsername ? decrypt(study.ornitelaUsername) : null,
+      ornitelaPassword: study.ornitelaPassword ? decrypt(study.ornitelaPassword) : null,
     };
   }
 

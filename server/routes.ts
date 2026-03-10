@@ -11,9 +11,11 @@ import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEm
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
-import { decrypt } from "./encryption";
+import { decrypt, encrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
+import { parseOrnitelaCsv } from "./ornitelaCsvParser";
+import { ornitelaSync, type OrnitelaDevice } from "./ornitelaSync";
 
 function fmtDate(isoStr: string): string {
   if (!isoStr) return "";
@@ -92,6 +94,8 @@ function maskStudyCredentials(study: Study): Study {
     ...study,
     movebankUsername: study.movebankUsername ? "••••••••" : null,
     movebankPassword: study.movebankPassword ? "••••••••" : null,
+    ornitelaUsername: study.ornitelaUsername ? "••••••••" : null,
+    ornitelaPassword: study.ornitelaPassword ? "••••••••" : null,
   };
 }
 
@@ -871,6 +875,12 @@ export async function registerRoutes(
     }
     if (!updateData.movebankPassword || updateData.movebankPassword === "••••••••") {
       delete updateData.movebankPassword;
+    }
+    if (!updateData.ornitelaUsername || updateData.ornitelaUsername === "••••••••") {
+      delete updateData.ornitelaUsername;
+    }
+    if (!updateData.ornitelaPassword || updateData.ornitelaPassword === "••••••••") {
+      delete updateData.ornitelaPassword;
     }
     const study = await storage.updateStudy(req.params.id, updateData);
     if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1682,6 +1692,156 @@ export async function registerRoutes(
     }
   });
 
+  // Ornitela Sync
+  const ornitelaSyncTimestamps = new Map<string, number>();
+
+  app.get("/api/studies/:id/ornitela-devices", requireSuperuser, async (req, res) => {
+    try {
+      const study = await storage.getStudyDecrypted(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      if (!study.ornitelaUsername || !study.ornitelaPassword) {
+        return res.status(400).json({ message: "Credenciales de Ornitela no configuradas para este estudio" });
+      }
+      const panelUrl = study.ornitelaPanelUrl || "https://cpanel.glosendas.net";
+      const session = await ornitelaSync.login(panelUrl, study.ornitelaUsername, study.ornitelaPassword);
+      const devices = await ornitelaSync.getDeviceList(panelUrl, session);
+      return res.json({ devices, panelUrl });
+    } catch (e: any) {
+      const statusCode = e.statusCode || 500;
+      return res.status(statusCode).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/studies/:id/ornitela-status", requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      return res.json({
+        ornitelaEnabled: study.ornitelaEnabled,
+        ornitelaLastSync: study.ornitelaLastSync,
+        ornitelaSyncIntervalHours: study.ornitelaSyncIntervalHours,
+        ornitelaPanelUrl: study.ornitelaPanelUrl,
+        hasCredentials: !!(study.ornitelaUsername && study.ornitelaPassword),
+      });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/studies/:id/ornitela-config", requireSuperuser, async (req, res) => {
+    try {
+      const { enabled, username, password, syncIntervalHours, panelUrl } = req.body;
+      const updateData: Record<string, any> = {};
+      if (enabled !== undefined) updateData.ornitelaEnabled = !!enabled;
+      if (username && username !== "••••••••") updateData.ornitelaUsername = username;
+      if (password && password !== "••••••••") updateData.ornitelaPassword = password;
+      if (syncIntervalHours !== undefined) {
+        const interval = Math.max(1, Math.min(24, Math.floor(Number(syncIntervalHours) || 6)));
+        updateData.ornitelaSyncIntervalHours = interval;
+      }
+      if (panelUrl) {
+        try {
+          const parsed = new URL(panelUrl);
+          if (parsed.protocol !== "https:") {
+            return res.status(400).json({ message: "La URL del panel debe usar HTTPS" });
+          }
+          updateData.ornitelaPanelUrl = panelUrl;
+        } catch {
+          return res.status(400).json({ message: "URL del panel inválida" });
+        }
+      }
+      const study = await storage.updateStudy(req.params.id, updateData);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      return res.json(maskStudyCredentials(study));
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/studies/:id/ornitela-sync", requireSuperuser, async (req, res) => {
+    try {
+      const studyId = req.params.id;
+      const lastSync = ornitelaSyncTimestamps.get(studyId) || 0;
+      const thirtyMinMs = 30 * 60 * 1000;
+      if (Date.now() - lastSync < thirtyMinMs) {
+        const minutesLeft = Math.ceil((thirtyMinMs - (Date.now() - lastSync)) / 60000);
+        return res.status(429).json({ message: `Sincronización limitada. Espera ${minutesLeft} minutos.` });
+      }
+
+      const study = await storage.getStudyDecrypted(studyId);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      if (!study.ornitelaUsername || !study.ornitelaPassword) {
+        return res.status(400).json({ message: "Credenciales de Ornitela no configuradas" });
+      }
+
+      const panelUrl = study.ornitelaPanelUrl || "https://cpanel.glosendas.net";
+      const hoursBack = Number(req.body.hoursBack) || 168;
+
+      const session = await ornitelaSync.login(panelUrl, study.ornitelaUsername, study.ornitelaPassword);
+      const devices = await ornitelaSync.getDeviceList(panelUrl, session);
+
+      if (devices.length === 0) {
+        await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
+        return res.json({ message: "No se encontraron dispositivos en el panel de Ornitela", devices: 0, totalGps: 0, totalAcc: 0 });
+      }
+
+      const now = new Date();
+      const fromDate = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+      const fmtDt = (d: Date) => {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(d.getUTCDate()).padStart(2, "0");
+        const h = String(d.getUTCHours()).padStart(2, "0");
+        const min = String(d.getUTCMinutes()).padStart(2, "0");
+        return `${y}-${m}-${day} ${h}:${min}`;
+      };
+
+      const csvResults = await ornitelaSync.downloadAllDevicesCSV(panelUrl, session, devices, fmtDt(fromDate), fmtDt(now));
+
+      let totalGps = 0, totalAcc = 0, totalGpsDup = 0, totalAccDup = 0, totalErrors = 0;
+      const deviceResults: any[] = [];
+
+      for (const csvResult of csvResults) {
+        if (csvResult.error || !csvResult.csv || csvResult.csv.trim().length < 10) {
+          deviceResults.push({ imei: csvResult.imei, name: csvResult.name, error: csvResult.error || "CSV vacío", gps: 0, acc: 0 });
+          continue;
+        }
+        try {
+          const importResult = await parseOrnitelaCsv(csvResult.csv, studyId, storage);
+          totalGps += importResult.gpsImported;
+          totalAcc += importResult.accImported;
+          totalGpsDup += importResult.gpsDuplicates;
+          totalAccDup += importResult.accDuplicates;
+          totalErrors += importResult.errors;
+          deviceResults.push({
+            imei: csvResult.imei, name: csvResult.name,
+            gps: importResult.gpsImported, acc: importResult.accImported,
+            gpsDup: importResult.gpsDuplicates, accDup: importResult.accDuplicates,
+            errors: importResult.errors, subformat: importResult.ornitela_subformat,
+          });
+        } catch (parseErr: any) {
+          deviceResults.push({ imei: csvResult.imei, name: csvResult.name, error: parseErr.message, gps: 0, acc: 0 });
+        }
+      }
+
+      await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
+
+      ornitelaSyncTimestamps.set(studyId, Date.now());
+
+      log(`Ornitela sync completado: ${devices.length} dispositivos, ${totalGps} GPS, ${totalAcc} ACC`, "ornitela");
+
+      return res.json({
+        devices: devices.length,
+        totalGps, totalAcc, totalGpsDup, totalAccDup, totalErrors,
+        deviceResults,
+        syncedAt: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      const statusCode = e.statusCode || 500;
+      return res.status(statusCode).json({ message: e.message });
+    }
+  });
+
   // Geospatial Analysis
   app.post("/api/studies/:id/analysis", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
@@ -2221,197 +2381,27 @@ export async function registerRoutes(
       }
 
       if (format === "ornitella") {
-        const v1DeviceId = "device_id";
-        const v1Datetime = "utc_datetime";
-        const v1Lat = "latitude";
-        const v1Lon = "longitude";
-        const v1Alt = "altitude_m";
-        const v1Speed = "speed_km_h";
-        const v1Dir = "direction_deg";
-        const v1AccX = "acc_x";
-        const v1AccY = "acc_y";
-        const v1AccZ = "acc_z";
-
-        const deviceIdCol = findCol(v1DeviceId, "deviceid", "dev_id", "tagid", "tag_id");
-        const utcDatetimeCol = findCol(v1Datetime, "datetime_utc", "datetime", "date_time");
-        const utcDateCol = findCol("utc_date", "date");
-        const utcTimeCol = findCol("utc_time", "time");
-        const useSeparateDatetime = utcDatetimeCol === -1 && utcDateCol >= 0 && utcTimeCol >= 0;
-        const latCol = findCol(v1Lat, "lat", "location_lat");
-        const lonCol = findCol(v1Lon, "lon", "lng", "location_lon", "location_long");
-        const altCol = findCol(v1Alt, "altitude", "alt", "height_m", "height");
-        const speedKmhCol = findCol(v1Speed, "speed", "speed_kmh", "velocity_km_h");
-        const dirCol = findCol(v1Dir, "direction", "heading", "heading_deg", "course");
-        const accXCol = findCol(v1AccX, "acceleration_x", "accel_x", "x_acceleration");
-        const accYCol = findCol(v1AccY, "acceleration_y", "accel_y", "y_acceleration");
-        const accZCol = findCol(v1AccZ, "acceleration_z", "accel_z", "z_acceleration");
-
-        if (deviceIdCol === -1) return res.status(400).json({ message: "Formato Ornitela: columna obligatoria 'device_id' (o equivalente) no encontrada" });
-        if (utcDatetimeCol === -1 && !useSeparateDatetime) return res.status(400).json({ message: "Formato Ornitela: columna obligatoria 'UTC_datetime' (o equivalente como utc_date+utc_time) no encontrada" });
-
-        const v1Names = new Set([v1DeviceId, v1Datetime, v1Lat, v1Lon, v1Alt, v1Speed, v1Dir, v1AccX, v1AccY, v1AccZ]);
-        const allResolvedCols = [deviceIdCol, utcDatetimeCol, utcDateCol, utcTimeCol, latCol, lonCol, altCol, speedKmhCol, dirCol, accXCol, accYCol, accZCol];
-        const matchedHeaders = allResolvedCols.filter(c => c >= 0).map(c => headersLower[c]);
-        const isV2 = matchedHeaders.some(h => !v1Names.has(h));
-
-        const hasLatLon = latCol >= 0 && lonCol >= 0;
-        const hasAccCols = accXCol >= 0 && accYCol >= 0 && accZCol >= 0;
-
-        let subType: string;
-        if (hasLatLon && hasAccCols) subType = "gps_sensors";
-        else if (hasLatLon) subType = "gps";
-        else if (hasAccCols) subType = "sensors";
-        else return res.status(400).json({ message: "Formato Ornitela: no se encontraron columnas de GPS (Latitude/Longitude) ni de acelerómetro (acc_x/acc_y/acc_z)" });
-
-        const detectedSubFormat = `ornitela_${subType}${isV2 ? "_v2" : ""}`;
-
-        let gpsImported = 0, gpsDuplicates = 0, accImported = 0, accDuplicates = 0, errors = 0;
-        let gpsRows = 0, sensorsRows = 0;
-        const details: string[] = [];
-        const individualsSet = new Set<string>();
-        const batchSize = 1000;
-        let gpsBatch: Omit<CachedGpsEvent, "id">[] = [];
-        let accBatch: Omit<CachedAccEvent, "id">[] = [];
-
-        for (let i = 1; i < lines.length; i++) {
-          try {
-            const vals = parseCsvLine(lines[i], separator);
-            const deviceId = vals[deviceIdCol]?.trim();
-
-            let utcDatetime: string;
-            if (useSeparateDatetime) {
-              const datePart = vals[utcDateCol]?.trim();
-              const timePart = vals[utcTimeCol]?.trim();
-              if (!datePart || !timePart) {
-                errors++;
-                if (errors <= 10) details.push(`Fila ${i + 1}: utc_date o utc_time vacío`);
-                continue;
-              }
-              utcDatetime = `${datePart} ${timePart}`;
-            } else {
-              utcDatetime = vals[utcDatetimeCol]?.trim() || "";
-            }
-
-            if (!deviceId || !utcDatetime) {
-              errors++;
-              if (errors <= 10) details.push(`Fila ${i + 1}: device_id o datetime vacío`);
-              continue;
-            }
-
-            const ts = new Date(utcDatetime.replace(" ", "T") + "Z").getTime();
-            if (isNaN(ts)) {
-              errors++;
-              if (errors <= 10) details.push(`Fila ${i + 1}: fecha/hora inválida "${utcDatetime}"`);
-              continue;
-            }
-
-            const individual = String(deviceId);
-
-            let rowHasGps = false;
-            let rowHasAcc = false;
-
-            if (hasLatLon) {
-              const lat = parseFloat(vals[latCol]);
-              const lon = parseFloat(vals[lonCol]);
-              if (!isNaN(lat) && !isNaN(lon) && !(lat === 0 && lon === 0)) {
-                rowHasGps = true;
-                gpsRows++;
-                const speedKmh = speedKmhCol >= 0 ? safeFloat(vals[speedKmhCol]) : null;
-                const speedMs = speedKmh !== null ? speedKmh / 3.6 : null;
-                gpsBatch.push({
-                  studyId,
-                  individualLocalIdentifier: individual,
-                  timestamp: ts,
-                  latitude: lat,
-                  longitude: lon,
-                  groundSpeed: speedMs,
-                  heading: dirCol >= 0 ? safeFloat(vals[dirCol]) : null,
-                  heightAboveEllipsoid: altCol >= 0 ? safeFloat(vals[altCol]) : null,
-                });
-              }
-            }
-
-            if (hasAccCols) {
-              const ax = parseFloat(vals[accXCol]);
-              const ay = parseFloat(vals[accYCol]);
-              const az = parseFloat(vals[accZCol]);
-              if (!isNaN(ax) && !isNaN(ay) && !isNaN(az)) {
-                rowHasAcc = true;
-                sensorsRows++;
-                accBatch.push({
-                  studyId,
-                  individualLocalIdentifier: individual,
-                  timestamp: ts,
-                  xAcceleration: ax,
-                  yAcceleration: ay,
-                  zAcceleration: az,
-                  rawData: null,
-                });
-              }
-            }
-
-            if (!rowHasGps && !rowHasAcc) {
-              errors++;
-              if (errors <= 10) details.push(`Fila ${i + 1}: sin datos GPS ni acelerómetro válidos — omitida`);
-              continue;
-            }
-
-            individualsSet.add(individual);
-
-            if (gpsBatch.length >= batchSize) {
-              const r = await storage.insertCachedGpsEventsCounted(gpsBatch);
-              gpsImported += r.inserted;
-              gpsDuplicates += r.duplicates;
-              gpsBatch = [];
-            }
-            if (accBatch.length >= batchSize) {
-              const r = await storage.insertCachedAccEventsCounted(accBatch);
-              accImported += r.inserted;
-              accDuplicates += r.duplicates;
-              accBatch = [];
-            }
-          } catch (e: any) {
-            errors++;
-            if (errors <= 10) details.push(`Fila ${i + 1}: ${e.message}`);
-          }
+        try {
+          const result = await parseOrnitelaCsv(content, studyId, storage);
+          return res.json({
+            imported: result.gpsImported,
+            accImported: result.accImported,
+            duplicates: result.gpsDuplicates,
+            accDuplicates: result.accDuplicates,
+            errors: result.errors,
+            details: result.details,
+            dataType: result.dataType,
+            individuals: result.individuals,
+            individuals_created: result.individuals_created,
+            format: "ornitella",
+            ornitela_subformat: result.ornitela_subformat,
+            gpsRows: result.gpsRows,
+            sensorsRows: result.sensorsRows,
+            isV2: result.isV2,
+          });
+        } catch (e: any) {
+          return res.status(400).json({ message: e.message });
         }
-
-        if (gpsBatch.length > 0) {
-          const r = await storage.insertCachedGpsEventsCounted(gpsBatch);
-          gpsImported += r.inserted;
-          gpsDuplicates += r.duplicates;
-        }
-        if (accBatch.length > 0) {
-          const r = await storage.insertCachedAccEventsCounted(accBatch);
-          accImported += r.inserted;
-          accDuplicates += r.duplicates;
-        }
-
-        const metadataEntries = Array.from(individualsSet).map((name) => ({ name }));
-        await storage.createIndividualsWithMetadata(studyId, metadataEntries);
-
-        let reportedDataType: string;
-        if (gpsImported > 0 && accImported > 0) reportedDataType = "gps+acc";
-        else if (gpsImported > 0) reportedDataType = "gps";
-        else if (accImported > 0) reportedDataType = "acc";
-        else reportedDataType = "gps+acc";
-
-        return res.json({
-          imported: gpsImported,
-          accImported,
-          duplicates: gpsDuplicates,
-          accDuplicates,
-          errors,
-          details,
-          dataType: reportedDataType,
-          individuals: individualsSet.size,
-          individuals_created: metadataEntries.length,
-          format: "ornitella",
-          ornitela_subformat: detectedSubFormat,
-          gpsRows,
-          sensorsRows,
-          isV2,
-        });
       }
 
       const tsCol = findCol("timestamp");

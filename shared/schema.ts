@@ -35,6 +35,12 @@ export const studies = pgTable("studies", {
   alertEmail: text("alert_email"),
   speciesProfileId: varchar("species_profile_id"),
   active: boolean("active").notNull().default(true),
+  ornitelaEnabled: boolean("ornitela_enabled").notNull().default(false),
+  ornitelaUsername: text("ornitela_username"),
+  ornitelaPassword: text("ornitela_password"),
+  ornitelaLastSync: timestamp("ornitela_last_sync"),
+  ornitelaSyncIntervalHours: integer("ornitela_sync_interval_hours").notNull().default(6),
+  ornitelaPanelUrl: text("ornitela_panel_url").notNull().default("https://cpanel.glosendas.net"),
 });
 
 export const insertStudySchema = createInsertSchema(studies).omit({ id: true });

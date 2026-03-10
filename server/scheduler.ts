@@ -6,6 +6,8 @@ import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } fr
 import { DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds } from "@shared/schema";
 import { decrypt } from "./encryption";
 import { log } from "./index";
+import { ornitelaSync } from "./ornitelaSync";
+import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 
 const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
 
@@ -331,6 +333,119 @@ async function runImmobilityCheck() {
   }
 }
 
+async function runOrnitelaSync() {
+  const startTime = Date.now();
+  log("Cron: Iniciando sincronización Ornitela...", "cron");
+
+  try {
+    const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
+    const ornitelaStudies = studiesWithAnimals.filter(
+      ({ study }) => study.ornitelaEnabled === true
+    );
+
+    if (ornitelaStudies.length === 0) {
+      log("Cron: No hay estudios con Ornitela habilitado", "cron");
+      return;
+    }
+
+    let totalDevices = 0;
+    let totalGps = 0;
+    let totalAcc = 0;
+    let studiesSynced = 0;
+
+    for (const { study } of ornitelaStudies) {
+      try {
+        const syncIntervalHours = study.ornitelaSyncIntervalHours || 6;
+        if (study.ornitelaLastSync) {
+          const lastSyncTime = new Date(study.ornitelaLastSync).getTime();
+          const hoursSinceLastSync = (Date.now() - lastSyncTime) / (1000 * 60 * 60);
+          if (hoursSinceLastSync < syncIntervalHours) {
+            log(`Cron: Ornitela estudio "${study.name}" sincronizado hace ${hoursSinceLastSync.toFixed(1)}h, intervalo ${syncIntervalHours}h — omitiendo`, "cron");
+            continue;
+          }
+        }
+
+        const decryptedStudy = await storage.getStudyDecrypted(study.id);
+        if (!decryptedStudy || !decryptedStudy.ornitelaPanelUrl || !decryptedStudy.ornitelaUsername || !decryptedStudy.ornitelaPassword) {
+          log(`Cron: Ornitela estudio "${study.name}" no tiene credenciales completas, omitiendo`, "cron");
+          continue;
+        }
+
+        const panelUrl = decryptedStudy.ornitelaPanelUrl;
+        const username = decryptedStudy.ornitelaUsername;
+        const password = decryptedStudy.ornitelaPassword;
+
+        const session = await ornitelaSync.login(panelUrl, username, password);
+        const devices = await ornitelaSync.getDeviceList(panelUrl, session);
+
+        if (devices.length === 0) {
+          log(`Cron: Ornitela estudio "${study.name}" — no se encontraron dispositivos`, "cron");
+          continue;
+        }
+
+        const hoursBack = Math.max(syncIntervalHours * 2, 6);
+        const now = new Date();
+        const fromDate = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+
+        const formatDate = (d: Date): string => {
+          const yyyy = d.getUTCFullYear();
+          const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+          const dd = String(d.getUTCDate()).padStart(2, "0");
+          const hh = String(d.getUTCHours()).padStart(2, "0");
+          const min = String(d.getUTCMinutes()).padStart(2, "0");
+          return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+        };
+
+        const fromStr = formatDate(fromDate);
+        const toStr = formatDate(now);
+
+        log(`Cron: Ornitela estudio "${study.name}" — descargando ${devices.length} dispositivos, rango ${fromStr} - ${toStr}`, "cron");
+
+        const csvResults = await ornitelaSync.downloadAllDevicesCSV(panelUrl, session, devices, fromStr, toStr);
+
+        let studyGps = 0;
+        let studyAcc = 0;
+
+        for (const result of csvResults) {
+          if (result.error || !result.csv || result.csv.trim().length === 0) {
+            if (result.error) {
+              log(`Cron: Ornitela dispositivo ${result.name} (${result.imei}) error: ${result.error}`, "cron");
+            }
+            continue;
+          }
+
+          try {
+            const parseResult = await parseOrnitelaCsv(result.csv, study.id, storage);
+            studyGps += parseResult.gpsImported;
+            studyAcc += parseResult.accImported;
+          } catch (parseErr: any) {
+            log(`Cron: Ornitela error parseando CSV de ${result.name} (${result.imei}): ${parseErr.message}`, "cron");
+          }
+        }
+
+        await storage.updateStudy(study.id, { ornitelaLastSync: new Date() } as any);
+
+        totalDevices += devices.length;
+        totalGps += studyGps;
+        totalAcc += studyAcc;
+        studiesSynced++;
+
+        log(`Cron: Ornitela estudio "${study.name}" completado — ${devices.length} dispositivos, ${studyGps} GPS, ${studyAcc} ACC`, "cron");
+      } catch (studyErr: any) {
+        log(`Cron: Error en Ornitela para estudio "${study.name}": ${studyErr.message}`, "cron");
+      }
+    }
+
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("ornitela_sync", "success", `${studiesSynced} estudios, ${totalDevices} dispositivos, ${totalGps} GPS, ${totalAcc} ACC (${totalDuration}s)`);
+    log(`Cron: Sincronización Ornitela completada — ${studiesSynced} estudios, ${totalDevices} dispositivos, ${totalGps} GPS, ${totalAcc} ACC (${totalDuration}s)`, "cron");
+  } catch (e: any) {
+    const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+    await storage.createCronLog("ornitela_sync", "error", `${e.message} (duración: ${totalDuration}s)`);
+    log(`Cron: Error en sincronización Ornitela: ${e.message} (${totalDuration}s)`, "cron");
+  }
+}
+
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
 
@@ -339,6 +454,7 @@ export function startScheduler() {
     await runEventDetection();
     await runEmissionCheck();
     await runImmobilityCheck();
+    await runOrnitelaSync();
   });
 
   log("Cron: Scheduler iniciado correctamente", "cron");

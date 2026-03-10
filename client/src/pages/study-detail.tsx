@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -54,6 +54,11 @@ export default function StudyDetail() {
   const [deployOffDate, setDeployOffDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [ornitelaSyncing, setOrnitelaSyncing] = useState(false);
+  const [ornitelaDevices, setOrnitelaDevices] = useState<any[]>([]);
+  const [ornitelaDevicesLoading, setOrnitelaDevicesLoading] = useState(false);
+  const [ornitelaSyncResult, setOrnitelaSyncResult] = useState<any>(null);
+  const [ornitelaPanelOpen, setOrnitelaPanelOpen] = useState(false);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -223,6 +228,65 @@ export default function StudyDetail() {
     }
   };
 
+  const handleOrnitelaSync = async () => {
+    setOrnitelaSyncing(true);
+    setOrnitelaSyncResult(null);
+    try {
+      const res = await apiRequest("POST", `/api/studies/${studyId}/ornitela-sync`, { hoursBack: 168 });
+      const data = await res.json();
+      setOrnitelaSyncResult(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+      toast({
+        title: "Sincronización Ornitela completada",
+        description: `Dispositivos: ${data.devices || 0}, GPS: ${data.totalGps || 0}, Acelerómetro: ${data.totalAcc || 0}`,
+      });
+    } catch (e: any) {
+      let errorMsg = "Error desconocido al sincronizar con Ornitela";
+      if (e.message) {
+        const colonIdx = e.message.indexOf(": ");
+        const body = colonIdx >= 0 ? e.message.substring(colonIdx + 2) : e.message;
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed.message) errorMsg = parsed.message;
+          else errorMsg = body;
+        } catch {
+          errorMsg = body;
+        }
+      }
+      toast({ title: "Error Ornitela", description: errorMsg, variant: "destructive" });
+    } finally {
+      setOrnitelaSyncing(false);
+    }
+  };
+
+  const handleFetchOrnitelaDevices = async () => {
+    setOrnitelaDevicesLoading(true);
+    setOrnitelaDevices([]);
+    try {
+      const res = await apiRequest("GET", `/api/studies/${studyId}/ornitela-devices`);
+      const data = await res.json();
+      setOrnitelaDevices(data.devices || []);
+      toast({ title: "Conexión exitosa", description: `Se encontraron ${(data.devices || []).length} dispositivos` });
+    } catch (e: any) {
+      let errorMsg = "Error al conectar con Ornitela";
+      if (e.message) {
+        const colonIdx = e.message.indexOf(": ");
+        const body = colonIdx >= 0 ? e.message.substring(colonIdx + 2) : e.message;
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed.message) errorMsg = parsed.message;
+          else errorMsg = body;
+        } catch {
+          errorMsg = body;
+        }
+      }
+      toast({ title: "Error de conexión", description: errorMsg, variant: "destructive" });
+    } finally {
+      setOrnitelaDevicesLoading(false);
+    }
+  };
+
   const openEditDialog = (ind: Individual) => {
     const hasActive = activeDeploymentIndividualIds.has(String(ind.movebankId));
     const indDeployments = deployments?.filter(d => String(d.individualId) === String(ind.movebankId)) || [];
@@ -384,6 +448,17 @@ export default function StudyDetail() {
             >
               <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
               {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
+            </Button>
+          )}
+          {isSuperuser && study.ornitelaEnabled && (
+            <Button
+              onClick={handleOrnitelaSync}
+              disabled={ornitelaSyncing}
+              className="bg-orange-600 text-white border-orange-600"
+              data-testid="button-sync-ornitela"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${ornitelaSyncing ? "animate-spin" : ""}`} />
+              {ornitelaSyncing ? "Sincronizando..." : "Sincronizar Ornitela"}
             </Button>
           )}
         </div>
@@ -596,6 +671,123 @@ export default function StudyDetail() {
           )}
         </CardContent>
       </Card>
+
+      {isSuperuser && study.ornitelaEnabled && (
+        <Card data-testid="card-ornitela-panel">
+          <CardContent className="p-0">
+            <button
+              onClick={() => setOrnitelaPanelOpen(!ornitelaPanelOpen)}
+              className="flex items-center justify-between gap-3 p-4 w-full text-left"
+              data-testid="button-toggle-ornitela-panel"
+            >
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Panel Ornitela</h3>
+                {study.ornitelaLastSync && (
+                  <span className="text-xs text-muted-foreground">
+                    Última sincronización: {new Date(study.ornitelaLastSync).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </div>
+              {ornitelaPanelOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </button>
+            {ornitelaPanelOpen && (
+              <div className="px-4 pb-4 space-y-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    onClick={handleFetchOrnitelaDevices}
+                    disabled={ornitelaDevicesLoading}
+                    data-testid="button-ornitela-test-connection"
+                  >
+                    {ornitelaDevicesLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RadioTower className="w-4 h-4 mr-2" />}
+                    {ornitelaDevicesLoading ? "Conectando..." : "Probar conexión"}
+                  </Button>
+                  <Button
+                    onClick={handleOrnitelaSync}
+                    disabled={ornitelaSyncing}
+                    className="bg-orange-600 text-white border-orange-600"
+                    data-testid="button-ornitela-sync-now"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${ornitelaSyncing ? "animate-spin" : ""}`} />
+                    {ornitelaSyncing ? "Sincronizando..." : "Sincronizar ahora"}
+                  </Button>
+                </div>
+
+                {ornitelaDevices.length > 0 && (
+                  <div className="overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Nombre</TableHead>
+                          <TableHead>IMEI</TableHead>
+                          <TableHead>Estado</TableHead>
+                          <TableHead>Último GPRS</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {ornitelaDevices.map((device: any, idx: number) => (
+                          <TableRow key={device.imei || idx} data-testid={`row-ornitela-device-${idx}`}>
+                            <TableCell className="font-medium">{device.name || "—"}</TableCell>
+                            <TableCell className="text-muted-foreground">{device.imei || "—"}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={device.status === "active" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : ""}>
+                                {device.status || "—"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">{device.lastGPRS || device.lastGprs || "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {ornitelaSyncResult && (
+                  <div className="space-y-2" data-testid="ornitela-sync-results">
+                    <h4 className="text-sm font-medium">Resultados de sincronización</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="text-center p-2 rounded-md bg-muted/50">
+                        <p className="text-lg font-bold" data-testid="text-ornitela-devices">{ornitelaSyncResult.devices || 0}</p>
+                        <p className="text-xs text-muted-foreground">Dispositivos</p>
+                      </div>
+                      <div className="text-center p-2 rounded-md bg-muted/50">
+                        <p className="text-lg font-bold" data-testid="text-ornitela-gps">{ornitelaSyncResult.totalGps || 0}</p>
+                        <p className="text-xs text-muted-foreground">Registros GPS</p>
+                      </div>
+                      <div className="text-center p-2 rounded-md bg-muted/50">
+                        <p className="text-lg font-bold" data-testid="text-ornitela-acc">{ornitelaSyncResult.totalAcc || 0}</p>
+                        <p className="text-xs text-muted-foreground">Registros Acelerómetro</p>
+                      </div>
+                    </div>
+                    {(ornitelaSyncResult.deviceResults || ornitelaSyncResult.results) && Array.isArray(ornitelaSyncResult.deviceResults || ornitelaSyncResult.results) && (
+                      <div className="overflow-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Dispositivo</TableHead>
+                              <TableHead>GPS</TableHead>
+                              <TableHead>Acelerómetro</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {(ornitelaSyncResult.deviceResults || ornitelaSyncResult.results).map((r: any, idx: number) => (
+                              <TableRow key={idx} data-testid={`row-ornitela-result-${idx}`}>
+                                <TableCell className="font-medium">{r.device || r.name || `Dispositivo ${idx + 1}`}</TableCell>
+                                <TableCell>{r.gpsCount ?? r.gps ?? 0}</TableCell>
+                                <TableCell>{r.accCount ?? r.acc ?? 0}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog open={!!editingIndividual} onOpenChange={(open) => !open && setEditingIndividual(null)}>
         <DialogContent>
