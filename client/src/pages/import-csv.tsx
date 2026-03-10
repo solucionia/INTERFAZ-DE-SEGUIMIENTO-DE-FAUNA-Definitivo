@@ -39,6 +39,10 @@ type ImportResult = {
   format?: string;
   accImported?: number;
   accDuplicates?: number;
+  ornitela_subformat?: string;
+  gpsRows?: number;
+  sensorsRows?: number;
+  isV2?: boolean;
 };
 
 type ParsedPreview = {
@@ -51,13 +55,35 @@ type ParsedPreview = {
 
 function detectFormat(headers: string[]): "movebank" | "baselunar" | "ornitella" | "unknown" {
   const lower = headers.map((h) => h.toLowerCase());
-  const hasOrnitella = lower.includes("device_id") && lower.includes("utc_datetime");
+  const ornitelaDeviceNames = ["device_id", "deviceid", "dev_id", "tagid", "tag_id"];
+  const ornitelaDtNames = ["utc_datetime", "datetime_utc", "utc_date", "utc_time", "datetime", "date_time"];
+  const hasOrnitella = ornitelaDeviceNames.some(n => lower.includes(n)) && ornitelaDtNames.some(n => lower.includes(n));
   if (hasOrnitella) return "ornitella";
   const hasBaseLunar = lower.includes("nombre") && lower.includes("fecha") && lower.includes("hora") && lower.includes("x") && lower.includes("y");
   if (hasBaseLunar) return "baselunar";
   const hasMovebank = lower.includes("timestamp") && (lower.includes("individual-local-identifier") || lower.includes("individual_local_identifier"));
   if (hasMovebank) return "movebank";
   return "unknown";
+}
+
+function detectOrnitelaSubtype(headers: string[]): string {
+  const lower = headers.map((h) => h.toLowerCase());
+  const latNames = ["latitude", "lat", "location_lat"];
+  const lonNames = ["longitude", "lon", "lng", "location_lon", "location_long"];
+  const accXNames = ["acc_x", "acceleration_x", "accel_x", "x_acceleration"];
+  const accYNames = ["acc_y", "acceleration_y", "accel_y", "y_acceleration"];
+  const accZNames = ["acc_z", "acceleration_z", "accel_z", "z_acceleration"];
+  const hasGps = latNames.some(n => lower.includes(n)) && lonNames.some(n => lower.includes(n));
+  const hasAcc = accXNames.some(n => lower.includes(n)) && accYNames.some(n => lower.includes(n)) && accZNames.some(n => lower.includes(n));
+  const v1Names = new Set(["device_id", "utc_datetime", "latitude", "longitude", "altitude_m", "speed_km_h", "direction_deg", "acc_x", "acc_y", "acc_z"]);
+  const v2AltNames = ["deviceid","dev_id","tagid","tag_id","datetime_utc","utc_date","utc_time","datetime","date_time","acceleration_x","accel_x","x_acceleration","acceleration_y","accel_y","y_acceleration","acceleration_z","accel_z","z_acceleration","altitude","alt","height_m","height","speed","speed_kmh","velocity_km_h","direction","heading","heading_deg","course","lat","lon","lng","location_lat","location_lon","location_long"];
+  const isV2 = lower.some(h => v2AltNames.includes(h) && !v1Names.has(h));
+  let sub = "";
+  if (hasGps && hasAcc) sub = "GPS+SENSORS";
+  else if (hasGps) sub = "GPS";
+  else if (hasAcc) sub = "SENSORS";
+  else sub = "desconocido";
+  return sub + (isV2 ? " V2" : "");
 }
 
 const FORMAT_LABELS: Record<string, string> = {
@@ -362,7 +388,7 @@ export default function ImportCsv() {
                 Formato detectado: <span className="font-medium text-foreground">{FORMAT_LABELS[preview.detectedFormat]}</span>
                 {preview.detectedFormat === "baselunar" && " (separador punto y coma, columnas nombre/fecha/hora/x/y)"}
                 {preview.detectedFormat === "movebank" && " (separador coma, columnas timestamp/individual-local-identifier)"}
-                {preview.detectedFormat === "ornitella" && " (columnas device_id/UTC_datetime — GPS + acelerómetro)"}
+                {preview.detectedFormat === "ornitella" && ` (Ornitela ${detectOrnitelaSubtype(preview.headers)})`}
               </p>
             </div>
           )}
@@ -390,14 +416,27 @@ export default function ImportCsv() {
               </div>
             )}
 
-            {effectiveFormat === "ornitella" && (
+            {effectiveFormat === "ornitella" && preview && (
               <div className="text-xs text-muted-foreground space-y-0.5 p-2 rounded-md bg-muted/30 border">
-                <p className="font-medium text-foreground mb-1">Mapeo Ornitella (GPS + acelerómetro):</p>
+                <p className="font-medium text-foreground mb-1">Formato Ornitela detectado: {detectOrnitelaSubtype(preview.headers)}</p>
                 <p>device_id → identificador del individuo (se crea automáticamente)</p>
-                <p>UTC_datetime → timestamp (UTC) | Latitude/Longitude → coordenadas</p>
-                <p>speed_km_h → velocidad (convertida a m/s) | direction_deg → heading</p>
-                <p>Altitude_m → altitud | acc_x, acc_y, acc_z → acelerómetro</p>
-                <p className="text-primary/80 font-medium mt-1">Cada fila genera 1 registro GPS + 1 registro de acelerómetro</p>
+                <p>UTC_datetime → timestamp (UTC)</p>
+                {(() => {
+                  const lower = preview.headers.map(h => h.toLowerCase());
+                  const hasGps = ["latitude","lat","location_lat"].some(n => lower.includes(n)) && ["longitude","lon","lng","location_lon","location_long"].some(n => lower.includes(n));
+                  const hasAcc = ["acc_x","acceleration_x","accel_x","x_acceleration"].some(n => lower.includes(n)) && ["acc_y","acceleration_y","accel_y","y_acceleration"].some(n => lower.includes(n)) && ["acc_z","acceleration_z","accel_z","z_acceleration"].some(n => lower.includes(n));
+                  return (
+                    <>
+                      {hasGps && <p>Latitude/Longitude → coordenadas GPS | speed → m/s | heading | altitude</p>}
+                      {hasAcc && <p>acc_x, acc_y, acc_z → acelerómetro (3 ejes)</p>}
+                      <p className="text-primary/80 font-medium mt-1">
+                        {hasGps && hasAcc && "Cada fila GPS genera 1 registro GPS + 1 registro de acelerómetro"}
+                        {hasGps && !hasAcc && "Cada fila genera 1 registro GPS"}
+                        {!hasGps && hasAcc && "Cada fila genera 1 registro de acelerómetro"}
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -491,21 +530,36 @@ export default function ImportCsv() {
               </div>
             </div>
 
-            {result.format === "ornitella" && result.accImported !== undefined && (
-              <div className="grid grid-cols-2 sm:grid-cols-2 gap-3">
-                <div className="p-3 rounded-md bg-muted/50 border text-center">
-                  <p className="text-2xl font-bold text-foreground" data-testid="text-acc-imported-count">
-                    {result.accImported.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Acelerómetro importados</p>
-                </div>
-                <div className="p-3 rounded-md bg-muted/50 border text-center">
-                  <p className="text-2xl font-bold text-foreground" data-testid="text-acc-duplicate-count">
-                    {(result.accDuplicates ?? 0).toLocaleString()}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Acelerómetro duplicados</p>
-                </div>
-              </div>
+            {result.format === "ornitella" && (
+              <>
+                {result.ornitela_subformat && (
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border">
+                    <Info className="w-4 h-4 text-primary shrink-0" />
+                    <p className="text-xs text-muted-foreground" data-testid="text-ornitela-subformat">
+                      Sub-formato detectado: <span className="font-medium text-foreground">{result.ornitela_subformat}</span>
+                      {result.gpsRows !== undefined && result.sensorsRows !== undefined && (
+                        <span> — {result.gpsRows.toLocaleString()} filas GPS, {result.sensorsRows.toLocaleString()} filas sensores</span>
+                      )}
+                    </p>
+                  </div>
+                )}
+                {result.accImported !== undefined && (result.accImported > 0 || (result.accDuplicates ?? 0) > 0) && (
+                  <div className="grid grid-cols-2 sm:grid-cols-2 gap-3">
+                    <div className="p-3 rounded-md bg-muted/50 border text-center">
+                      <p className="text-2xl font-bold text-foreground" data-testid="text-acc-imported-count">
+                        {result.accImported.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Acelerómetro importados</p>
+                    </div>
+                    <div className="p-3 rounded-md bg-muted/50 border text-center">
+                      <p className="text-2xl font-bold text-foreground" data-testid="text-acc-duplicate-count">
+                        {(result.accDuplicates ?? 0).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Acelerómetro duplicados</p>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             {result.individuals_created && result.individuals_created > 0 && (
