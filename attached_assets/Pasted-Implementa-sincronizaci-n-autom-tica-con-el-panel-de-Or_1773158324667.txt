@@ -1,0 +1,127 @@
+Implementa sincronización automática con el panel de Ornitela (cpanel.glosendas.net) para descargar CSVs e importarlos automáticamente.
+
+CONTEXTO: El panel de Ornitela es una web donde se descargan CSVs con datos GPS y acelerómetro de los transmisores. Ya tenemos un parser de Ornitela que importa estos CSVs. Ahora necesitamos automatizar la descarga.
+
+CÓMO FUNCIONA EL PANEL DE ORNITELA:
+
+1. LOGIN:
+   POST https://cpanel.glosendas.net/post.php
+   Content-Type: application/x-www-form-urlencoded
+   Body: username=XXX&password=XXX&login=Login&resx=800&resy=1716&resax=2008&resay=4308&reso=-90
+   Respuesta: 302 redirect + cookie "glo_sessid"
+
+2. LISTA DE DISPOSITIVOS:
+   Después del login, la página principal muestra una tabla con los dispositivos.
+   GET https://cpanel.glosendas.net/ (con la cookie glo_sessid)
+   Parsear el HTML para obtener la lista de dispositivos: Name, S/N (serial number), Status, Last GPRS data
+
+3. DESCARGA CSV:
+   POST https://cpanel.glosendas.net/post.php
+   Content-Type: application/x-www-form-urlencoded
+   Cookie: glo_sessid=XXX
+   Body: 
+   - dnlselpm=25p (selección de página/dispositivos)
+   - dnlfromdt=2026-03-03 00:00 (fecha inicio UTC)
+   - dnltodt=2026-03-10 15:49 (fecha fin UTC)
+   - dnlselkk=1 (formato: 1=CSV)
+   - dnlselcc=0 (compresión: 0=sin comprimir)
+   - dl{IMEI}cc= (identificador del dispositivo, el IMEI seguido de "cc")
+   Respuesta: el archivo CSV directamente
+
+IMPLEMENTACIÓN:
+
+A) NUEVO ARCHIVO: server/ornitelaSync.ts
+
+Clase OrnitelaSync con métodos:
+
+1. login(username, password): 
+   - POST al endpoint de login
+   - Extraer y guardar la cookie glo_sessid
+   - Devolver true/false
+
+2. getDeviceList():
+   - GET a la página principal con la cookie
+   - Parsear el HTML para extraer la tabla de dispositivos
+   - Devolver array de { name, serialNumber, status, lastGPRSData, imei }
+   - Usa cheerio o similar para parsear HTML (npm install cheerio)
+
+3. downloadCSV(imei, fromDate, toDate):
+   - POST al endpoint de descarga con los parámetros correctos
+   - El campo del dispositivo es: dl{IMEI}cc (ejemplo: dl865374032702048cc)
+   - fromDate y toDate en formato "YYYY-MM-DD HH:mm"
+   - Devolver el contenido CSV como string
+
+4. syncDevice(studyId, imei, fromDate, toDate):
+   - Llama a downloadCSV()
+   - Parsea el CSV usando el parser de Ornitela existente
+   - Importa los datos GPS y acelerómetro en cached_gps_events y cached_accelerometer_events
+   - Devuelve { gpsImported, accImported, duplicatesSkipped }
+
+5. syncAllDevices(studyId, username, password, hoursBack):
+   - Login
+   - Obtener lista de dispositivos
+   - Para cada dispositivo activo:
+     * Buscar la última fecha de datos importados en la caché
+     * Descargar desde esa fecha hasta ahora
+     * Importar los datos nuevos
+   - Delay de 2 segundos entre cada dispositivo para no saturar el panel
+   - Devolver resumen total
+
+B) TABLA DE CONFIGURACIÓN: Añade campos a la tabla studies (o crea una tabla ornitela_config):
+
+- ornitela_enabled: boolean (default false)
+- ornitela_username: string (encriptado como las credenciales de Movebank)
+- ornitela_password: string (encriptado)
+- ornitela_last_sync: timestamp
+- ornitela_sync_interval_hours: number (default 6)
+- ornitela_panel_url: string (default "https://cpanel.glosendas.net")
+
+C) ENDPOINTS:
+
+1. POST /api/studies/:id/ornitela-sync
+   - Requiere superuser
+   - Body: { hoursBack?: number } (default 168 = última semana)
+   - Ejecuta syncAllDevices()
+   - Devuelve el resumen
+
+2. GET /api/studies/:id/ornitela-status
+   - Devuelve: última sincronización, dispositivos encontrados, datos importados
+
+3. POST /api/studies/:id/ornitela-config
+   - Requiere superuser
+   - Body: { enabled, username, password, syncIntervalHours, panelUrl }
+   - Guarda la configuración (credenciales encriptadas)
+
+4. GET /api/studies/:id/ornitela-devices
+   - Hace login y devuelve la lista de dispositivos del panel
+   - Para que el admin pueda ver qué dispositivos hay disponibles
+
+D) CRON JOB: Cada X horas (configurable), para cada estudio con ornitela_enabled=true:
+   - Login en el panel
+   - Sincronizar dispositivos nuevos
+   - Si hay errores, guardarlos en log
+   - Si hay datos nuevos de mortalidad/inmovilidad → enviar email
+
+E) PÁGINA DE CONFIGURACIÓN EN EL FRONTEND:
+
+En la página de detalle del estudio, añade una sección "Ornitela" (o un nuevo tab) accesible solo para superusuario:
+
+1. Toggle "Sincronización con Ornitela" (activar/desactivar)
+2. Campos: URL del panel, usuario, contraseña (con botón mostrar/ocultar)
+3. Intervalo de sincronización (slider: 1h, 3h, 6h, 12h, 24h)
+4. Botón "Probar conexión" → hace login y muestra si funciona
+5. Botón "Sincronizar ahora" → ejecuta sincronización manual
+6. Tabla de dispositivos encontrados en Ornitela con: nombre, serial, estado, último dato, checkbox para incluir/excluir de la sincronización
+7. Historial de sincronizaciones: fecha, dispositivos sincronizados, registros importados, errores
+
+F) BOTÓN EN STUDY DETAIL:
+
+Junto al botón "Sincronizar con Movebank", añade un botón "Sincronizar con Ornitela" (solo visible si ornitela_enabled=true para el estudio). Color naranja para diferenciarlo del verde de Movebank.
+
+G) SEGURIDAD:
+- Las credenciales de Ornitela se encriptan con AES-256-GCM igual que las de Movebank
+- Solo el superusuario puede configurar y ejecutar la sincronización
+- Rate limiting: máximo 1 sincronización cada 30 minutos por estudio
+- Timeout de 60 segundos por descarga de CSV
+
+Toda la UI en español. No rompas funcionalidad existente. Instala cheerio para parsear HTML: npm install cheerio @types/cheerio
