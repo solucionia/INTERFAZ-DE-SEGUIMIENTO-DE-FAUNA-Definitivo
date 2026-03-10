@@ -65,6 +65,11 @@ export default function StudyDetail() {
     enabled: !!studyId,
   });
 
+  const { data: mbStatus } = useQuery<{ blocked: boolean; blockedUntil: string | null; dailyCount: number; dailyLimit: number; reason: string }>({
+    queryKey: ["/api/movebank/status"],
+    refetchInterval: 60000,
+  });
+
   const { data: individuals, isLoading: individualsLoading } = useQuery<Individual[]>({
     queryKey: ["/api/studies", studyId, "individuals"],
     enabled: !!studyId,
@@ -201,8 +206,8 @@ export default function StudyDetail() {
       const res = await apiRequest("POST", `/api/studies/${studyId}/sync`);
       let data: { individuals?: number; deployments?: number } = {};
       try { data = await res.json(); } catch {}
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "deployments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
       toast({
         title: "Sincronización completada",
         description: data.individuals != null
@@ -222,7 +227,12 @@ export default function StudyDetail() {
           errorMsg = body;
         }
       }
-      toast({ title: "Error al sincronizar", description: errorMsg, variant: "destructive" });
+      if (e.message?.includes("429") || errorMsg.includes("límite") || errorMsg.includes("bloqueado") || errorMsg.includes("Movebank rate")) {
+        toast({ title: "Movebank limitado", description: errorMsg, variant: "destructive" });
+        queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
+      } else {
+        toast({ title: "Error al sincronizar", description: errorMsg, variant: "destructive" });
+      }
     } finally {
       setSyncing(false);
     }
@@ -443,11 +453,12 @@ export default function StudyDetail() {
           {canSync && (
             <Button
               onClick={handleSync}
-              disabled={syncing}
+              disabled={syncing || mbStatus?.blocked}
+              title={mbStatus?.blocked && mbStatus.blockedUntil ? `Disponible a las ${new Date(mbStatus.blockedUntil).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}` : undefined}
               data-testid="button-sync-movebank"
             >
               <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Sincronizando..." : "Sincronizar con Movebank"}
+              {syncing ? "Sincronizando..." : mbStatus?.blocked ? "Movebank limitado" : "Sincronizar con Movebank"}
             </Button>
           )}
           {isSuperuser && study.ornitelaEnabled && (
@@ -462,6 +473,11 @@ export default function StudyDetail() {
             </Button>
           )}
         </div>
+        {study.lastMovebankSync && (
+          <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-last-movebank-sync">
+            Última sincronización Movebank: {new Date(study.lastMovebankSync).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

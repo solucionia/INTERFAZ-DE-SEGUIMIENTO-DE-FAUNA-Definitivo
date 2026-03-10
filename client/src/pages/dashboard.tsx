@@ -16,6 +16,14 @@ interface DashboardSummary {
   alertCountsByType: Record<string, number>;
 }
 
+interface MovebankStatus {
+  blocked: boolean;
+  blockedUntil: string | null;
+  dailyCount: number;
+  dailyLimit: number;
+  reason: string;
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const { data: studies, isLoading } = useQuery<Study[]>({
@@ -24,6 +32,11 @@ export default function Dashboard() {
 
   const { data: summary, isLoading: summaryLoading } = useQuery<DashboardSummary>({
     queryKey: ["/api/dashboard/summary"],
+  });
+
+  const { data: mbStatus } = useQuery<MovebankStatus>({
+    queryKey: ["/api/movebank/status"],
+    refetchInterval: 60000,
   });
 
   const activeCount = studies?.filter((s) => s.active).length || 0;
@@ -41,7 +54,7 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-5 pb-4 px-5">
             <div className="flex items-center justify-between gap-2">
@@ -98,6 +111,26 @@ export default function Dashboard() {
               </div>
               <div className="p-2 rounded-md bg-amber-500/10">
                 <AlertTriangle className="w-5 h-5 text-amber-500" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className={mbStatus?.blocked ? "border-amber-500/50" : ""}>
+          <CardContent className="pt-5 pb-4 px-5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Peticiones Movebank</p>
+                <p className="text-2xl font-bold" data-testid="text-movebank-requests">
+                  {mbStatus ? `${mbStatus.dailyCount}/${mbStatus.dailyLimit}` : <Skeleton className="h-8 w-12 rounded" />}
+                </p>
+                {mbStatus?.blocked && mbStatus.blockedUntil && (
+                  <p className="text-[10px] text-amber-500 mt-0.5" data-testid="text-movebank-blocked">
+                    Limitado hasta {format(new Date(mbStatus.blockedUntil), "HH:mm")}
+                  </p>
+                )}
+              </div>
+              <div className={`p-2 rounded-md ${mbStatus?.blocked ? "bg-amber-500/10" : mbStatus && mbStatus.dailyCount > 80 ? "bg-amber-500/10" : "bg-cyan-500/10"}`}>
+                <Wifi className={`w-5 h-5 ${mbStatus?.blocked ? "text-amber-500" : mbStatus && mbStatus.dailyCount > 80 ? "text-amber-500" : "text-cyan-500"}`} />
               </div>
             </div>
           </CardContent>

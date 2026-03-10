@@ -1,4 +1,5 @@
 import { log } from "./index";
+import { movebankRateLimiter } from "./movebankRateLimit";
 
 const MOVEBANK_BASE = "https://www.movebank.org/movebank/service/direct-read";
 const MOVEBANK_TIMEOUT_MS = 60000;
@@ -37,7 +38,10 @@ async function handleMovebankResponse(res: Response, context: string): Promise<s
   } else if (status === 403) {
     throw new MovebankError("No tiene permisos para acceder a este estudio en Movebank", 403);
   } else if (status === 429) {
-    throw new MovebankError("Movebank ha limitado las peticiones temporalmente. Intente de nuevo en unos minutos.", 429);
+    movebankRateLimiter.record429();
+    const { blockedUntil } = movebankRateLimiter.isBlocked();
+    const timeStr = blockedUntil ? `${String(blockedUntil.getHours()).padStart(2, "0")}:${String(blockedUntil.getMinutes()).padStart(2, "0")}` : "";
+    throw new MovebankError(`Movebank está temporalmente limitado. Se podrá sincronizar de nuevo a las ${timeStr}`, 429);
   } else {
     throw new MovebankError(`Error al conectar con Movebank: ${status} ${res.statusText}`, status);
   }
@@ -108,11 +112,19 @@ async function fetchWithTimeout(url: string, options: RequestInit): Promise<Resp
   }
 }
 
+function checkRateLimit(): void {
+  const { blocked, reason } = movebankRateLimiter.isBlocked();
+  if (blocked) {
+    throw new MovebankError(reason, 429);
+  }
+}
+
 export async function fetchMovebankIndividuals(
   studyId: number,
   username: string,
   password: string
 ): Promise<Record<string, string>[]> {
+  checkRateLimit();
   const url = `${MOVEBANK_BASE}?entity_type=individual&study_id=${studyId}`;
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
@@ -122,6 +134,7 @@ export async function fetchMovebankIndividuals(
     });
 
     const text = await handleMovebankResponse(res, `individuals for study ${studyId}`);
+    movebankRateLimiter.recordRequest();
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (individuals, study ${studyId}): ${e.message}`, "movebank");
@@ -138,6 +151,7 @@ export async function fetchMovebankEvents(
   timestampStart: number,
   timestampEnd: number
 ): Promise<Record<string, string>[]> {
+  checkRateLimit();
   const params = new URLSearchParams({
     entity_type: "event",
     study_id: studyId.toString(),
@@ -155,6 +169,7 @@ export async function fetchMovebankEvents(
     });
 
     const text = await handleMovebankResponse(res, `events for ${individualLocalIdentifier}`);
+    movebankRateLimiter.recordRequest();
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (events, ${individualLocalIdentifier}): ${e.message}`, "movebank");
@@ -167,6 +182,7 @@ export async function fetchMovebankDeployments(
   username: string,
   password: string
 ): Promise<Record<string, string>[]> {
+  checkRateLimit();
   const url = `${MOVEBANK_BASE}?entity_type=deployment&study_id=${studyId}`;
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
@@ -176,6 +192,7 @@ export async function fetchMovebankDeployments(
     });
 
     const text = await handleMovebankResponse(res, `deployments for study ${studyId}`);
+    movebankRateLimiter.recordRequest();
     return parseCSV(text);
   } catch (e: any) {
     log(`Movebank fetch error (deployments, study ${studyId}): ${e.message}`, "movebank");
@@ -188,6 +205,7 @@ export async function fetchMovebankDeploymentIndividualMap(
   username: string,
   password: string
 ): Promise<Map<string, { individualId: string; individualLocalIdentifier: string }>> {
+  checkRateLimit();
   const params = new URLSearchParams({
     entity_type: "event",
     study_id: studyId.toString(),
@@ -216,6 +234,7 @@ export async function fetchMovebankDeploymentIndividualMap(
         });
       }
     }
+    movebankRateLimiter.recordRequest();
     log(`Movebank deployment-individual map: ${map.size} unique deployment→individual mappings from ${rows.length} event rows`, "movebank");
     return map;
   } catch (e: any) {

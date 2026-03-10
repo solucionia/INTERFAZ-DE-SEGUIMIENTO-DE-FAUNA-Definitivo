@@ -35,6 +35,7 @@ export const studies = pgTable("studies", {
   alertEmail: text("alert_email"),
   speciesProfileId: varchar("species_profile_id"),
   active: boolean("active").notNull().default(true),
+  lastMovebankSync: timestamp("last_movebank_sync"),
   ornitelaEnabled: boolean("ornitela_enabled").notNull().default(false),
   ornitelaUsername: text("ornitela_username"),
   ornitelaPassword: text("ornitela_password"),

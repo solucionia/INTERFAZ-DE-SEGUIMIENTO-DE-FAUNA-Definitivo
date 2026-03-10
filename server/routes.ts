@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
+import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
 import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
@@ -259,6 +260,10 @@ export async function registerRoutes(
     if (!updated) return res.status(404).json({ message: "Usuario no encontrado" });
     const { password: _, ...safe } = updated;
     return res.json(safe);
+  });
+
+  app.get("/api/movebank/status", requireAuth, async (req, res) => {
+    return res.json(movebankRateLimiter.getStatus());
   });
 
   app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
@@ -1140,8 +1145,7 @@ export async function registerRoutes(
         return toCache;
       };
 
-      await Promise.all(
-        ids.map(async (animalId) => {
+      for (const animalId of ids) {
           const trimmed = animalId.trim();
           const sensorKey = isGps ? "gps" as const : "acc" as const;
           try {
@@ -1150,6 +1154,7 @@ export async function registerRoutes(
                 study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
                 trimmed, sensorTypeId, tsStart, tsEnd
               );
+              await movebankDelay();
               if (isGps) {
                 await storage.insertCachedGpsEvents(cacheMovebankGps(events, trimmed));
               } else {
@@ -1190,6 +1195,7 @@ export async function registerRoutes(
                   trimmed, sensorTypeId, gap.start, gap.end
                 );
                 movebankRows = movebankRows.concat(rows);
+                await movebankDelay();
               }
 
               if (movebankRows.length > 0) {
@@ -1225,8 +1231,7 @@ export async function registerRoutes(
             }
             log(`Fallback to cache for ${trimmed}: ${results[trimmed].length} records`, "cache");
           }
-        })
-      );
+      }
 
       return res.json(results);
     } catch (e: any) {
@@ -1405,6 +1410,7 @@ export async function registerRoutes(
               recentWindow,
               now
             );
+            await movebankDelay();
 
             let lastTs: number | null = null;
             let lastLat: number | null = null;
@@ -1503,6 +1509,11 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/sync", checkRole("superuser"), movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
+      const blockCheck = movebankRateLimiter.isBlocked();
+      if (blockCheck.blocked) {
+        return res.status(429).json({ message: blockCheck.reason, blockedUntil: blockCheck.blockedUntil?.toISOString() });
+      }
+
       log(`Sync iniciado para estudio: ${req.params.id}`, "movebank");
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1516,10 +1527,11 @@ export async function registerRoutes(
       const rawIndividuals = await fetchMovebankIndividuals(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
       log(`Movebank respondió individuos: ${rawIndividuals.length}`, "movebank");
 
-      const [rawDeployments, depIndMap] = await Promise.all([
-        fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
-        fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
-      ]);
+      await movebankDelay();
+
+      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
+      await movebankDelay();
+      const depIndMap = await fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
       log(`Movebank respondió despliegues: ${rawDeployments.length}, mappings evento→individuo: ${depIndMap.size}`, "movebank");
 
       const individualsData = rawIndividuals.map((r) => ({
@@ -1553,6 +1565,8 @@ export async function registerRoutes(
         storage.upsertDeployments(study.id, deploymentsData),
       ]);
 
+      await storage.updateStudy(study.id, { lastMovebankSync: new Date() } as any);
+
       log(`Sync completado para ${study.name}: ${individualsData.length} individuos, ${deploymentsData.length} despliegues guardados en BD`, "movebank");
 
       return res.json({
@@ -1583,6 +1597,11 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/repair-deployments", movebankLimiter, requireSuperuser, requireStudyAccess, async (req, res) => {
     try {
+      const blockCheck = movebankRateLimiter.isBlocked();
+      if (blockCheck.blocked) {
+        return res.status(429).json({ message: blockCheck.reason, blockedUntil: blockCheck.blockedUntil?.toISOString() });
+      }
+
       log(`Repair-deployments iniciado para estudio: ${req.params.id}`, "movebank");
       const study = await storage.getStudyDecrypted(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
@@ -1591,10 +1610,9 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
       }
 
-      const [rawDeployments, depIndMap] = await Promise.all([
-        fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
-        fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!),
-      ]);
+      const rawDeployments = await fetchMovebankDeployments(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
+      await movebankDelay();
+      const depIndMap = await fetchMovebankDeploymentIndividualMap(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!);
 
       log(`Repair: ${rawDeployments.length} deployments from Movebank, ${depIndMap.size} deployment→individual mappings from events`, "movebank");
 
@@ -1893,6 +1911,7 @@ export async function registerRoutes(
               timestampStart,
               timestampEnd
             );
+            await movebankDelay();
 
             const newCachedEvents: Omit<CachedGpsEvent, "id">[] = [];
             for (const ev of gpsEvents) {
@@ -2009,6 +2028,7 @@ export async function registerRoutes(
               study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
               animalId, 653, timestampStart, timestampEnd
             );
+            await movebankDelay();
             for (const ev of gpsEvents) {
               if (ev.location_lat && ev.location_long) {
                 const lat = parseFloat(ev.location_lat);

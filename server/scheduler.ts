@@ -6,6 +6,7 @@ import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } fr
 import { DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds } from "@shared/schema";
 import { decrypt } from "./encryption";
 import { log } from "./index";
+import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
 import { ornitelaSync } from "./ornitelaSync";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 
@@ -16,11 +17,24 @@ async function runEventDetection() {
   log("Cron: Iniciando deteccion automatica de eventos...", "cron");
 
   try {
+    const blockCheck = movebankRateLimiter.isBlocked();
+    if (blockCheck.blocked) {
+      log(`Cron: Movebank bloqueado — ${blockCheck.reason}. Saltando detección de eventos.`, "cron");
+      await storage.createCronLog("event_detection", "skipped", blockCheck.reason);
+      return;
+    }
+
     const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
     let totalEvents = 0;
     let totalEmails = 0;
 
     for (const { study, activeIndividuals } of studiesWithAnimals) {
+      const studyBlockCheck = movebankRateLimiter.isBlocked();
+      if (studyBlockCheck.blocked) {
+        log(`Cron: Movebank bloqueado durante ejecución — saltando estudios restantes`, "cron");
+        break;
+      }
+
       const studyStartTime = Date.now();
       log(`Cron: Iniciando detección de eventos para estudio: ${study.name}`, "cron");
 
@@ -51,10 +65,10 @@ async function runEventDetection() {
 
       for (const animal of activeIndividuals) {
         try {
-          const [gpsRows, accRows] = await Promise.all([
-            fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 653, sixHoursAgo, now),
-            fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 2365683, sixHoursAgo, now),
-          ]);
+          const gpsRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 653, sixHoursAgo, now);
+          await movebankDelay();
+          const accRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 2365683, sixHoursAgo, now);
+          await movebankDelay();
 
           const gpsSamples = gpsRows
             .filter((r) => r.location_lat && r.location_long)
@@ -172,6 +186,12 @@ async function runEmissionCheck() {
   log("Cron: Verificando alertas de emision...", "cron");
 
   try {
+    const blockCheck = movebankRateLimiter.isBlocked();
+    if (blockCheck.blocked) {
+      log(`Cron: Movebank bloqueado — ${blockCheck.reason}. Saltando verificación de emisión.`, "cron");
+      return;
+    }
+
     const alerts = await storage.getAllActiveEmissionAlerts();
     if (alerts.length === 0) {
       log("Cron: No hay alertas de emisión activas", "cron");
@@ -233,6 +253,7 @@ async function runEmissionCheck() {
               recentWindow,
               now
             );
+            await movebankDelay();
 
             let lastTs: number | null = null;
             let lastLat: number | null = null;
