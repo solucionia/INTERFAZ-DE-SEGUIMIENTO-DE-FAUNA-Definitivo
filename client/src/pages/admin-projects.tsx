@@ -43,12 +43,12 @@ export default function AdminProjects() {
   const [deleteItem, setDeleteItem] = useState<Project | null>(null);
   const [search, setSearch] = useState("");
 
-  const { data: projectList, isLoading } = useQuery<Project[]>({
-    queryKey: ["/api/ref-projects"],
+  const { data: projectList, isLoading } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
   });
 
   const { data: speciesList } = useQuery<Species[]>({
-    queryKey: ["/api/ref-species"],
+    queryKey: ["/api/species"],
   });
 
   const form = useForm<ProjectFormValues>({
@@ -78,13 +78,13 @@ export default function AdminProjects() {
         idEspecie: values.idEspecie && values.idEspecie !== "__none__" ? Number(values.idEspecie) : null,
       };
       if (editItem) {
-        await apiRequest("PATCH", `/api/ref-projects/${editItem.id}`, payload);
+        await apiRequest("PATCH", `/api/projects/${editItem.id}`, payload);
       } else {
-        await apiRequest("POST", "/api/ref-projects", payload);
+        await apiRequest("POST", "/api/projects", payload);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       setShowForm(false);
       toast({ title: editItem ? "Proyecto actualizado" : "Proyecto creado" });
     },
@@ -95,10 +95,10 @@ export default function AdminProjects() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/ref-projects/${id}`);
+      await apiRequest("DELETE", `/api/projects/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       setDeleteItem(null);
       toast({ title: "Proyecto eliminado" });
     },
@@ -156,6 +156,7 @@ export default function AdminProjects() {
                     <TableHead>ID</TableHead>
                     <TableHead>Descripción</TableHead>
                     <TableHead>Especie asociada</TableHead>
+                    <TableHead>Nº animales</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -167,6 +168,7 @@ export default function AdminProjects() {
                       <TableCell className="text-muted-foreground">
                         {proj.idEspecie ? speciesMap.get(proj.idEspecie)?.nombreComun || `ID ${proj.idEspecie}` : "—"}
                       </TableCell>
+                      <TableCell className="text-muted-foreground" data-testid={`text-project-animal-count-${proj.id}`}>{proj.animalCount}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button size="icon" variant="ghost" onClick={() => openEdit(proj)} data-testid={`button-edit-project-${proj.id}`}>

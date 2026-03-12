@@ -1278,12 +1278,17 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  app.get("/api/ref-species", requireAuth, async (_req, res) => {
+  app.get("/api/species", requireAuth, async (_req, res) => {
     const all = await storage.getAllSpecies();
-    return res.json(all);
+    const projectCounts = await storage.getProjectCountsBySpecies();
+    const enriched = all.map(sp => ({
+      ...sp,
+      projectCount: projectCounts[sp.id] || 0,
+    }));
+    return res.json(enriched);
   });
 
-  app.post("/api/ref-species", requireSuperuser, async (req, res) => {
+  app.post("/api/species", requireSuperuser, async (req, res) => {
     try {
       const parsed = insertSpeciesSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
@@ -1294,7 +1299,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/ref-species/:id", requireSuperuser, async (req, res) => {
+  app.patch("/api/species/:id", requireSuperuser, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
     const updated = await storage.updateSpecies(id, req.body);
@@ -1302,19 +1307,24 @@ export async function registerRoutes(
     return res.json(updated);
   });
 
-  app.delete("/api/ref-species/:id", requireSuperuser, async (req, res) => {
+  app.delete("/api/species/:id", requireSuperuser, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
     await storage.deleteSpecies(id);
     return res.json({ ok: true });
   });
 
-  app.get("/api/ref-projects", requireAuth, async (_req, res) => {
+  app.get("/api/projects", requireAuth, async (_req, res) => {
     const all = await storage.getAllProjects();
-    return res.json(all);
+    const animalCounts = await storage.getIndividualCountsByProject();
+    const enriched = all.map(proj => ({
+      ...proj,
+      animalCount: animalCounts[proj.id] || 0,
+    }));
+    return res.json(enriched);
   });
 
-  app.post("/api/ref-projects", requireSuperuser, async (req, res) => {
+  app.post("/api/projects", requireSuperuser, async (req, res) => {
     try {
       const parsed = insertProjectSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
@@ -1325,7 +1335,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/ref-projects/:id", requireSuperuser, async (req, res) => {
+  app.patch("/api/projects/:id", requireSuperuser, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
     const updated = await storage.updateProject(id, req.body);
@@ -1333,7 +1343,7 @@ export async function registerRoutes(
     return res.json(updated);
   });
 
-  app.delete("/api/ref-projects/:id", requireSuperuser, async (req, res) => {
+  app.delete("/api/projects/:id", requireSuperuser, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
     await storage.deleteProject(id);

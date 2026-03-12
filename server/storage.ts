@@ -129,6 +129,9 @@ export interface IStorage {
   createProject(data: InsertProject): Promise<Project>;
   updateProject(id: number, data: Partial<InsertProject>): Promise<Project | undefined>;
   deleteProject(id: number): Promise<void>;
+
+  getProjectCountsBySpecies(): Promise<Record<number, number>>;
+  getIndividualCountsByProject(): Promise<Record<number, number>>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -986,6 +989,38 @@ export class DatabaseStorage implements IStorage {
 
   async deleteProject(id: number): Promise<void> {
     await db.delete(projects).where(eq(projects.id, id));
+  }
+
+  async getProjectCountsBySpecies(): Promise<Record<number, number>> {
+    const rows = await db
+      .select({
+        speciesId: projects.idEspecie,
+        cnt: sql<number>`count(*)`,
+      })
+      .from(projects)
+      .where(sql`${projects.idEspecie} IS NOT NULL`)
+      .groupBy(projects.idEspecie);
+    const result: Record<number, number> = {};
+    for (const r of rows) {
+      if (r.speciesId != null) result[r.speciesId] = Number(r.cnt);
+    }
+    return result;
+  }
+
+  async getIndividualCountsByProject(): Promise<Record<number, number>> {
+    const rows = await db
+      .select({
+        projectId: individuals.projectId,
+        cnt: sql<number>`count(*)`,
+      })
+      .from(individuals)
+      .where(sql`${individuals.projectId} IS NOT NULL`)
+      .groupBy(individuals.projectId);
+    const result: Record<number, number> = {};
+    for (const r of rows) {
+      if (r.projectId != null) result[r.projectId] = Number(r.cnt);
+    }
+    return result;
   }
 }
 

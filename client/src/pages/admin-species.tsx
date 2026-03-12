@@ -39,8 +39,8 @@ export default function AdminSpecies() {
   const [showForm, setShowForm] = useState(false);
   const [deleteItem, setDeleteItem] = useState<Species | null>(null);
 
-  const { data: speciesList, isLoading } = useQuery<Species[]>({
-    queryKey: ["/api/ref-species"],
+  const { data: speciesList, isLoading } = useQuery<(Species & { projectCount: number })[]>({
+    queryKey: ["/api/species"],
   });
 
   const form = useForm<SpeciesFormValues>({
@@ -63,13 +63,13 @@ export default function AdminSpecies() {
   const saveMutation = useMutation({
     mutationFn: async (values: SpeciesFormValues) => {
       if (editItem) {
-        await apiRequest("PATCH", `/api/ref-species/${editItem.id}`, values);
+        await apiRequest("PATCH", `/api/species/${editItem.id}`, values);
       } else {
-        await apiRequest("POST", "/api/ref-species", values);
+        await apiRequest("POST", "/api/species", values);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-species"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/species"] });
       setShowForm(false);
       toast({ title: editItem ? "Especie actualizada" : "Especie creada" });
     },
@@ -80,10 +80,10 @@ export default function AdminSpecies() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/ref-species/${id}`);
+      await apiRequest("DELETE", `/api/species/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-species"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/species"] });
       setDeleteItem(null);
       toast({ title: "Especie eliminada" });
     },
@@ -98,8 +98,8 @@ export default function AdminSpecies() {
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-species"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/ref-projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/species"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
         title: "Datos importados",
         description: `Especies: ${data.speciesInserted} nuevas, ${data.speciesSkipped} existentes. Proyectos: ${data.projectsInserted} nuevos, ${data.projectsSkipped} existentes.`,
@@ -149,6 +149,7 @@ export default function AdminSpecies() {
                     <TableHead>ID</TableHead>
                     <TableHead>Nombre común</TableHead>
                     <TableHead>Nombre científico</TableHead>
+                    <TableHead>Nº proyectos</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -158,6 +159,7 @@ export default function AdminSpecies() {
                       <TableCell className="text-muted-foreground">{sp.id}</TableCell>
                       <TableCell className="font-medium">{sp.nombreComun}</TableCell>
                       <TableCell className="italic text-muted-foreground">{sp.nombreCientifico}</TableCell>
+                      <TableCell className="text-muted-foreground" data-testid={`text-species-project-count-${sp.id}`}>{sp.projectCount}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button size="icon" variant="ghost" onClick={() => openEdit(sp)} data-testid={`button-edit-species-${sp.id}`}>
