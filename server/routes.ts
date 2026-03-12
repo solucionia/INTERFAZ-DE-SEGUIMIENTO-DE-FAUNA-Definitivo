@@ -928,7 +928,7 @@ export async function registerRoutes(
       const individuals = await storage.getIndividuals(studyId);
       const indMap = new Map(individuals.map(ind => [
         ind.localIdentifier || `ID-${ind.movebankId}`,
-        { nickName: ind.nickName || null, taxon: ind.taxonCanonicalName || null }
+        { nickName: ind.nickName || null, taxon: ind.taxonCanonicalName || null, projectId: ind.projectId || null }
       ]));
 
       const { rows: gpsRows } = await pool.query(
@@ -968,11 +968,12 @@ export async function registerRoutes(
         const lastTs = pts[0].timestamp;
         if (!globalLastUpdate || lastTs > globalLastUpdate) globalLastUpdate = lastTs;
 
-        const meta = indMap.get(id) || { nickName: null, taxon: null };
+        const meta = indMap.get(id) || { nickName: null, taxon: null, projectId: null };
         result.push({
           individual: id,
           nickName: meta.nickName,
           taxon: meta.taxon,
+          projectId: meta.projectId,
           points: pts,
         });
       }

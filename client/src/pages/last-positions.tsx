@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
-import type { Study } from "@shared/schema";
+import type { Study, Project } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,7 @@ interface AnimalData {
   individual: string;
   nickName: string | null;
   taxon: string | null;
+  projectId: number | null;
   points: AnimalPoint[];
 }
 
@@ -154,6 +155,7 @@ export default function LastPositions() {
   const [inputPoints, setInputPoints] = useState("5");
   const [tableOpen, setTableOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [flyTarget, setFlyTarget] = useState<{ lat: number; lng: number } | null>(null);
   const [tablePage, setTablePage] = useState(0);
   const PAGE_SIZE = 20;
@@ -173,6 +175,15 @@ export default function LastPositions() {
     staleTime: 60000,
   });
 
+  const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
+  });
+
+  const projectIdsInData = useMemo(() => {
+    if (!data?.animals) return new Set<number | null>();
+    return new Set(data.animals.map(a => a.projectId).filter((id): id is number => id != null));
+  }, [data?.animals]);
+
   const studyName = studies?.find((s) => s.id === selectedStudyId)?.name || "";
 
   const handleUpdatePoints = () => {
@@ -183,15 +194,21 @@ export default function LastPositions() {
 
   const filteredAnimals = useMemo(() => {
     if (!data?.animals) return [];
-    if (!searchQuery.trim()) return data.animals;
-    const norm = searchQuery.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return data.animals.filter((a) => {
-      const fields = [a.individual, a.nickName || "", a.taxon || ""];
-      return fields.some((f) =>
-        f.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(norm)
-      );
-    });
-  }, [data?.animals, searchQuery]);
+    let result = data.animals;
+    if (projectFilterId !== "all") {
+      result = result.filter(a => a.projectId === Number(projectFilterId));
+    }
+    if (searchQuery.trim()) {
+      const norm = searchQuery.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      result = result.filter((a) => {
+        const fields = [a.individual, a.nickName || "", a.taxon || ""];
+        return fields.some((f) =>
+          f.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(norm)
+        );
+      });
+    }
+    return result;
+  }, [data?.animals, searchQuery, projectFilterId]);
 
   const sortedAnimals = useMemo(() => {
     return [...filteredAnimals].sort((a, b) => {
@@ -204,7 +221,8 @@ export default function LastPositions() {
   const totalPages = Math.ceil(sortedAnimals.length / PAGE_SIZE);
   const paginatedAnimals = sortedAnimals.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE);
 
-  useEffect(() => { setTablePage(0); }, [searchQuery]);
+  useEffect(() => { setTablePage(0); }, [searchQuery, projectFilterId]);
+  useEffect(() => { setProjectFilterId("all"); }, [selectedStudyId]);
 
   const handleCenterOnAnimal = (animal: AnimalData) => {
     if (animal.points.length === 0) return;
@@ -437,6 +455,19 @@ export default function LastPositions() {
                 <span className="font-semibold text-sm">Tabla de posiciones ({data.animals.length} animales)</span>
               </Button>
             </CollapsibleTrigger>
+            {projectIdsInData.size > 0 && (
+              <Select value={projectFilterId} onValueChange={setProjectFilterId}>
+                <SelectTrigger className="w-52" data-testid="select-filter-project">
+                  <SelectValue placeholder="Todos los proyectos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los proyectos</SelectItem>
+                  {allProjects?.filter(p => projectIdsInData.has(p.id)).map(p => (
+                    <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input

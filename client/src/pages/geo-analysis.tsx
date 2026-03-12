@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Individual, SavedAnalysis } from "@shared/schema";
+import type { Individual, SavedAnalysis, Project } from "@shared/schema";
 import { ANALYSIS_LABELS, type AnalysisType } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -118,6 +118,7 @@ export default function GeoAnalysis() {
   const { canAnalyze, canExport } = usePermissions();
 
   const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
+  const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [analysisType, setAnalysisType] = useState<AnalysisType>("comprehensive");
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
@@ -145,6 +146,21 @@ export default function GeoAnalysis() {
     },
     enabled: !!studyId,
   });
+
+  const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
+  });
+
+  const projectIdsInStudy = useMemo(() => {
+    if (!individuals) return new Set<number | null>();
+    return new Set(individuals.map(ind => ind.projectId).filter((id): id is number => id != null));
+  }, [individuals]);
+
+  const filteredByProject = useMemo(() => {
+    if (!individuals) return [];
+    if (projectFilterId === "all") return individuals;
+    return individuals.filter(ind => ind.projectId === Number(projectFilterId));
+  }, [individuals, projectFilterId]);
 
   const { data: savedAnalyses, isLoading: loadingHistory } = useQuery<SavedAnalysis[]>({
     queryKey: ["/api/studies", studyId, "analyses"],
@@ -747,6 +763,22 @@ export default function GeoAnalysis() {
               />
             </div>
 
+            {projectIdsInStudy.size > 0 && (
+              <div className="space-y-2">
+                <Label>Proyecto</Label>
+                <Select value={projectFilterId} onValueChange={(v) => { setProjectFilterId(v); setSelectedAnimals([]); }}>
+                  <SelectTrigger data-testid="select-filter-project">
+                    <SelectValue placeholder="Todos los proyectos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los proyectos</SelectItem>
+                    {allProjects?.filter(p => projectIdsInStudy.has(p.id)).map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Animales</Label>
               {loadingIndividuals ? (
@@ -755,7 +787,7 @@ export default function GeoAnalysis() {
                 </div>
               ) : (
                 <AnimalSearch
-                  individuals={individuals?.filter((i) => i.localIdentifier) || []}
+                  individuals={filteredByProject.filter((i) => i.localIdentifier) || []}
                   selected={selectedAnimals}
                   onChange={setSelectedAnimals}
                   multiple

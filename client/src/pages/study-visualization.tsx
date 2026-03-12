@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRoute, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Study, Individual, DetectedEvent } from "@shared/schema";
+import type { Study, Individual, DetectedEvent, Project } from "@shared/schema";
 import { EVENT_LABELS, EVENT_COLORS } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +19,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
@@ -193,6 +200,7 @@ export default function StudyVisualization() {
   const { canExport, canDetectEvents, isObserver } = usePermissions();
 
   const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
+  const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [loading, setLoading] = useState(false);
@@ -232,9 +240,20 @@ export default function StudyVisualization() {
     enabled: !!studyId,
   });
 
-  const selectableAnimals = useMemo(() => {
-    return (individuals || []).filter((i) => i.localIdentifier && i.localIdentifier.trim() !== "");
+  const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
+  });
+
+  const projectIdsInStudy = useMemo(() => {
+    if (!individuals) return new Set<number | null>();
+    return new Set(individuals.map(ind => ind.projectId).filter((id): id is number => id != null));
   }, [individuals]);
+
+  const selectableAnimals = useMemo(() => {
+    const base = (individuals || []).filter((i) => i.localIdentifier && i.localIdentifier.trim() !== "");
+    if (projectFilterId === "all") return base;
+    return base.filter(ind => ind.projectId === Number(projectFilterId));
+  }, [individuals, projectFilterId]);
 
   const toggleAnimal = (localId: string) => {
     setSelectedAnimals((prev) =>
@@ -851,6 +870,19 @@ export default function StudyVisualization() {
               </>
             )}
           </div>
+          {projectIdsInStudy.size > 0 && (
+            <Select value={projectFilterId} onValueChange={(v) => { setProjectFilterId(v); setSelectedAnimals([]); }}>
+              <SelectTrigger className="w-52 mb-2" data-testid="select-filter-project">
+                <SelectValue placeholder="Todos los proyectos" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los proyectos</SelectItem>
+                {allProjects?.filter(p => projectIdsInStudy.has(p.id)).map(p => (
+                  <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {individuals ? (
             <AnimalSearch
               individuals={selectableAnimals}

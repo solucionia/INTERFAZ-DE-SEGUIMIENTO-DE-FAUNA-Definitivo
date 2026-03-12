@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
-import type { Study, Individual, Deployment } from "@shared/schema";
+import type { Study, Individual, Deployment, Project } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -48,8 +48,9 @@ export default function StudyDetail() {
   const [syncing, setSyncing] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [editingIndividual, setEditingIndividual] = useState<Individual | null>(null);
-  const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "" });
+  const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "", projectId: "" as string, historyNumber: "" });
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
   const [saving, setSaving] = useState(false);
@@ -81,6 +82,10 @@ export default function StudyDetail() {
     staleTime: 30000,
   });
 
+  const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
+  });
+
   const activeDeploymentIndividualIds = useMemo(() =>
     new Set(
       deployments?.filter((d) => !d.deployOff)
@@ -101,6 +106,9 @@ export default function StudyDetail() {
         result = result.filter((ind) => !activeDeploymentIndividualIds.has(String(ind.movebankId)));
         break;
     }
+    if (projectFilterId !== "all") {
+      result = result.filter((ind) => ind.projectId === Number(projectFilterId));
+    }
     if (searchQuery.trim()) {
       const norm = searchQuery.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       result = result.filter((ind) => {
@@ -115,7 +123,17 @@ export default function StudyDetail() {
       });
     }
     return result;
-  }, [individuals, filterMode, activeDeploymentIndividualIds, searchQuery]);
+  }, [individuals, filterMode, activeDeploymentIndividualIds, searchQuery, projectFilterId]);
+
+  const projectIdsInStudy = useMemo(() => {
+    if (!individuals) return new Set<number | null>();
+    return new Set(individuals.map(ind => ind.projectId).filter((id): id is number => id != null));
+  }, [individuals]);
+
+  const projectMap = useMemo(() => {
+    if (!allProjects) return new Map<number, string>();
+    return new Map(allProjects.map(p => [p.id, p.descripcion]));
+  }, [allProjects]);
 
   const activeCount = individuals?.filter((ind) => activeDeploymentIndividualIds.has(String(ind.movebankId))).length || 0;
   const inactiveCount = (individuals?.length || 0) - activeCount;
@@ -307,6 +325,8 @@ export default function StudyDetail() {
       taxon: ind.taxonCanonicalName || "",
       sex: ind.sex || "",
       animalLifeStage: ind.animalLifeStage || "",
+      projectId: ind.projectId ? String(ind.projectId) : "",
+      historyNumber: ind.historyNumber || "",
     });
     setDeploymentStatus(hasActive ? "active" : "inactive");
     setDeployOffDate(activeDep?.deployOff || "");
@@ -321,6 +341,8 @@ export default function StudyDetail() {
         taxonCanonicalName: editForm.taxon || null,
         sex: editForm.sex || null,
         animalLifeStage: editForm.animalLifeStage || null,
+        projectId: editForm.projectId ? Number(editForm.projectId) : null,
+        historyNumber: editForm.historyNumber || null,
       });
 
       const hasActive = activeDeploymentIndividualIds.has(String(editingIndividual.movebankId));
@@ -574,6 +596,19 @@ export default function StudyDetail() {
                   <SelectItem value="inactive">Solo inactivos ({inactiveCount})</SelectItem>
                 </SelectContent>
               </Select>
+              {projectIdsInStudy.size > 0 && (
+                <Select value={projectFilterId} onValueChange={setProjectFilterId}>
+                  <SelectTrigger className="w-52" data-testid="select-filter-project">
+                    <SelectValue placeholder="Todos los proyectos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los proyectos</SelectItem>
+                    {allProjects?.filter(p => projectIdsInStudy.has(p.id)).map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           {individualsLoading ? (
@@ -592,6 +627,8 @@ export default function StudyDetail() {
                     <TableHead>Especie</TableHead>
                     <TableHead>Sexo</TableHead>
                     <TableHead>Etapa</TableHead>
+                    <TableHead>Proyecto</TableHead>
+                    <TableHead>Nº Historial</TableHead>
                     <TableHead>Estado</TableHead>
                     {canEditIndividuals && <TableHead className="w-10"></TableHead>}
                   </TableRow>
@@ -630,6 +667,25 @@ export default function StudyDetail() {
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {ind.animalLifeStage || "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs max-w-[180px] truncate">
+                          {ind.projectId ? (projectMap.get(ind.projectId) || "—") : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {ind.historyNumber ? (
+                            <a
+                              href={`http://192.168.2.1/buho/formulario_historiales.php?editar_exp=${encodeURIComponent(ind.historyNumber)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-blue-500 hover:text-blue-400 hover:underline text-sm"
+                              data-testid={`link-history-${ind.movebankId}`}
+                            >
+                              {ind.historyNumber}
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1">
@@ -859,6 +915,30 @@ export default function StudyDetail() {
                   <SelectItem value="adult">Adulto</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-project">Proyecto</Label>
+              <Select value={editForm.projectId || "none"} onValueChange={(v) => setEditForm({ ...editForm, projectId: v === "none" ? "" : v })}>
+                <SelectTrigger data-testid="select-edit-project">
+                  <SelectValue placeholder="Sin proyecto" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin proyecto</SelectItem>
+                  {allProjects?.map(p => (
+                    <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-history-number">Nº Historial</Label>
+              <Input
+                id="edit-history-number"
+                value={editForm.historyNumber}
+                onChange={(e) => setEditForm({ ...editForm, historyNumber: e.target.value })}
+                placeholder="Número de expediente"
+                data-testid="input-edit-history-number"
+              />
             </div>
             <div className="space-y-2">
               <Label>Estado del deployment</Label>
