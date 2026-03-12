@@ -1,0 +1,155 @@
+El cliente necesita dos nuevas funcionalidades: proyectos por animal y enlace a historial externo.
+
+PARTE 1 — PROYECTOS:
+
+A) Nueva tabla "projects" en el schema:
+   - id: serial primary key
+   - descripcion: text (nombre del proyecto)
+   - id_especie: integer nullable (referencia a la especie asociada, puede ser null)
+   - created_at: timestamp
+
+B) Nueva tabla "species" en el schema (separada de species_profiles que es para umbrales de detección):
+   - id: serial primary key
+   - nombre_comun: text
+   - nombre_cientifico: text
+
+C) Añadir campo a individuals:
+   - project_id: integer nullable (referencia al proyecto)
+   - history_number: text nullable (nº de historial, ej: "09/2216")
+
+D) Importar datos iniciales. Crea un endpoint POST /api/admin/import-reference-data (superuser only) o un script de seed que inserte estos datos:
+
+ESPECIES (31 registros):
+id,nombre_comun,nombre_cientifico
+1,Aguila real,Aquila chrysaetus
+2,Buitre negro,Aegypius monachus
+4,Aguila-azor perdicera,Aquila fasciata
+5,Aguila imperial iberica,Aquila adalberti
+6,Milano real,Milvus milvus
+7,Aguila culebrera,Circaetus gallicus
+8,Alimoche,Neophron percnopterus
+9,Cigüeña negra,Ciconia nigra
+10,Cernicalo primilla,Falco naumani
+11,Aguilucho cenizo,Circus pygargus
+12,Lechuza común,Tyto Alba
+13,Ratonero,Buteo Buteo
+14,Aguila de Bonelli africana,Aquila fasciata
+15,Cernicalo Vulgar,Falco Tinnunculus
+16,Halcon peregrino,Falco peregrinus
+17,Buitre leonado,Gyps fulvus
+18,Milano negro,Milvus migrans
+19,Aguilucho lagunero,Circus aeruginosus
+20,Azor,Accipiter gentilis
+21,Águila calzada,Hieraaetus pennatus
+22,Flamenco,Phoenicopterus roseus
+23,Buitre dorsiblanco africano,gyps africanus
+24,Cigüeña Blanca,Ciconia ciconia
+25,Pigargo Europeo,Haliaeetus albicilla
+26,Aguilucho palido,Circus cyaneus
+27,Buitre de Rüpell,Gyps rueppellii
+28,Avutarda,Otis tarda
+29,Alimoche sombrio,Necrosyrtes monachus
+30,Gaviota patiamarilla,Larus michahellis
+31,Alcaraván,Burhinus oedicnemus
+
+PROYECTOS (61 registros):
+id,descripcion,id_especie
+1,Águila de Bonelli en Madrid,4
+2,Águila de Bonelli en Navarra,4
+3,Águila de Bonelli en Mallorca,4
+4,Águila Real Galicia,1
+5,Buitre negro Pirineos,2
+6,Buitre negro Madrid,2
+7,Buitre negro Extremadura,2
+8,Buitre negro Portugal,2
+9,Milano Real en Madrid,6
+10,Imperial Madrid,5
+11,Águila Real en Madrid,1
+12,Águila culebrera,null
+13,Comí,null
+14,Priorimancha,4
+15,Manchega y Muntaner,null
+16,Aguila de Bonelli en Andalucía,4
+17,Águila de Bonelli en Álava,4
+18,Buitre negro CLH,2
+19,Alimoche en Galicia,null
+20,Cigüeña negra,null
+21,Buitre negro en la Sierra de la Demanda,2
+22,Águila de Bonelli en Sicilia,null
+23,Life CONRASI,null
+24,Conservación del cernícalo primilla en Madrid,10
+25,Conservación del cernícalo primilla en Córdoba,10
+26,Conservación del cernícalo primilla en Castilla la Mancha,null
+27,Conservación del cernícalo primilla en Castilla y León,null
+28,Boumort 2018_no colonia,null
+29,Águila de Bonelli en Valencia,null
+30,Aguíla real AQUILA-LIFE,null
+31,Águila de Bonelli en Cerdeña,null
+32,Conservación de los aguiluchos ibéricos,null
+33,Control biólogico,null
+34,Buteo,null
+35,Rapaces en Marruecos,null
+36,Cernícalo primilla en Cataluña,null
+37,Cernícalo primilla en Aragón,null
+38,Buitres negros NO,null
+39,Halcón peregrino,null
+40,Águila de Bonelli Valcalent,null
+41,Buitre leonado,null
+42,Conservación del cernícalo primilla en Extremadura,null
+43,Animales de recuperación,null
+44,Milano real en Cazorla,null
+45,Proyecto Pigargo,null
+46,Buitre negro en Cazorla,null
+47,Cigüeña blanca en Álcala de Henares,null
+48,Águila de Bonelli en Huesca,null
+49,Pigargos2021,null
+50,Demandantes2022,null
+51,Buitre negro en Ródopes Bulgaria,null
+52,Buitre leonado Universidad de Oviedo,null
+53,Buitre leonado en Pollino Italia,null
+54,Buitres en Ghana,null
+55,Águila calzada en Cuenca,null
+56,Demandantes2024,null
+57,Buitres estudio aeropuerto,null
+58,Alimoche en Cazorla,null
+59,Gaviota patiamarilla en Sálvora,null
+60,Águila de Bonelli en Castilla-La Mancha,null
+61,Buitre negro Els Ports,null
+
+E) CRUD de Proyectos y Especies (Admin):
+   - Nueva página "Proyectos" en admin (sidebar, solo superusuario)
+   - Tabla con todos los proyectos: ID, Descripción, Especie asociada, Nº animales
+   - Botones: Crear, Editar, Eliminar proyecto
+   - Al crear/editar: campo descripción + selector de especie (opcional)
+   - Nueva página "Especies" en admin (sidebar, solo superusuario)
+   - Tabla con todas las especies: ID, Nombre común, Nombre científico, Nº proyectos
+   - Botones: Crear, Editar, Eliminar especie
+
+PARTE 2 — HISTORIAL Y PROYECTO EN FICHA DEL ANIMAL:
+
+A) En el diálogo de edición del individuo (study-detail.tsx, el del lápiz), añadir:
+   - Campo "Nº Historial" (texto libre, ej: "09/2216")
+   - Campo "Proyecto" (selector desplegable con todos los proyectos)
+   
+B) En la tabla de individuos, añadir columna "Proyecto" que muestre el nombre del proyecto asignado
+
+C) Si el individuo tiene nº de historial, mostrar un botón/enlace "Ver historial" que abra en nueva pestaña:
+   http://192.168.2.1/buho/formulario_historiales.php?editar_exp={nº_historial}
+   Nota: esta URL es de red local, solo funcionará si el usuario está en la misma red.
+
+D) El endpoint PATCH /api/individuals/:id debe aceptar y guardar: project_id y history_number
+
+PARTE 3 — FILTRAR POR PROYECTO:
+
+A) En la página de detalle del estudio (lista de individuos), añadir un filtro desplegable "Proyecto" junto al filtro existente de "Todos/Activos/Inactivos":
+   - "Todos los proyectos" (default)
+   - Lista de proyectos que tengan al menos un animal en el estudio
+   - Al seleccionar un proyecto, filtra la tabla para mostrar solo animales de ese proyecto
+
+B) En la página de análisis geoespacial, añadir filtro de proyecto en el selector de animales
+
+C) En la página de visualización, añadir filtro de proyecto
+
+D) En la página de últimas posiciones, añadir filtro de proyecto
+
+Toda la UI en español. No rompas funcionalidad existente. Ejecuta las migraciones (npm run db:push) después de modificar el schema.
