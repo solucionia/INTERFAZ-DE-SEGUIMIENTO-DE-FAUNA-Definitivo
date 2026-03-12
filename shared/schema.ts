@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision, uniqueIndex, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -58,6 +58,27 @@ export const insertUserStudySchema = createInsertSchema(userStudies).omit({ id: 
 export type InsertUserStudy = z.infer<typeof insertUserStudySchema>;
 export type UserStudy = typeof userStudies.$inferSelect;
 
+export const species = pgTable("species", {
+  id: serial("id").primaryKey(),
+  nombreComun: text("nombre_comun").notNull(),
+  nombreCientifico: text("nombre_cientifico").notNull(),
+});
+
+export const insertSpeciesSchema = createInsertSchema(species).omit({ id: true });
+export type InsertSpecies = z.infer<typeof insertSpeciesSchema>;
+export type Species = typeof species.$inferSelect;
+
+export const projects = pgTable("projects", {
+  id: serial("id").primaryKey(),
+  descripcion: text("descripcion").notNull(),
+  idEspecie: integer("id_especie").references(() => species.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertProjectSchema = createInsertSchema(projects).omit({ id: true, createdAt: true });
+export type InsertProject = z.infer<typeof insertProjectSchema>;
+export type Project = typeof projects.$inferSelect;
+
 export const individuals = pgTable("individuals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
@@ -68,6 +89,8 @@ export const individuals = pgTable("individuals", {
   sex: text("sex"),
   animalLifeStage: text("animal_life_stage"),
   synced: boolean("synced").notNull().default(true),
+  projectId: integer("project_id").references(() => projects.id),
+  historyNumber: text("history_number"),
 }, (table) => [
   uniqueIndex("individuals_study_movebank_unique").on(table.studyId, table.movebankId),
 ]);

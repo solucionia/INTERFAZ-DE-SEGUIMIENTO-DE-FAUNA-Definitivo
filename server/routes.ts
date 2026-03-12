@@ -8,7 +8,7 @@ import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
@@ -1005,12 +1005,14 @@ export async function registerRoutes(
 
   app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
     try {
-      const { nickName, taxonCanonicalName, sex, animalLifeStage } = req.body;
+      const { nickName, taxonCanonicalName, sex, animalLifeStage, projectId, historyNumber } = req.body;
       const updated = await storage.updateIndividual(req.params.id, {
         ...(nickName !== undefined && { nickName }),
         ...(taxonCanonicalName !== undefined && { taxonCanonicalName }),
         ...(sex !== undefined && { sex }),
         ...(animalLifeStage !== undefined && { animalLifeStage }),
+        ...(projectId !== undefined && { projectId: projectId === null || projectId === "" ? null : Number(projectId) }),
+        ...(historyNumber !== undefined && { historyNumber: historyNumber || null }),
       });
       if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
       return res.json(updated);
@@ -1274,6 +1276,167 @@ export async function registerRoutes(
   app.delete("/api/species-profiles/:id", requireSuperuser, async (req, res) => {
     await storage.deleteSpeciesProfile(req.params.id);
     return res.json({ ok: true });
+  });
+
+  app.get("/api/ref-species", requireAuth, async (_req, res) => {
+    const all = await storage.getAllSpecies();
+    return res.json(all);
+  });
+
+  app.post("/api/ref-species", requireSuperuser, async (req, res) => {
+    try {
+      const parsed = insertSpeciesSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
+      const created = await storage.createSpecies(parsed.data);
+      return res.json(created);
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/ref-species/:id", requireSuperuser, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
+    const updated = await storage.updateSpecies(id, req.body);
+    if (!updated) return res.status(404).json({ message: "Especie no encontrada" });
+    return res.json(updated);
+  });
+
+  app.delete("/api/ref-species/:id", requireSuperuser, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
+    await storage.deleteSpecies(id);
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/ref-projects", requireAuth, async (_req, res) => {
+    const all = await storage.getAllProjects();
+    return res.json(all);
+  });
+
+  app.post("/api/ref-projects", requireSuperuser, async (req, res) => {
+    try {
+      const parsed = insertProjectSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
+      const created = await storage.createProject(parsed.data);
+      return res.json(created);
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.patch("/api/ref-projects/:id", requireSuperuser, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
+    const updated = await storage.updateProject(id, req.body);
+    if (!updated) return res.status(404).json({ message: "Proyecto no encontrado" });
+    return res.json(updated);
+  });
+
+  app.delete("/api/ref-projects/:id", requireSuperuser, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "ID inválido" });
+    await storage.deleteProject(id);
+    return res.json({ ok: true });
+  });
+
+  app.post("/api/admin/import-reference-data", requireSuperuser, async (_req, res) => {
+    try {
+      const SEED_SPECIES = [
+        { nombreComun: "Águila real", nombreCientifico: "Aquila chrysaetos" },
+        { nombreComun: "Águila imperial ibérica", nombreCientifico: "Aquila adalberti" },
+        { nombreComun: "Águila perdicera", nombreCientifico: "Aquila fasciata" },
+        { nombreComun: "Águila pescadora", nombreCientifico: "Pandion haliaetus" },
+        { nombreComun: "Águila calzada", nombreCientifico: "Hieraaetus pennatus" },
+        { nombreComun: "Águila culebrera", nombreCientifico: "Circaetus gallicus" },
+        { nombreComun: "Buitre negro", nombreCientifico: "Aegypius monachus" },
+        { nombreComun: "Buitre leonado", nombreCientifico: "Gyps fulvus" },
+        { nombreComun: "Alimoche", nombreCientifico: "Neophron percnopterus" },
+        { nombreComun: "Quebrantahuesos", nombreCientifico: "Gypaetus barbatus" },
+        { nombreComun: "Milano real", nombreCientifico: "Milvus milvus" },
+        { nombreComun: "Milano negro", nombreCientifico: "Milvus migrans" },
+        { nombreComun: "Búho real", nombreCientifico: "Bubo bubo" },
+        { nombreComun: "Cigüeña negra", nombreCientifico: "Ciconia nigra" },
+        { nombreComun: "Cigüeña blanca", nombreCientifico: "Ciconia ciconia" },
+        { nombreComun: "Cernícalo primilla", nombreCientifico: "Falco naumanni" },
+        { nombreComun: "Halcón peregrino", nombreCientifico: "Falco peregrinus" },
+        { nombreComun: "Azor común", nombreCientifico: "Accipiter gentilis" },
+        { nombreComun: "Gavilán", nombreCientifico: "Accipiter nisus" },
+        { nombreComun: "Busardo ratonero", nombreCientifico: "Buteo buteo" },
+        { nombreComun: "Aguilucho lagunero", nombreCientifico: "Circus aeruginosus" },
+        { nombreComun: "Aguilucho cenizo", nombreCientifico: "Circus pygargus" },
+        { nombreComun: "Aguilucho pálido", nombreCientifico: "Circus cyaneus" },
+        { nombreComun: "Lechuza común", nombreCientifico: "Tyto alba" },
+        { nombreComun: "Mochuelo europeo", nombreCientifico: "Athene noctua" },
+        { nombreComun: "Cárabo común", nombreCientifico: "Strix aluco" },
+        { nombreComun: "Autillo europeo", nombreCientifico: "Otus scops" },
+        { nombreComun: "Elanio azul", nombreCientifico: "Elanus caeruleus" },
+        { nombreComun: "Avutarda", nombreCientifico: "Otis tarda" },
+        { nombreComun: "Sisón", nombreCientifico: "Tetrax tetrax" },
+        { nombreComun: "Grulla común", nombreCientifico: "Grus grus" },
+      ];
+
+      const SEED_PROJECTS = [
+        "Tendidos eléctricos", "Venenos", "Atropellos", "Disparos",
+        "Electrocuciones y colisiones", "Rehabilitación general", "Cría en cautividad",
+        "Reintroducción Águila imperial", "Reintroducción Águila perdicera",
+        "Reintroducción Buitre negro", "Reintroducción Quebrantahuesos",
+        "Reintroducción Alimoche", "Reintroducción Águila pescadora",
+        "Seguimiento Milano real", "Seguimiento Cigüeña negra",
+        "Seguimiento Búho real", "Seguimiento Águila real",
+        "Seguimiento Cernícalo primilla", "Seguimiento Halcón peregrino",
+        "Seguimiento Buitre leonado", "Seguimiento Buitre negro",
+        "Hacking Águila imperial", "Hacking Águila perdicera",
+        "Hacking Buitre negro", "Hacking Quebrantahuesos",
+        "Marcaje científico", "Estudio migratorio", "Estudio reproductivo",
+        "Conservación hábitat", "Estudio ecotoxicología", "Control sanitario",
+        "Estudio genético poblacional", "Telemetría experimental",
+        "Estudio comportamiento", "Evaluación impacto ambiental",
+        "Estudio dieta y alimentación", "Censo y monitoreo poblacional",
+        "Estudio dispersión juvenil", "Programa de apadrinamiento",
+        "Seguimiento post-liberación", "Estudio mortalidad no natural",
+        "Investigación enfermedades", "Plan de recuperación de especie",
+        "Educación ambiental", "Cooperación internacional",
+        "Estudio cambio climático", "Monitoreo áreas protegidas",
+        "Evaluación conectividad ecológica", "Seguimiento especies invasoras",
+        "Estudio urbanización fauna", "Programa voluntariado científico",
+        "Análisis paisaje y uso del suelo", "Mapeo corredores biológicos",
+        "Gestión conflicto humano-fauna", "Rehabilitación y suelta",
+        "Identificación zonas sensibles", "Seguimiento colonias",
+        "Estudio contaminación lumínica", "Desarrollo protocolos veterinarios",
+        "Banco genético", "Estudio bioacústica",
+      ];
+
+      const existingSpecies = await storage.getAllSpecies();
+      const existingNames = new Set(existingSpecies.map(s => s.nombreCientifico));
+      let speciesInserted = 0;
+      for (const sp of SEED_SPECIES) {
+        if (!existingNames.has(sp.nombreCientifico)) {
+          await storage.createSpecies(sp);
+          speciesInserted++;
+        }
+      }
+
+      const existingProjects = await storage.getAllProjects();
+      const existingDescs = new Set(existingProjects.map(p => p.descripcion));
+      let projectsInserted = 0;
+      for (const desc of SEED_PROJECTS) {
+        if (!existingDescs.has(desc)) {
+          await storage.createProject({ descripcion: desc, idEspecie: null });
+          projectsInserted++;
+        }
+      }
+
+      return res.json({
+        ok: true,
+        speciesInserted,
+        speciesSkipped: SEED_SPECIES.length - speciesInserted,
+        projectsInserted,
+        projectsSkipped: SEED_PROJECTS.length - projectsInserted,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
   });
 
   // Detected events

@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin, Bug, FolderOpen } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -84,6 +84,22 @@ export function AppSidebar() {
                     <Link href="/admin/users" data-testid="link-admin-users">
                       <Users className="w-4 h-4" />
                       <span>Usuarios</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/ref-species"}>
+                    <Link href="/admin/ref-species" data-testid="link-admin-ref-species">
+                      <Bug className="w-4 h-4" />
+                      <span>Especies</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/ref-projects"}>
+                    <Link href="/admin/ref-projects" data-testid="link-admin-ref-projects">
+                      <FolderOpen className="w-4 h-4" />
+                      <span>Proyectos</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

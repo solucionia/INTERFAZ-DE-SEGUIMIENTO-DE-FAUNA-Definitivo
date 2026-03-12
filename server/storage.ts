@@ -5,6 +5,7 @@ import {
   users, studies, userStudies, individuals, deployments,
   speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, activityLogs,
   cachedGpsEvents, cachedAccEvents, cachedFetchRanges,
+  species, projects,
   type User, type InsertUser, type Study, type InsertStudy,
   type Individual, type Deployment,
   type SpeciesProfile, type InsertSpeciesProfile,
@@ -13,6 +14,8 @@ import {
   type SavedAnalysis, type InsertSavedAnalysis,
   type ActivityLog, type InsertActivityLog,
   type CachedGpsEvent, type CachedAccEvent, type CachedFetchRange,
+  type Species, type InsertSpecies,
+  type Project, type InsertProject,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -38,7 +41,7 @@ export interface IStorage {
   getIndividualById(id: string): Promise<Individual | undefined>;
   getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
-  updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined>;
+  updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage" | "projectId" | "historyNumber">>): Promise<Individual | undefined>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
   createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
@@ -114,6 +117,18 @@ export interface IStorage {
   insertCachedAccEventsCounted(events: Omit<CachedAccEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
   createIndividualsByName(studyId: string, names: string[]): Promise<void>;
   createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void>;
+
+  getAllSpecies(): Promise<Species[]>;
+  getSpeciesById(id: number): Promise<Species | undefined>;
+  createSpecies(data: InsertSpecies): Promise<Species>;
+  updateSpecies(id: number, data: Partial<InsertSpecies>): Promise<Species | undefined>;
+  deleteSpecies(id: number): Promise<void>;
+
+  getAllProjects(): Promise<Project[]>;
+  getProjectById(id: number): Promise<Project | undefined>;
+  createProject(data: InsertProject): Promise<Project>;
+  updateProject(id: number, data: Partial<InsertProject>): Promise<Project | undefined>;
+  deleteProject(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -246,6 +261,8 @@ export class DatabaseStorage implements IStorage {
           sex: individuals.sex,
           animalLifeStage: individuals.animalLifeStage,
           synced: individuals.synced,
+          projectId: individuals.projectId,
+          historyNumber: individuals.historyNumber,
           studyName: studies.name,
         })
         .from(individuals)
@@ -264,6 +281,8 @@ export class DatabaseStorage implements IStorage {
         sex: individuals.sex,
         animalLifeStage: individuals.animalLifeStage,
         synced: individuals.synced,
+        projectId: individuals.projectId,
+        historyNumber: individuals.historyNumber,
         studyName: studies.name,
       })
       .from(individuals)
@@ -329,7 +348,7 @@ export class DatabaseStorage implements IStorage {
     return ind;
   }
 
-  async updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage">>): Promise<Individual | undefined> {
+  async updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage" | "projectId" | "historyNumber">>): Promise<Individual | undefined> {
     const [updated] = await db.update(individuals).set(data).where(eq(individuals.id, id)).returning();
     return updated;
   }
@@ -922,6 +941,51 @@ export class DatabaseStorage implements IStorage {
         existingNames.add(entry.name);
       }
     }
+  }
+  async getAllSpecies(): Promise<Species[]> {
+    return db.select().from(species);
+  }
+
+  async getSpeciesById(id: number): Promise<Species | undefined> {
+    const [s] = await db.select().from(species).where(eq(species.id, id));
+    return s;
+  }
+
+  async createSpecies(data: InsertSpecies): Promise<Species> {
+    const [created] = await db.insert(species).values(data).returning();
+    return created;
+  }
+
+  async updateSpecies(id: number, data: Partial<InsertSpecies>): Promise<Species | undefined> {
+    const [updated] = await db.update(species).set(data).where(eq(species.id, id)).returning();
+    return updated;
+  }
+
+  async deleteSpecies(id: number): Promise<void> {
+    await db.delete(species).where(eq(species.id, id));
+  }
+
+  async getAllProjects(): Promise<Project[]> {
+    return db.select().from(projects);
+  }
+
+  async getProjectById(id: number): Promise<Project | undefined> {
+    const [p] = await db.select().from(projects).where(eq(projects.id, id));
+    return p;
+  }
+
+  async createProject(data: InsertProject): Promise<Project> {
+    const [created] = await db.insert(projects).values(data).returning();
+    return created;
+  }
+
+  async updateProject(id: number, data: Partial<InsertProject>): Promise<Project | undefined> {
+    const [updated] = await db.update(projects).set(data).where(eq(projects.id, id)).returning();
+    return updated;
+  }
+
+  async deleteProject(id: number): Promise<void> {
+    await db.delete(projects).where(eq(projects.id, id));
   }
 }
 

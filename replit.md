@@ -24,7 +24,8 @@ Key architectural features include:
 - **Ornitela Panel Sync**: Automated synchronization with Ornitela cpanel (login, HTML parsing with cheerio, CSV download per device IMEI) with configurable intervals and cron integration.
 - **Movebank Rate Limiting**: Singleton rate limiter (`server/movebankRateLimit.ts`) tracks daily request count (100/day limit, resets at UTC midnight), detects HTTP 429 responses (triggers 2-hour cooldown), and enforces 2-second delays between sequential Movebank API calls. The dashboard shows a real-time request counter, and sync buttons are disabled when blocked. Cron jobs skip Movebank calls when rate-limited.
 - **Automated Scheduling**: Cron jobs manage periodic tasks like event detection, emission checks, immobility analysis, and Ornitela sync.
-- **UI/UX**: Features a dark/light theme toggle, collapsible sidebar, interactive charts and maps with bidirectional synchronization, and intuitive admin interfaces for managing studies, users, and species profiles.
+- **Reference Data System**: Species catalog (`species` table: id, nombre_comun, nombre_cientifico) and Projects catalog (`projects` table: id, descripcion, id_especie FK). Individuals can be assigned to a project (`project_id` FK) and given a `history_number`. Seed data import endpoint (`POST /api/admin/import-reference-data`) loads 31 species and 61 projects idempotently. Admin pages at `/admin/ref-species` and `/admin/ref-projects` with full CRUD.
+- **UI/UX**: Features a dark/light theme toggle, collapsible sidebar, interactive charts and maps with bidirectional synchronization, and intuitive admin interfaces for managing studies, users, species profiles, species catalog, and projects.
 
 ## External Dependencies
 - **Movebank API**: Primary source for animal tracking data (individuals, deployments, GPS/accelerometer events).

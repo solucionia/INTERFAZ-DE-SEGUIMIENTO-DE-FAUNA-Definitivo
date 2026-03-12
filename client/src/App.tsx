@@ -23,6 +23,8 @@ import RawData from "@/pages/raw-data";
 import ImportCsv from "@/pages/import-csv";
 import ImmobilityMonitor from "@/pages/immobility-monitor";
 import LastPositions from "@/pages/last-positions";
+import AdminSpecies from "@/pages/admin-species";
+import AdminProjects from "@/pages/admin-projects";
 import { Loader2, Search } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
 import type { ComponentType } from "react";
@@ -48,6 +50,8 @@ function AuthenticatedRouter() {
       <Route path="/admin/studies">{() => <RoleGuard component={AdminStudies} allowed={["superuser"]} />}</Route>
       <Route path="/admin/species-profiles">{() => <RoleGuard component={AdminSpeciesProfiles} allowed={["superuser"]} />}</Route>
       <Route path="/admin/users">{() => <RoleGuard component={AdminUsers} allowed={["superuser"]} />}</Route>
+      <Route path="/admin/ref-species">{() => <RoleGuard component={AdminSpecies} allowed={["superuser"]} />}</Route>
+      <Route path="/admin/ref-projects">{() => <RoleGuard component={AdminProjects} allowed={["superuser"]} />}</Route>
       <Route path="/last-positions/:id" component={LastPositions} />
       <Route path="/last-positions" component={LastPositions} />
       <Route path="/monitor" component={EmissionMonitor} />
