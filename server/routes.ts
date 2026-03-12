@@ -1006,14 +1006,16 @@ export async function registerRoutes(
 
   app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
     try {
-      const { nickName, taxonCanonicalName, sex, animalLifeStage, projectId, historyNumber } = req.body;
+      const { nickName, taxonCanonicalName, sex, animalLifeStage, projectId, historyNumber, project_id, history_number } = req.body;
+      const resolvedProjectId = projectId !== undefined ? projectId : project_id;
+      const resolvedHistoryNumber = historyNumber !== undefined ? historyNumber : history_number;
       const updated = await storage.updateIndividual(req.params.id, {
         ...(nickName !== undefined && { nickName }),
         ...(taxonCanonicalName !== undefined && { taxonCanonicalName }),
         ...(sex !== undefined && { sex }),
         ...(animalLifeStage !== undefined && { animalLifeStage }),
-        ...(projectId !== undefined && { projectId: projectId === null || projectId === "" ? null : Number(projectId) }),
-        ...(historyNumber !== undefined && { historyNumber: historyNumber || null }),
+        ...(resolvedProjectId !== undefined && { projectId: resolvedProjectId === null || resolvedProjectId === "" ? null : Number(resolvedProjectId) }),
+        ...(resolvedHistoryNumber !== undefined && { historyNumber: resolvedHistoryNumber || null }),
       });
       if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
       return res.json(updated);

@@ -369,10 +369,10 @@ export default function LastPositions() {
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap' />
             <MapLayerControl />
             <GoogleMapsClick />
-            {data && <FitBounds animals={data.animals} />}
+            {data && <FitBounds animals={filteredAnimals} />}
             <FlyToAnimal target={flyTarget} onDone={() => setFlyTarget(null)} />
 
-            {data?.animals.map((animal) => {
+            {filteredAnimals.map((animal) => {
               if (animal.points.length === 0) return null;
               const lastPoint = animal.points[0];
               const color = getAgeColor(lastPoint.timestamp);
@@ -452,7 +452,7 @@ export default function LastPositions() {
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="flex items-center gap-2" data-testid="button-toggle-table">
                 <ChevronDown className={`w-4 h-4 transition-transform ${tableOpen ? "" : "-rotate-90"}`} />
-                <span className="font-semibold text-sm">Tabla de posiciones ({data.animals.length} animales)</span>
+                <span className="font-semibold text-sm">Tabla de posiciones ({filteredAnimals.length} animales)</span>
               </Button>
             </CollapsibleTrigger>
             {projectIdsInData.size > 0 && (
