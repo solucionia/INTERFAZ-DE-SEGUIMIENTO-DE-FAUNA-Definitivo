@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
 import type { Study } from "@shared/schema";
+import { queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,7 @@ import {
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info, MapPin } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
 type ImportFormat = "auto" | "movebank" | "baselunar" | "ornitella";
@@ -210,6 +211,10 @@ export default function ImportCsv() {
       const data: ImportResult = await res.json();
       setResult(data);
       setProgress(100);
+
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "individuals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "gps-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId] });
 
       const accInfo = data.format === "ornitella" && data.accImported !== undefined
         ? ` + ${data.accImported} acelerómetro`
@@ -587,14 +592,31 @@ export default function ImportCsv() {
 
             <div className="flex items-center gap-2 flex-wrap pt-1">
               {activeStudyId && (
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(`/study/${activeStudyId}/visualize`)}
-                  data-testid="button-view-data"
-                >
-                  <Eye className="w-4 h-4 mr-2" />
-                  Ver datos importados
-                </Button>
+                <>
+                  <Button
+                    onClick={() => navigate(`/last-positions/${activeStudyId}`)}
+                    data-testid="button-view-last-positions"
+                  >
+                    <MapPin className="w-4 h-4 mr-2" />
+                    Ver últimas posiciones
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate(`/study/${activeStudyId}/visualize`)}
+                    data-testid="button-view-data"
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    Visualizar datos
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate(`/study/${activeStudyId}`)}
+                    data-testid="button-view-study"
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Ver estudio
+                  </Button>
+                </>
               )}
               <Button variant="outline" onClick={clearFile} data-testid="button-import-another">
                 <Upload className="w-4 h-4 mr-2" />

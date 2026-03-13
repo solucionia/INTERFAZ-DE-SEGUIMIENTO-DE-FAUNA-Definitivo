@@ -886,7 +886,8 @@ export class DatabaseStorage implements IStorage {
     for (let i = 0; i < events.length; i += batchSize) {
       const batch = events.slice(i, i + batchSize);
       const result = await db.insert(cachedGpsEvents).values(batch).onConflictDoNothing();
-      const insertedCount = (result as any).rowCount ?? batch.length;
+      const rc = (result as any).rowCount;
+      const insertedCount = typeof rc === "number" ? rc : 0;
       totalInserted += insertedCount;
     }
     return { inserted: totalInserted, duplicates: events.length - totalInserted };
@@ -899,7 +900,8 @@ export class DatabaseStorage implements IStorage {
     for (let i = 0; i < events.length; i += batchSize) {
       const batch = events.slice(i, i + batchSize);
       const result = await db.insert(cachedAccEvents).values(batch).onConflictDoNothing();
-      const insertedCount = (result as any).rowCount ?? batch.length;
+      const rc = (result as any).rowCount;
+      const insertedCount = typeof rc === "number" ? rc : 0;
       totalInserted += insertedCount;
     }
     return { inserted: totalInserted, duplicates: events.length - totalInserted };

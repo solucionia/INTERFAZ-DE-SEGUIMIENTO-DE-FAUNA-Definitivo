@@ -999,6 +999,25 @@ export async function registerRoutes(
     return res.json(individuals);
   });
 
+  app.get("/api/studies/:id/gps-counts", requireStudyAccess, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT individual_local_identifier, COUNT(*)::int AS count
+         FROM cached_gps_events
+         WHERE study_id = $1
+         GROUP BY individual_local_identifier`,
+        [req.params.id]
+      );
+      const counts: Record<string, number> = {};
+      for (const r of rows) {
+        counts[r.individual_local_identifier] = r.count;
+      }
+      return res.json(counts);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/studies/:id/deployments", requireStudyAccess, async (req, res) => {
     const deployments = await storage.getDeployments(req.params.id);
     return res.json(deployments);

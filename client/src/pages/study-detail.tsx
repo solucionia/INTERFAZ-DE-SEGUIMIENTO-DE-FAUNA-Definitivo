@@ -82,6 +82,12 @@ export default function StudyDetail() {
     staleTime: 30000,
   });
 
+  const { data: gpsCounts } = useQuery<Record<string, number>>({
+    queryKey: ["/api/studies", studyId, "gps-counts"],
+    enabled: !!studyId,
+    staleTime: 60000,
+  });
+
   const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
     queryKey: ["/api/projects"],
   });
@@ -629,6 +635,7 @@ export default function StudyDetail() {
                     <TableHead>Etapa</TableHead>
                     <TableHead>Proyecto</TableHead>
                     <TableHead>Nº Historial</TableHead>
+                    <TableHead>Eventos GPS</TableHead>
                     <TableHead>Estado</TableHead>
                     {canEditIndividuals && <TableHead className="w-10"></TableHead>}
                   </TableRow>
@@ -686,6 +693,17 @@ export default function StudyDetail() {
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
+                        </TableCell>
+                        <TableCell className="text-center" data-testid={`text-gps-count-${ind.movebankId}`}>
+                          {(() => {
+                            const count = gpsCounts?.[ind.localIdentifier || `ID-${ind.movebankId}`];
+                            if (count == null) return <span className="text-muted-foreground">—</span>;
+                            return (
+                              <Badge variant="outline" className={count > 0 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : ""}>
+                                {count.toLocaleString()}
+                              </Badge>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1">
