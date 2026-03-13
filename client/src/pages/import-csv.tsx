@@ -215,6 +215,11 @@ export default function ImportCsv() {
       queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "individuals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "gps-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId] });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          typeof query.queryKey[0] === "string" &&
+          (query.queryKey[0] as string).includes(`/api/studies/${activeStudyId}/last-positions`),
+      });
 
       const accInfo = data.format === "ornitella" && data.accImported !== undefined
         ? ` + ${data.accImported} acelerómetro`
