@@ -54,6 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-react";
 
 const createStudyFormSchema = z.object({
@@ -317,117 +318,141 @@ export default function AdminStudies() {
       </Card>
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editStudy ? "Editar estudio" : "Nuevo estudio"}</DialogTitle>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Nombre del estudio</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Ej: Águilas reales Patagonia" data-testid="input-study-name" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="movebankStudyId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Study ID de Movebank (opcional)</FormLabel>
-                    <FormControl>
-                      <Input type="number" placeholder="Ej: 12345678" data-testid="input-study-movebank-id" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="movebankUsername"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Usuario de Movebank (opcional)</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario@movebank"}
-                        data-testid="input-study-mb-user"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : "Solo necesario si el estudio usa datos de Movebank"}</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="movebankPassword"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Contraseña de Movebank (opcional)</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
-                        data-testid="input-study-mb-pass"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : "Solo necesario si el estudio usa datos de Movebank"}</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="alertEmail"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email de alertas (opcional)</FormLabel>
-                    <FormControl>
-                      <Input type="email" placeholder="alertas@ejemplo.com" data-testid="input-study-alert-email" {...field} />
-                    </FormControl>
-                    <FormDescription>Correo para recibir alertas de este estudio</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="speciesProfileId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Perfil de especie (opcional)</FormLabel>
-                    <FormControl>
-                      <Select value={field.value || ""} onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)}>
-                        <SelectTrigger data-testid="select-species-profile">
-                          <SelectValue placeholder="Sin perfil asignado" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">Sin perfil</SelectItem>
-                          {speciesProfiles?.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                    <FormDescription>Determina los umbrales de deteccion de eventos</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="border-t pt-4 mt-4">
-                <p className="text-sm font-medium mb-3">Configuración Ornitela</p>
-                <div className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-4">
+              <Tabs defaultValue="general" className="w-full">
+                <TabsList className="w-full grid grid-cols-3" data-testid="tabs-study-form">
+                  <TabsTrigger value="general" data-testid="tab-general">General</TabsTrigger>
+                  <TabsTrigger value="movebank" data-testid="tab-movebank">Movebank</TabsTrigger>
+                  <TabsTrigger value="ornitela" data-testid="tab-ornitela">Ornitela</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="general" className="space-y-4 mt-4" data-testid="tab-content-general">
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Nombre del estudio</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Ej: Águilas reales Patagonia" data-testid="input-study-name" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="movebankStudyId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Study ID de Movebank (opcional)</FormLabel>
+                        <FormControl>
+                          <Input type="number" placeholder="Ej: 12345678" data-testid="input-study-movebank-id" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="alertEmail"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email de alertas (opcional)</FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="alertas@ejemplo.com" data-testid="input-study-alert-email" {...field} />
+                        </FormControl>
+                        <FormDescription>Correo para recibir alertas de este estudio</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="speciesProfileId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Perfil de especie (opcional)</FormLabel>
+                        <FormControl>
+                          <Select value={field.value || ""} onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)}>
+                            <SelectTrigger data-testid="select-species-profile">
+                              <SelectValue placeholder="Sin perfil asignado" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Sin perfil</SelectItem>
+                              {speciesProfiles?.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <FormDescription>Determina los umbrales de deteccion de eventos</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="active"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center justify-between">
+                        <FormLabel>Estudio activo</FormLabel>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-study-active" />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </TabsContent>
+
+                <TabsContent value="movebank" className="space-y-4 mt-4" data-testid="tab-content-movebank">
+                  <p className="text-sm text-muted-foreground">Credenciales para sincronizar datos desde Movebank. Solo necesario si el estudio usa datos de Movebank.</p>
+                  <FormField
+                    control={form.control}
+                    name="movebankUsername"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Usuario de Movebank (opcional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario@movebank"}
+                            data-testid="input-study-mb-user"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : ""}</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="movebankPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Contraseña de Movebank (opcional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
+                            data-testid="input-study-mb-pass"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>{editStudy ? "Dejar vacío para mantener la credencial actual" : ""}</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </TabsContent>
+
+                <TabsContent value="ornitela" className="space-y-4 mt-4" data-testid="tab-content-ornitela">
                   <FormField
                     control={form.control}
                     name="ornitelaEnabled"
@@ -513,20 +538,9 @@ export default function AdminStudies() {
                       </FormItem>
                     )}
                   />
-                </div>
-              </div>
-              <FormField
-                control={form.control}
-                name="active"
-                render={({ field }) => (
-                  <FormItem className="flex items-center justify-between">
-                    <FormLabel>Estudio activo</FormLabel>
-                    <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} data-testid="switch-study-active" />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+                </TabsContent>
+              </Tabs>
+
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
                   Cancelar
