@@ -331,7 +331,7 @@ export default function AdminStudies() {
                   <TabsTrigger value="ornitela" data-testid="tab-ornitela">Ornitela</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="general" className="space-y-4 mt-4" data-testid="tab-content-general">
+                <TabsContent value="general" className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1" data-testid="tab-content-general">
                   <FormField
                     control={form.control}
                     name="name"
@@ -410,7 +410,7 @@ export default function AdminStudies() {
                   />
                 </TabsContent>
 
-                <TabsContent value="movebank" className="space-y-4 mt-4" data-testid="tab-content-movebank">
+                <TabsContent value="movebank" className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1" data-testid="tab-content-movebank">
                   <p className="text-sm text-muted-foreground">Credenciales para sincronizar datos desde Movebank. Solo necesario si el estudio usa datos de Movebank.</p>
                   <FormField
                     control={form.control}
@@ -420,7 +420,7 @@ export default function AdminStudies() {
                         <FormLabel>Usuario de Movebank (opcional)</FormLabel>
                         <FormControl>
                           <Input
-                            type="password"
+                            type="text"
                             placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario@movebank"}
                             data-testid="input-study-mb-user"
                             {...field}
@@ -452,7 +452,7 @@ export default function AdminStudies() {
                   />
                 </TabsContent>
 
-                <TabsContent value="ornitela" className="space-y-4 mt-4" data-testid="tab-content-ornitela">
+                <TabsContent value="ornitela" className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1" data-testid="tab-content-ornitela">
                   <FormField
                     control={form.control}
                     name="ornitelaEnabled"
@@ -486,7 +486,7 @@ export default function AdminStudies() {
                         <FormLabel>Username Ornitela</FormLabel>
                         <FormControl>
                           <Input
-                            type="password"
+                            type="text"
                             placeholder={editStudy ? "Dejar vacío para mantener actual" : "usuario"}
                             data-testid="input-ornitela-username"
                             {...field}
