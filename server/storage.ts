@@ -906,19 +906,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createIndividualsByName(studyId: string, names: string[]): Promise<void> {
+    const existing = await this.getIndividuals(studyId);
+    const existingNames = new Set(existing.map((i) => i.localIdentifier));
+    const usedIds = new Set(existing.map((i) => i.movebankId));
+    let nextNegId = -1;
+    while (usedIds.has(nextNegId)) nextNegId--;
     for (const name of names) {
+      if (existingNames.has(name)) continue;
+      while (usedIds.has(nextNegId)) nextNegId--;
       await db.insert(individuals).values({
         studyId,
-        movebankId: 0,
+        movebankId: nextNegId,
         localIdentifier: name,
         synced: false,
       }).onConflictDoNothing();
+      usedIds.add(nextNegId);
+      existingNames.add(name);
+      nextNegId--;
     }
   }
 
   async createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void> {
     const existing = await this.getIndividuals(studyId);
     const existingNames = new Set(existing.map((i) => i.localIdentifier));
+    const usedIds = new Set(existing.map((i) => i.movebankId));
+    let nextNegId = -1;
+    while (usedIds.has(nextNegId)) nextNegId--;
     for (const entry of entries) {
       if (existingNames.has(entry.name)) {
         if (entry.taxon || entry.sex) {
@@ -933,15 +946,18 @@ export class DatabaseStorage implements IStorage {
             ));
         }
       } else {
+        while (usedIds.has(nextNegId)) nextNegId--;
         await db.insert(individuals).values({
           studyId,
-          movebankId: 0,
+          movebankId: nextNegId,
           localIdentifier: entry.name,
           taxonCanonicalName: entry.taxon || null,
           sex: entry.sex || null,
           synced: false,
         }).onConflictDoNothing();
+        usedIds.add(nextNegId);
         existingNames.add(entry.name);
+        nextNegId--;
       }
     }
   }

@@ -18,7 +18,7 @@ Key architectural features include:
 - **Immobility/Mortality Detection**: GPS-based analysis for detecting prolonged immobility or lack of transmission, with configurable thresholds.
 - **Geospatial Analysis Engine**: Utilizes Turf.js for advanced home range analysis (MCP, Kernel density), distance traveled, and movement speed calculations, with comprehensive visualization and export options.
 - **Alerting System**: Automated email notifications for critical events, immobility, and emission monitoring, with deduplication.
-- **Data Import**: Support for importing CSV data from various sources (Movebank, Base Lunar, Ornitela) with format auto-detection and intelligent parsing.
+- **Data Import**: Support for importing CSV data from various sources (Movebank, Base Lunar, Ornitela) with format auto-detection and intelligent parsing. CSV-imported individuals receive unique negative `movebankId` values to avoid unique-constraint conflicts. Post-import cache invalidation refreshes individuals, GPS counts, and last-positions views. GPS event count column ("Eventos GPS") displayed in study-detail individuals table via `GET /api/studies/:id/gps-counts`.
 - **Data Caching Strategy**: A cache-first approach for GPS and accelerometer data, including explicit range tracking and gap-filling to optimize Movebank API calls.
 - **Credential Security**: Encryption of sensitive external credentials (e.g., Movebank) at rest using AES-256-GCM.
 - **Ornitela Panel Sync**: Automated synchronization with Ornitela cpanel (login, HTML parsing with cheerio, CSV download per device IMEI) with configurable intervals and cron integration.
