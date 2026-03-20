@@ -133,50 +133,86 @@ export class OrnitelaSync {
     const $ = cheerio.load(html);
     const devices: OrnitelaDevice[] = [];
 
-    $("table tr").each((_index, row) => {
-      const cells = $(row).find("td");
-      if (cells.length < 3) return;
+    $("#dt_index tbody tr, #dt_index tr").each((_index, row) => {
+      const cells = $(row).find("td, th");
+      if (cells.length < 4) return;
+
+      let imei = "";
+      const onClick = $(row).attr("onclick") || $(row).attr("onClick") || "";
+      const wrMatch = onClick.match(/WR\s*\(\s*'(\d{10,20})'/);
+      if (wrMatch) {
+        imei = wrMatch[1];
+      }
+
+      if (!imei) {
+        const firstCell = cells.eq(0).text().trim();
+        if (/^\d{10,20}$/.test(firstCell)) {
+          imei = firstCell;
+        }
+      }
+
+      if (!imei) {
+        const rowHtml = $(row).html() || "";
+        const dlMatch = rowHtml.match(/dl(\d{10,20})cc/);
+        if (dlMatch) imei = dlMatch[1];
+      }
+
+      if (!imei) return;
 
       const texts: string[] = [];
       cells.each((_i, cell) => {
         texts.push($(cell).text().trim());
       });
 
-      let imei = "";
+      let name = "";
+      let serial = "";
+      let status = "";
+      let lastGPRS = "";
+
       cells.each((_i, cell) => {
-        const cellHtml = $(cell).html() || "";
-        const imeiMatch = cellHtml.match(/dl(\d{10,20})cc/);
-        if (imeiMatch) {
-          imei = imeiMatch[1];
+        const el = $(cell);
+        const dataOrder = el.attr("data-order") || "";
+        const text = el.text().trim();
+
+        if (!name && el.hasClass("tcl") && text.length > 2 && !/^\d+$/.test(text) && !text.includes("Loading")) {
+          name = text;
         }
 
-        const inputEl = $(cell).find("input[name*='dl']");
-        if (inputEl.length > 0) {
-          const nameAttr = inputEl.attr("name") || "";
-          const inputImeiMatch = nameAttr.match(/dl(\d{10,20})cc/);
-          if (inputImeiMatch) {
-            imei = inputImeiMatch[1];
+        if (!serial && /^\d{4,8}$/.test(dataOrder) && /^\d{4,8}$/.test(text)) {
+          serial = text;
+        }
+
+        if (!lastGPRS && /^\d{4}-\d{2}-\d{2}/.test(dataOrder)) {
+          lastGPRS = text;
+        }
+
+        if (!status) {
+          const img = el.find("img[title]");
+          if (img.length > 0) {
+            const title = img.attr("title") || "";
+            if (title.includes("suspended")) status = "suspended";
+            else if (title.includes("active") || title.includes("transmitting")) status = "active";
           }
         }
       });
 
-      if (!imei) {
-        const rowHtml = $(row).html() || "";
-        const rowImeiMatch = rowHtml.match(/dl(\d{10,20})cc/);
-        if (rowImeiMatch) {
-          imei = rowImeiMatch[1];
-        }
+      if (!name) {
+        const nameSpan = $(row).find("span[id^='tdn_']");
+        if (nameSpan.length > 0) name = nameSpan.text().trim();
       }
 
-      if (imei) {
-        devices.push({
-          name: texts[0] || "",
-          serial: texts[1] || "",
-          status: texts[2] || "",
-          lastGPRS: texts[3] || "",
-          imei,
-        });
+      if (!serial) {
+        const snEl = $(row).find("th[data-order] b, td[data-order] b");
+        if (snEl.length > 0) serial = snEl.first().text().trim();
       }
+
+      devices.push({
+        name: name || `Device-${imei.slice(-6)}`,
+        serial,
+        status: status || "unknown",
+        lastGPRS,
+        imei,
+      });
     });
 
     log(
