@@ -1684,16 +1684,12 @@ export async function registerRoutes(
             }
             // Any other Movebank or network error: surface it instead of producing a false "silent" result.
             send({
-              type: "error",
-              message: `Error consultando Movebank para ${animal.localIdentifier}: ${e.message}`,
-            });
-            send({
               type: "done",
               partial: true,
               processed: processed - 1,
               total,
               movebankCalls,
-              message: `Consulta interrumpida por un error de Movebank tras ${processed - 1} de ${total} animales. Revisa las credenciales o vuelve a intentarlo más tarde.`,
+              message: `Consulta interrumpida tras ${processed - 1} de ${total} animales. Motivo: ${e.message}`,
             });
             res.end();
             return;
