@@ -103,6 +103,7 @@ export interface IStorage {
   }>;
 
   getCachedGpsEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedGpsEvent[]>;
+  getLatestCachedGpsEvent(studyId: string, individual: string): Promise<CachedGpsEvent | null>;
   insertCachedGpsEvents(events: Omit<CachedGpsEvent, "id">[]): Promise<void>;
   getCachedAccEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedAccEvent[]>;
   insertCachedAccEvents(events: Omit<CachedAccEvent, "id">[]): Promise<void>;
@@ -716,6 +717,17 @@ export class DatabaseStorage implements IStorage {
         lte(cachedGpsEvents.timestamp, tsEnd)
       ))
       .orderBy(cachedGpsEvents.timestamp);
+  }
+
+  async getLatestCachedGpsEvent(studyId: string, individual: string): Promise<CachedGpsEvent | null> {
+    const rows = await db.select().from(cachedGpsEvents)
+      .where(and(
+        eq(cachedGpsEvents.studyId, studyId),
+        eq(cachedGpsEvents.individualLocalIdentifier, individual),
+      ))
+      .orderBy(desc(cachedGpsEvents.timestamp))
+      .limit(1);
+    return rows[0] ?? null;
   }
 
   async insertCachedGpsEvents(events: Omit<CachedGpsEvent, "id">[]): Promise<void> {

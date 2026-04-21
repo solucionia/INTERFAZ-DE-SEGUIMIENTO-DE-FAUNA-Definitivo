@@ -58,6 +58,8 @@ export default function EmissionMonitor() {
   const [days, setDays] = useState("3");
   const [results, setResults] = useState<EmissionResult[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number; animalId: string } | null>(null);
+  const [partialMessage, setPartialMessage] = useState<string | null>(null);
   const [showAlertDialog, setShowAlertDialog] = useState(false);
   const [alertDays, setAlertDays] = useState("3");
   const [alertEmail, setAlertEmail] = useState(user?.email || "");
@@ -113,20 +115,57 @@ export default function EmissionMonitor() {
     }
 
     setSearching(true);
+    setResults(null);
+    setProgress(null);
+    setPartialMessage(null);
+
+    const collected: EmissionResult[] = [];
+
     try {
       const res = await fetch(`/api/monitor/emissions?days=${d}`, { credentials: "include" });
-      if (res.status === 429) {
-        const errBody = await res.json().catch(() => ({}));
-        toast({ title: "Limite de peticiones", description: errBody.message || "Movebank ha limitado las peticiones temporalmente. Intente de nuevo mas tarde.", variant: "destructive" });
-        return;
+      if (!res.ok || !res.body) {
+        throw new Error("Error al consultar emisiones");
       }
-      if (!res.ok) throw new Error("Error al consultar emisiones");
-      const data = await res.json();
-      setResults(data);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sepIdx;
+        while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, sepIdx);
+          buffer = buffer.slice(sepIdx + 2);
+          const line = raw.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          let evt: any;
+          try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+          if (evt.type === "progress") {
+            setProgress({ current: evt.current, total: evt.total, animalId: evt.animalId });
+          } else if (evt.type === "result") {
+            collected.push(evt.result);
+            // update results live so user sees them appear
+            setResults([...collected].sort((a, b) => (b.daysSilent ?? 9999) - (a.daysSilent ?? 9999)));
+          } else if (evt.type === "done") {
+            if (evt.partial && evt.message) {
+              setPartialMessage(evt.message);
+            }
+            setResults([...collected].sort((a, b) => (b.daysSilent ?? 9999) - (a.daysSilent ?? 9999)));
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "Error en monitor");
+          }
+        }
+      }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
       setSearching(false);
+      setProgress(null);
     }
   };
 
@@ -183,9 +222,36 @@ export default function EmissionMonitor() {
           <CardContent className="py-8">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Consultando datos de Movebank...</p>
-              <p className="text-xs text-muted-foreground">Esto puede tardar segun el numero de animales activos</p>
+              {progress ? (
+                <>
+                  <p className="text-sm font-medium" data-testid="text-progress-counter">
+                    Consultando animal {progress.current} de {progress.total}
+                  </p>
+                  <p className="text-xs text-muted-foreground" data-testid="text-progress-animal">
+                    {progress.animalId}
+                  </p>
+                  <div className="w-full max-w-md h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Iniciando consulta...</p>
+              )}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {partialMessage && !searching && (
+        <Card className="border-orange-500/50 bg-orange-500/5">
+          <CardContent className="py-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-foreground" data-testid="text-partial-message">
+              {partialMessage}
+            </p>
           </CardContent>
         </Card>
       )}
