@@ -2473,21 +2473,30 @@ export async function registerRoutes(
         return -1;
       };
 
-      const hasOrnitellaCols = findCol("device_id", "deviceid", "dev_id", "tagid", "tag_id") >= 0
-        && findCol("utc_datetime", "datetime_utc", "utc_date", "utc_time", "datetime", "date_time") >= 0;
+      const hasOrnitellaDevice = findCol("device_id", "deviceid", "dev_id", "tagid", "tag_id") >= 0;
+      const hasOrnitellaSingleDt = findCol("utc_datetime", "datetime_utc", "datetime", "date_time") >= 0;
+      const hasOrnitellaDatePair = (findCol("utc_date") >= 0 && findCol("utc_time") >= 0)
+        || (findCol("date") >= 0 && findCol("time") >= 0);
+      const hasOrnitellaCols = hasOrnitellaDevice && (hasOrnitellaSingleDt || hasOrnitellaDatePair);
       const hasBaseLunarCols = findCol("nombre") >= 0 && findCol("fecha") >= 0 && findCol("hora") >= 0 && findCol("x") >= 0 && findCol("y") >= 0;
       const hasMovebankCols = findCol("timestamp") >= 0 && findCol("individual_local_identifier", "individual.local.identifier") >= 0;
 
-      let detectedFormat: "movebank" | "baselunar" | "ornitella" = "movebank";
-      if (hasOrnitellaCols) {
-        detectedFormat = "ornitella";
+      let detectedFormat: "movebank" | "baselunar" | "ornitella" | "unknown" = "unknown";
+      if (hasMovebankCols) {
+        detectedFormat = "movebank";
       } else if (hasBaseLunarCols) {
         detectedFormat = "baselunar";
-      } else if (hasSemicolon && !hasMovebankCols) {
-        detectedFormat = "baselunar";
+      } else if (hasOrnitellaCols) {
+        detectedFormat = "ornitella";
       }
 
-      const format = requestedFormat === "auto" ? detectedFormat : (requestedFormat as "movebank" | "baselunar" | "ornitella");
+      if (requestedFormat === "auto" && detectedFormat === "unknown") {
+        return res.status(400).json({
+          message: `Formato CSV no reconocido. Se esperaban cabeceras de Movebank (timestamp, individual-local-identifier), Base Lunar (nombre, fecha, hora, x, y) u Ornitela (device_id + date/time o utc_datetime). Cabeceras encontradas: ${rawHeaders.slice(0, 12).join(", ")}${rawHeaders.length > 12 ? "..." : ""}`,
+        });
+      }
+
+      const format = requestedFormat === "auto" ? detectedFormat as "movebank" | "baselunar" | "ornitella" : (requestedFormat as "movebank" | "baselunar" | "ornitella");
 
       if (format === "baselunar") {
         if (dataType !== "gps") {
