@@ -204,7 +204,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Este email ya esta registrado" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const validRoles = ["superuser", "user", "observer"];
+      const validRoles = ["superuser", "user", "observer", "viewer"];
       const assignRole = validRoles.includes(req.body.role) ? req.body.role : "user";
       const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null, role: assignRole });
       await storage.createActivityLog({ userId: req.user!.id, action: "create_user", resource: "user", resourceId: user.id, details: `Creo usuario ${name}` });
@@ -236,7 +236,7 @@ export async function registerRoutes(
       if (user.id === req.params.id) {
         return res.status(400).json({ message: "No puedes cambiar tu propio rol" });
       }
-      if (!["superuser", "user", "observer"].includes(req.body.role)) {
+      if (!["superuser", "user", "observer", "viewer"].includes(req.body.role)) {
         return res.status(400).json({ message: "Rol inválido" });
       }
       updateData.role = req.body.role;

@@ -163,6 +163,7 @@ export default function AdminUsers() {
                     <SelectItem value="superuser">Superusuario</SelectItem>
                     <SelectItem value="user">Investigador</SelectItem>
                     <SelectItem value="observer">Observador</SelectItem>
+                    <SelectItem value="viewer">Visor</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -234,6 +235,11 @@ export default function AdminUsers() {
                               <Eye className="w-3 h-3 mr-1" />
                               Observador
                             </Badge>
+                          ) : u.role === "viewer" ? (
+                            <Badge variant="outline" className="bg-purple-500/10 text-purple-500 border-purple-500/20">
+                              <Eye className="w-3 h-3 mr-1" />
+                              Visor
+                            </Badge>
                           ) : (
                             <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
                               Investigador
@@ -279,6 +285,15 @@ export default function AdminUsers() {
                                       >
                                         <Eye className="w-4 h-4 mr-2" />
                                         Cambiar a Observador
+                                      </DropdownMenuItem>
+                                    )}
+                                    {u.role !== "viewer" && (
+                                      <DropdownMenuItem
+                                        onClick={() => changeRoleMutation.mutate({ userId: u.id, role: "viewer" })}
+                                        data-testid={`button-role-viewer-${u.id}`}
+                                      >
+                                        <Eye className="w-4 h-4 mr-2" />
+                                        Cambiar a Visor
                                       </DropdownMenuItem>
                                     )}
                                     <DropdownMenuSeparator />

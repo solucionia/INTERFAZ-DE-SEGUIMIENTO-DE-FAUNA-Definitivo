@@ -16,6 +16,7 @@ export function usePermissions() {
     canRepair: role === "superuser",
     canConfigureAlerts: role === "superuser" || role === "user",
     isObserver: role === "observer",
+    isViewer: role === "viewer",
     isSuperuser: role === "superuser",
   };
 }
@@ -24,4 +25,5 @@ export const ROLE_LABELS: Record<string, string> = {
   superuser: "Superusuario",
   user: "Investigador",
   observer: "Observador",
+  viewer: "Visor",
 };
