@@ -1098,6 +1098,7 @@ export async function registerRoutes(
       const hasMovebank = hasMovebankCredentials(study);
 
       const results: Record<string, Record<string, string>[]> = {};
+      const movebankErrors: Record<string, string> = {};
 
       const formatGpsCache = (cached: any[], id: string) => cached.map((c: any) => ({
         timestamp: new Date(c.timestamp).toISOString(),
@@ -1246,6 +1247,7 @@ export async function registerRoutes(
             log(`Returning ${results[trimmed].length} ${sensorKey} records for ${trimmed} (gaps: ${gaps.length}, movebank: ${hasMovebank})`, "cache");
           } catch (e: any) {
             log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
+            movebankErrors[trimmed] = e.message || "Error al consultar Movebank";
             if (isGps) {
               const fallback = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
               results[trimmed] = formatGpsCache(fallback, trimmed);
@@ -1255,6 +1257,11 @@ export async function registerRoutes(
             }
             log(`Fallback to cache for ${trimmed}: ${results[trimmed].length} records`, "cache");
           }
+      }
+
+      if (Object.keys(movebankErrors).length > 0) {
+        res.setHeader("X-Movebank-Errors", encodeURIComponent(JSON.stringify(movebankErrors)));
+        res.setHeader("Access-Control-Expose-Headers", "X-Movebank-Errors");
       }
 
       return res.json(results);
