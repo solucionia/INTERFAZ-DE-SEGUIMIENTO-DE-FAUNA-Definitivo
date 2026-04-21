@@ -196,6 +196,9 @@ function severityBadge(severity: string) {
 export default function StudyVisualization() {
   const [, params] = useRoute("/study/:id/visualize");
   const studyId = params?.id;
+  const initialAnimalParam = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("animal")
+    : null;
   const { toast } = useToast();
   const { canExport, canDetectEvents, isObserver } = usePermissions();
 
@@ -254,6 +257,17 @@ export default function StudyVisualization() {
     if (projectFilterId === "all") return base;
     return base.filter(ind => ind.projectId === Number(projectFilterId));
   }, [individuals, projectFilterId]);
+
+  const didApplyInitialAnimal = useRef(false);
+  useEffect(() => {
+    if (didApplyInitialAnimal.current) return;
+    if (!initialAnimalParam || !individuals) return;
+    const match = individuals.find((i) => i.localIdentifier === initialAnimalParam);
+    if (match && match.localIdentifier) {
+      setSelectedAnimals([match.localIdentifier]);
+      didApplyInitialAnimal.current = true;
+    }
+  }, [individuals, initialAnimalParam]);
 
   const toggleAnimal = (localId: string) => {
     setSelectedAnimals((prev) =>
