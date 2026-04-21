@@ -232,6 +232,17 @@ export default function Dashboard() {
                         <Badge variant="outline" className="text-xs opacity-50">Inactivo</Badge>
                       )}
                     </div>
+                    {study.movebankStudyId && (
+                      <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground" data-testid={`text-last-sync-${study.id}`}>
+                        <Wifi className="w-3 h-3" />
+                        <span>
+                          Última sincronización:{" "}
+                          {study.lastMovebankSync
+                            ? format(new Date(study.lastMovebankSync), "dd/MM/yyyy HH:mm", { locale: es })
+                            : "nunca"}
+                        </span>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </Link>
