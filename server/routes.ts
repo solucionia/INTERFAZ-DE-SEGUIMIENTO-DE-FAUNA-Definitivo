@@ -204,7 +204,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Este email ya esta registrado" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const validRoles = ["superuser", "user", "observer", "viewer"];
+      const validRoles = ["superuser", "user", "observer"];
       const assignRole = validRoles.includes(req.body.role) ? req.body.role : "user";
       const user = await storage.createUser({ name, email, password: hashed, alertEmail: req.body.alertEmail || null, role: assignRole });
       await storage.createActivityLog({ userId: req.user!.id, action: "create_user", resource: "user", resourceId: user.id, details: `Creo usuario ${name}` });
@@ -236,7 +236,7 @@ export async function registerRoutes(
       if (user.id === req.params.id) {
         return res.status(400).json({ message: "No puedes cambiar tu propio rol" });
       }
-      if (!["superuser", "user", "observer", "viewer"].includes(req.body.role)) {
+      if (!["superuser", "user", "observer"].includes(req.body.role)) {
         return res.status(400).json({ message: "Rol inválido" });
       }
       updateData.role = req.body.role;
@@ -1098,7 +1098,6 @@ export async function registerRoutes(
       const hasMovebank = hasMovebankCredentials(study);
 
       const results: Record<string, Record<string, string>[]> = {};
-      const movebankErrors: Record<string, string> = {};
 
       const formatGpsCache = (cached: any[], id: string) => cached.map((c: any) => ({
         timestamp: new Date(c.timestamp).toISOString(),
@@ -1247,7 +1246,6 @@ export async function registerRoutes(
             log(`Returning ${results[trimmed].length} ${sensorKey} records for ${trimmed} (gaps: ${gaps.length}, movebank: ${hasMovebank})`, "cache");
           } catch (e: any) {
             log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
-            movebankErrors[trimmed] = e.message || "Error al consultar Movebank";
             if (isGps) {
               const fallback = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
               results[trimmed] = formatGpsCache(fallback, trimmed);
@@ -1257,11 +1255,6 @@ export async function registerRoutes(
             }
             log(`Fallback to cache for ${trimmed}: ${results[trimmed].length} records`, "cache");
           }
-      }
-
-      if (Object.keys(movebankErrors).length > 0) {
-        res.setHeader("X-Movebank-Errors", encodeURIComponent(JSON.stringify(movebankErrors)));
-        res.setHeader("Access-Control-Expose-Headers", "X-Movebank-Errors");
       }
 
       return res.json(results);
@@ -1570,25 +1563,12 @@ export async function registerRoutes(
 
   // Emission monitor - check which active animals have stopped emitting
   app.get("/api/monitor/emissions", requireAuth, async (req, res) => {
-    const user = req.user!;
-    const days = parseInt(req.query.days as string, 10) || 3;
-    const now = Date.now();
-    const cutoffTs = now - days * 24 * 60 * 60 * 1000;
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders?.();
-
-    const send = (event: any) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-
-    let clientClosed = false;
-    req.on("close", () => { clientClosed = true; });
-
     try {
+      const user = req.user!;
+      const days = parseInt(req.query.days as string, 10) || 3;
+      const now = Date.now();
+      const cutoffMs = days * 24 * 60 * 60 * 1000;
+
       const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
 
       let accessibleStudies = studiesWithAnimals;
@@ -1597,68 +1577,39 @@ export async function registerRoutes(
         accessibleStudies = studiesWithAnimals.filter((s) => userStudyIds.includes(s.study.id));
       }
 
-      type Task = {
-        study: typeof accessibleStudies[number]["study"];
-        animal: { localIdentifier: string; movebankId: number };
-      };
-      const tasks: Task[] = [];
+      const results: {
+        animalId: string;
+        studyName: string;
+        studyId: string;
+        lastEmission: number | null;
+        daysSilent: number | null;
+        lat: number | null;
+        lng: number | null;
+      }[] = [];
+
       for (const { study, activeIndividuals } of accessibleStudies) {
-        for (const animal of activeIndividuals) {
-          tasks.push({ study, animal });
-        }
-      }
-
-      const total = tasks.length;
-      send({ type: "start", total });
-
-      let processed = 0;
-      let movebankCalls = 0;
-      let partial = false;
-      let partialMessage = "";
-
-      for (const { study, animal } of tasks) {
-        if (clientClosed) return;
-        processed++;
-        send({
-          type: "progress",
-          current: processed,
-          total,
-          animalId: animal.localIdentifier,
-          studyName: study.name,
-        });
-
-        const latestCached = await storage.getLatestCachedGpsEvent(study.id, animal.localIdentifier);
-
-        // Cache-first: if we already have a recent local event within the threshold,
-        // the animal is emitting normally — no Movebank call needed.
-        if (latestCached && latestCached.timestamp >= cutoffTs) {
+        if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
           continue;
         }
-
-        // Local data is stale (or missing). We need Movebank to confirm.
-        const hasMovebank = !!(study.movebankStudyId && study.movebankUsername && study.movebankPassword);
-
-        let lastTs: number | null = latestCached ? latestCached.timestamp : null;
-        let lastLat: number | null = latestCached ? Number(latestCached.lat) : null;
-        let lastLng: number | null = latestCached ? Number(latestCached.lng) : null;
-
-        if (hasMovebank) {
+        const decryptedUsername = decrypt(study.movebankUsername);
+        const decryptedPassword = decrypt(study.movebankPassword);
+        for (const animal of activeIndividuals) {
           try {
-            const decryptedUsername = decrypt(study.movebankUsername!);
-            const decryptedPassword = decrypt(study.movebankPassword!);
-            // Look back a generous window to catch the latest emission.
-            const lookbackStart = lastTs ? lastTs : now - days * 2 * 24 * 60 * 60 * 1000;
+            const recentWindow = now - cutoffMs * 2;
             const gpsEvents = await fetchMovebankEvents(
-              study.movebankStudyId!,
+              study.movebankStudyId,
               decryptedUsername,
               decryptedPassword,
               animal.localIdentifier,
               653,
-              lookbackStart,
+              recentWindow,
               now
             );
-            movebankCalls++;
             await movebankDelay();
+
+            let lastTs: number | null = null;
+            let lastLat: number | null = null;
+            let lastLng: number | null = null;
 
             for (const ev of gpsEvents) {
               const ts = new Date(ev.timestamp).getTime();
@@ -1674,62 +1625,47 @@ export async function registerRoutes(
                 }
               }
             }
+
+            const daysSilent = lastTs ? Math.floor((now - lastTs) / (24 * 60 * 60 * 1000)) : null;
+
+            if (daysSilent === null || daysSilent >= days) {
+              results.push({
+                animalId: animal.localIdentifier,
+                studyName: study.name,
+                studyId: study.id,
+                lastEmission: lastTs,
+                daysSilent,
+                lat: lastLat,
+                lng: lastLng,
+              });
+            }
           } catch (e: any) {
             log(`Emission check error for ${animal.localIdentifier}: ${e.message}`, "monitor");
             if (e instanceof MovebankError && e.statusCode === 429) {
-              partial = true;
-              partialMessage = `Consulta parcial — limite de Movebank alcanzado. Se mostraron ${processed - 1} de ${total} animales. Vuelve a intentarlo a las 00:00`;
-              processed--; // this animal was not actually checked
-              break;
+              return res.status(429).json({ message: e.message });
             }
-            // Any other Movebank or network error: surface it instead of producing a false "silent" result.
-            send({
-              type: "error",
-              message: `Error consultando Movebank para ${animal.localIdentifier}: ${e.message}`,
-            });
-            send({
-              type: "done",
-              partial: true,
-              processed: processed - 1,
-              total,
-              movebankCalls,
-              message: `Consulta interrumpida por un error de Movebank tras ${processed - 1} de ${total} animales. Revisa las credenciales o vuelve a intentarlo más tarde.`,
-            });
-            res.end();
-            return;
-          }
-        }
-
-        const daysSilent = lastTs ? Math.floor((now - lastTs) / (24 * 60 * 60 * 1000)) : null;
-        if (daysSilent === null || daysSilent >= days) {
-          send({
-            type: "result",
-            result: {
+            results.push({
               animalId: animal.localIdentifier,
               studyName: study.name,
               studyId: study.id,
-              lastEmission: lastTs,
-              daysSilent,
-              lat: lastLat,
-              lng: lastLng,
-            },
-          });
+              lastEmission: null,
+              daysSilent: null,
+              lat: null,
+              lng: null,
+            });
+          }
         }
       }
 
-      send({
-        type: "done",
-        partial,
-        processed,
-        total,
-        movebankCalls,
-        message: partial ? partialMessage : null,
-      });
-      res.end();
+      results.sort((a, b) => (b.daysSilent ?? 9999) - (a.daysSilent ?? 9999));
+
+      return res.json(results);
     } catch (e: any) {
       log(`Emission monitor error: ${e.message}`, "monitor");
-      send({ type: "error", message: `Error en monitor de emision: ${e.message}` });
-      res.end();
+      if (e instanceof MovebankError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
+      return res.status(500).json({ message: `Error en monitor de emision: ${e.message}` });
     }
   });
 
@@ -2537,30 +2473,21 @@ export async function registerRoutes(
         return -1;
       };
 
-      const hasOrnitellaDevice = findCol("device_id", "deviceid", "dev_id", "tagid", "tag_id") >= 0;
-      const hasOrnitellaSingleDt = findCol("utc_datetime", "datetime_utc", "datetime", "date_time") >= 0;
-      const hasOrnitellaDatePair = (findCol("utc_date") >= 0 && findCol("utc_time") >= 0)
-        || (findCol("date") >= 0 && findCol("time") >= 0);
-      const hasOrnitellaCols = hasOrnitellaDevice && (hasOrnitellaSingleDt || hasOrnitellaDatePair);
+      const hasOrnitellaCols = findCol("device_id", "deviceid", "dev_id", "tagid", "tag_id") >= 0
+        && findCol("utc_datetime", "datetime_utc", "utc_date", "utc_time", "datetime", "date_time") >= 0;
       const hasBaseLunarCols = findCol("nombre") >= 0 && findCol("fecha") >= 0 && findCol("hora") >= 0 && findCol("x") >= 0 && findCol("y") >= 0;
       const hasMovebankCols = findCol("timestamp") >= 0 && findCol("individual_local_identifier", "individual.local.identifier") >= 0;
 
-      let detectedFormat: "movebank" | "baselunar" | "ornitella" | "unknown" = "unknown";
-      if (hasMovebankCols) {
-        detectedFormat = "movebank";
+      let detectedFormat: "movebank" | "baselunar" | "ornitella" = "movebank";
+      if (hasOrnitellaCols) {
+        detectedFormat = "ornitella";
       } else if (hasBaseLunarCols) {
         detectedFormat = "baselunar";
-      } else if (hasOrnitellaCols) {
-        detectedFormat = "ornitella";
+      } else if (hasSemicolon && !hasMovebankCols) {
+        detectedFormat = "baselunar";
       }
 
-      if (requestedFormat === "auto" && detectedFormat === "unknown") {
-        return res.status(400).json({
-          message: `Formato CSV no reconocido. Se esperaban cabeceras de Movebank (timestamp, individual-local-identifier), Base Lunar (nombre, fecha, hora, x, y) u Ornitela (device_id + date/time o utc_datetime). Cabeceras encontradas: ${rawHeaders.slice(0, 12).join(", ")}${rawHeaders.length > 12 ? "..." : ""}`,
-        });
-      }
-
-      const format = requestedFormat === "auto" ? detectedFormat as "movebank" | "baselunar" | "ornitella" : (requestedFormat as "movebank" | "baselunar" | "ornitella");
+      const format = requestedFormat === "auto" ? detectedFormat : (requestedFormat as "movebank" | "baselunar" | "ornitella");
 
       if (format === "baselunar") {
         if (dataType !== "gps") {

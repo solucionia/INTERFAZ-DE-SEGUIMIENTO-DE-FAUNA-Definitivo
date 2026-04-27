@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { storage } from "./storage";
-import { fetchMovebankEvents, MovebankError } from "./movebank";
+import { fetchMovebankEvents } from "./movebank";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } from "./emailService";
 import { DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds } from "@shared/schema";
@@ -11,21 +11,6 @@ import { ornitelaSync } from "./ornitelaSync";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 
 const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
-const SYNC_OVERLAP_MS = 10 * 60 * 1000;
-const FALLBACK_WINDOW_MS = 6 * 60 * 60 * 1000;
-let pendingRetryTimer: NodeJS.Timeout | null = null;
-
-function scheduleMovebankRetry(blockedUntil: Date | null, reason: string) {
-  if (pendingRetryTimer) return;
-  const delay = blockedUntil ? Math.max(blockedUntil.getTime() - Date.now(), 60_000) + 5_000 : 60 * 60 * 1000;
-  const retryAt = new Date(Date.now() + delay);
-  log(`Cron: Reintento de Movebank programado para ${retryAt.toISOString()} (motivo: ${reason})`, "cron");
-  pendingRetryTimer = setTimeout(() => {
-    pendingRetryTimer = null;
-    log("Cron: Ejecutando reintento de Movebank tras ventana de bloqueo...", "cron");
-    runEventDetection().catch((e) => log(`Cron: Error en reintento de Movebank: ${e?.message || e}`, "cron"));
-  }, delay);
-}
 
 async function runEventDetection() {
   const startTime = Date.now();
@@ -42,15 +27,11 @@ async function runEventDetection() {
     const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
     let totalEvents = 0;
     let totalEmails = 0;
-    let rateLimited = false;
 
     for (const { study, activeIndividuals } of studiesWithAnimals) {
-      if (rateLimited) break;
       const studyBlockCheck = movebankRateLimiter.isBlocked();
       if (studyBlockCheck.blocked) {
-        log(`Cron: Movebank bloqueado durante ejecución — saltando estudios restantes (${studyBlockCheck.reason})`, "cron");
-        scheduleMovebankRetry(studyBlockCheck.blockedUntil, studyBlockCheck.reason);
-        rateLimited = true;
+        log(`Cron: Movebank bloqueado durante ejecución — saltando estudios restantes`, "cron");
         break;
       }
 
@@ -64,16 +45,8 @@ async function runEventDetection() {
       }
 
       const now = Date.now();
-      const lastSyncMs = study.lastMovebankSync ? new Date(study.lastMovebankSync).getTime() : null;
-      const windowStart = lastSyncMs && !isNaN(lastSyncMs)
-        ? lastSyncMs - SYNC_OVERLAP_MS
-        : now - FALLBACK_WINDOW_MS;
-      const sixHoursAgo = windowStart;
-      const windowHours = ((now - windowStart) / (60 * 60 * 1000)).toFixed(1);
-      log(`Cron: Estudio "${study.name}" — ventana incremental ${windowHours}h (desde ${new Date(windowStart).toISOString()})`, "cron");
+      const sixHoursAgo = now - 6 * 60 * 60 * 1000;
       let studyEvents = 0;
-      let studyRateLimited = false;
-      let studyHadErrors = false;
 
       if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
         log(`Cron: Estudio "${study.name}" no tiene credenciales de Movebank, omitiendo`, "cron");
@@ -190,27 +163,8 @@ async function runEventDetection() {
             }
           }
         } catch (e: any) {
-          if (e instanceof MovebankError && e.statusCode === 429) {
-            const block = movebankRateLimiter.isBlocked();
-            log(`Cron: Movebank 429 en estudio "${study.name}" — abortando ciclo y programando reintento (${e.message})`, "cron");
-            scheduleMovebankRetry(block.blockedUntil, e.message);
-            studyRateLimited = true;
-            rateLimited = true;
-            break;
-          }
-          studyHadErrors = true;
           log(`Cron: Error en Movebank para estudio "${study.name}", animal "${animal.localIdentifier}": ${e.message}`, "cron");
         }
-      }
-
-      if (!studyRateLimited && !studyHadErrors) {
-        try {
-          await storage.updateStudy(study.id, { lastMovebankSync: new Date(now) } as any);
-        } catch (updErr: any) {
-          log(`Cron: No se pudo actualizar lastMovebankSync para "${study.name}": ${updErr.message}`, "cron");
-        }
-      } else if (studyHadErrors && !studyRateLimited) {
-        log(`Cron: Estudio "${study.name}" tuvo errores en algún animal — no se avanza lastMovebankSync para reintentar la ventana`, "cron");
       }
 
       const studyDuration = ((Date.now() - studyStartTime) / 1000).toFixed(1);

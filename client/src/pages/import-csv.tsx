@@ -57,17 +57,13 @@ type ParsedPreview = {
 function detectFormat(headers: string[]): "movebank" | "baselunar" | "ornitella" | "unknown" {
   const lower = headers.map((h) => h.toLowerCase());
   const ornitelaDeviceNames = ["device_id", "deviceid", "dev_id", "tagid", "tag_id"];
-  const ornitelaSingleDt = ["utc_datetime", "datetime_utc", "datetime", "date_time"];
-  const hasOrnitelaDevice = ornitelaDeviceNames.some(n => lower.includes(n));
-  const hasOrnitelaSingleDt = ornitelaSingleDt.some(n => lower.includes(n));
-  const hasOrnitelaDatePair = (lower.includes("utc_date") && lower.includes("utc_time"))
-    || (lower.includes("date") && lower.includes("time"));
-  const hasMovebank = lower.includes("timestamp") && (lower.includes("individual-local-identifier") || lower.includes("individual_local_identifier"));
-  if (hasMovebank) return "movebank";
+  const ornitelaDtNames = ["utc_datetime", "datetime_utc", "utc_date", "utc_time", "datetime", "date_time"];
+  const hasOrnitella = ornitelaDeviceNames.some(n => lower.includes(n)) && ornitelaDtNames.some(n => lower.includes(n));
+  if (hasOrnitella) return "ornitella";
   const hasBaseLunar = lower.includes("nombre") && lower.includes("fecha") && lower.includes("hora") && lower.includes("x") && lower.includes("y");
   if (hasBaseLunar) return "baselunar";
-  const hasOrnitella = hasOrnitelaDevice && (hasOrnitelaSingleDt || hasOrnitelaDatePair);
-  if (hasOrnitella) return "ornitella";
+  const hasMovebank = lower.includes("timestamp") && (lower.includes("individual-local-identifier") || lower.includes("individual_local_identifier"));
+  if (hasMovebank) return "movebank";
   return "unknown";
 }
 
@@ -133,11 +129,9 @@ export default function ImportCsv() {
 
   const effectiveFormat = useMemo(() => {
     if (format !== "auto") return format;
-    if (preview) return preview.detectedFormat;
+    if (preview) return preview.detectedFormat === "unknown" ? "movebank" : preview.detectedFormat;
     return "auto";
   }, [format, preview]);
-
-  const isUnknownFormat = format === "auto" && preview?.detectedFormat === "unknown";
 
 
   const parsePreview = useCallback((f: File) => {
@@ -408,21 +402,6 @@ export default function ImportCsv() {
               </p>
             </div>
           )}
-
-          {isUnknownFormat && (
-            <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/30" data-testid="alert-unknown-format">
-              <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-              <div className="text-sm text-foreground space-y-1">
-                <p className="font-medium">Formato no reconocido</p>
-                <p className="text-muted-foreground text-xs">
-                  No se pudo identificar el formato del CSV. Las cabeceras no coinciden con Movebank
-                  (timestamp, individual-local-identifier), Base Lunar (nombre, fecha, hora, x, y)
-                  ni Ornitela (device_id + date/time o utc_datetime). Selecciona el formato manualmente
-                  o revisa las cabeceras del archivo.
-                </p>
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -498,7 +477,7 @@ export default function ImportCsv() {
               </p>
               <Button
                 onClick={handleUpload}
-                disabled={uploading || !activeStudyId || isUnknownFormat}
+                disabled={uploading || !activeStudyId}
                 data-testid="button-import"
               >
                 {uploading ? (

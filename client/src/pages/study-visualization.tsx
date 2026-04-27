@@ -196,9 +196,6 @@ function severityBadge(severity: string) {
 export default function StudyVisualization() {
   const [, params] = useRoute("/study/:id/visualize");
   const studyId = params?.id;
-  const initialAnimalParam = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("animal")
-    : null;
   const { toast } = useToast();
   const { canExport, canDetectEvents, isObserver } = usePermissions();
 
@@ -257,17 +254,6 @@ export default function StudyVisualization() {
     if (projectFilterId === "all") return base;
     return base.filter(ind => ind.projectId === Number(projectFilterId));
   }, [individuals, projectFilterId]);
-
-  const didApplyInitialAnimal = useRef(false);
-  useEffect(() => {
-    if (didApplyInitialAnimal.current) return;
-    if (!initialAnimalParam || !individuals) return;
-    const match = individuals.find((i) => i.localIdentifier === initialAnimalParam);
-    if (match && match.localIdentifier) {
-      setSelectedAnimals([match.localIdentifier]);
-      didApplyInitialAnimal.current = true;
-    }
-  }, [individuals, initialAnimalParam]);
 
   const toggleAnimal = (localId: string) => {
     setSelectedAnimals((prev) =>
@@ -358,30 +344,6 @@ export default function StudyVisualization() {
       }
 
       if (!gpsRes.ok || !accRes.ok) throw new Error("Error al obtener datos de Movebank");
-
-      const parseErrorsHeader = (res: Response): Record<string, string> => {
-        const raw = res.headers.get("X-Movebank-Errors");
-        if (!raw) return {};
-        try { return JSON.parse(decodeURIComponent(raw)); } catch { return {}; }
-      };
-      const gpsErrors = parseErrorsHeader(gpsRes);
-      const accErrors = parseErrorsHeader(accRes);
-      const allErrors = new Map<string, Set<string>>();
-      for (const [animal, msg] of Object.entries(gpsErrors)) {
-        if (!allErrors.has(animal)) allErrors.set(animal, new Set());
-        allErrors.get(animal)!.add(`GPS: ${msg}`);
-      }
-      for (const [animal, msg] of Object.entries(accErrors)) {
-        if (!allErrors.has(animal)) allErrors.set(animal, new Set());
-        allErrors.get(animal)!.add(`Acelerómetro: ${msg}`);
-      }
-      allErrors.forEach((msgs, animal) => {
-        toast({
-          title: `Error consultando Movebank para ${animal}`,
-          description: Array.from(msgs).join(" · "),
-          variant: "destructive",
-        });
-      });
 
       const gpsRaw: Record<string, Record<string, string>[]> = await gpsRes.json();
       const accRaw: Record<string, Record<string, string>[]> = await accRes.json();
@@ -1032,40 +994,8 @@ export default function StudyVisualization() {
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-center px-6">
-                      <div className="space-y-2 max-w-md">
-                        <Activity className="w-12 h-12 mx-auto text-muted-foreground/30" />
-                        {(() => {
-                          const focus = activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
-                          const hasGpsForFocus = focus ? (gpsData[focus]?.length ?? 0) > 0 : Object.values(gpsData).some(a => a.length > 0);
-                          const hasAccForFocus = focus ? (accData[focus]?.length ?? 0) > 0 : Object.values(accData).some(a => a.length > 0);
-                          const isZoomed = zoomStart !== null && zoomEnd !== null;
-                          if (focus && hasGpsForFocus && !hasAccForFocus) {
-                            return (
-                              <>
-                                <p className="text-sm font-medium text-foreground" data-testid="text-acc-empty-no-sensor">
-                                  Este animal no tiene datos de acelerómetro disponibles
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  El animal <span className="font-mono">{focus}</span> tiene posiciones GPS en este rango pero no envía datos del sensor de acelerómetro.
-                                </p>
-                              </>
-                            );
-                          }
-                          if (isZoomed && hasAccForFocus) {
-                            return (
-                              <p className="text-sm text-muted-foreground" data-testid="text-acc-empty-zoom">
-                                No hay datos de acelerómetro en el zoom actual
-                              </p>
-                            );
-                          }
-                          return (
-                            <p className="text-sm text-muted-foreground" data-testid="text-acc-empty-no-range">
-                              No hay datos de acelerómetro para este rango de fechas
-                            </p>
-                          );
-                        })()}
-                      </div>
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-sm text-muted-foreground">No hay datos de acelerometro para este rango</p>
                     </div>
                   )}
                 </div>

@@ -656,17 +656,7 @@ export default function StudyDetail() {
                             ) : (
                               <WifiOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             )}
-                            {ind.localIdentifier ? (
-                              <Link
-                                href={`/study/${studyId}/visualize?animal=${encodeURIComponent(ind.localIdentifier)}`}
-                                className="text-blue-500 hover:text-blue-400 hover:underline"
-                                data-testid={`link-individual-${ind.movebankId}`}
-                              >
-                                {ind.localIdentifier}
-                              </Link>
-                            ) : (
-                              <span>{`ID-${ind.movebankId}`}</span>
-                            )}
+                            {ind.localIdentifier || `ID-${ind.movebankId}`}
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
