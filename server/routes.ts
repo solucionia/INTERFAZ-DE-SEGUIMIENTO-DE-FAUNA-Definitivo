@@ -125,6 +125,10 @@ export async function registerRoutes(
 ): Promise<Server> {
   setupAuth(app);
 
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   app.use("/api", apiLimiter);
 
   app.post("/api/auth/register", authLimiter, async (req, res, next) => {

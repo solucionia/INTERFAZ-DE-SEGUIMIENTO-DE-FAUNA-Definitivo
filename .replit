@@ -10,6 +10,10 @@ packages = ["R", "gdal", "proj", "geos", "udunits", "lapack", "blas", "gfortran"
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 15000
+externalPort = 3001
+
 [env]
 PORT = "5000"
 
