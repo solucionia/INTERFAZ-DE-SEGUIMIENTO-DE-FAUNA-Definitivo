@@ -1307,7 +1307,7 @@ export async function registerRoutes(
                 const allCached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
                 results[trimmed] = formatAccCache(allCached, trimmed);
               }
-              return;
+              continue;
             }
 
             const gaps = await storage.computeUncoveredGaps(study.id, trimmed, sensorKey, tsStart, tsEnd);
@@ -1321,7 +1321,7 @@ export async function registerRoutes(
                 results[trimmed] = formatAccCache(cached, trimmed);
               }
               log(`Cache HIT for ${trimmed} (${sensorKey}) - ${results[trimmed].length} records`, "cache");
-              return;
+              continue;
             }
 
             if (hasMovebank) {
