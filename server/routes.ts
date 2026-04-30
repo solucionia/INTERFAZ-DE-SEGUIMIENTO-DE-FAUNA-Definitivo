@@ -1891,6 +1891,44 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/studies/:id/movebank-probe", checkRole("superuser"), requireStudyAccess, async (req, res) => {
+    try {
+      const study = await storage.getStudyDecrypted(String(req.params.id));
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      if (!hasMovebankCredentials(study)) return res.status(400).json({ message: "Sin credenciales Movebank" });
+
+      const studyMbId = study.movebankStudyId!;
+      const auth = "Basic " + Buffer.from(`${study.movebankUsername}:${study.movebankPassword}`).toString("base64");
+
+      const probe = async (label: string, url: string) => {
+        const r = await fetch(url, { headers: { Authorization: auth } });
+        const ct = r.headers.get("content-type") || "";
+        const body = await r.text();
+        return {
+          label,
+          url,
+          status: r.status,
+          statusText: r.statusText,
+          contentType: ct,
+          bodyLength: body.length,
+          bodySnippet: body.substring(0, 2000),
+          looksLikeLicensePage: /License Terms|license-md5|must accept/i.test(body),
+        };
+      };
+
+      const results = [];
+      results.push(await probe("study_metadata", `https://www.movebank.org/movebank/service/direct-read?entity_type=study&study_id=${studyMbId}`));
+      const tEnd = Date.now();
+      const tStart = tEnd - 24 * 60 * 60 * 1000;
+      results.push(await probe("event_test_24h", `https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=${studyMbId}&individual_local_identifier=BE+IT+002&sensor_type_id=653&timestamp_start=${tStart}&timestamp_end=${tEnd}`));
+      results.push(await probe("study_attribute", `https://www.movebank.org/movebank/service/direct-read?entity_type=study_attribute&study_id=${studyMbId}`));
+
+      return res.json({ studyId: studyMbId, results });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/studies/:id/backfill", checkRole("superuser"), requireStudyAccess, async (req, res) => {
     const MANUAL_MAX_BACKFILL_DAYS = 90;
     const MIN_GAP_MS = 60 * 1000;
