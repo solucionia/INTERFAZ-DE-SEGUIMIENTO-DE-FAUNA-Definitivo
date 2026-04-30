@@ -117,6 +117,7 @@ export interface IStorage {
   insertCachedAccEventsCounted(events: Omit<CachedAccEvent, "id">[]): Promise<{ inserted: number; duplicates: number }>;
   createIndividualsByName(studyId: string, names: string[]): Promise<void>;
   createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void>;
+  upsertOrnitelaDeploymentsForIndividuals(studyId: string, imeis: string[]): Promise<{ deploymentsCreated: number; individualsMarkedSynced: number }>;
 
   getAllSpecies(): Promise<Species[]>;
   getSpeciesById(id: number): Promise<Species | undefined>;
@@ -961,6 +962,83 @@ export class DatabaseStorage implements IStorage {
       }
     }
   }
+
+  async upsertOrnitelaDeploymentsForIndividuals(
+    studyId: string,
+    imeis: string[]
+  ): Promise<{ deploymentsCreated: number; individualsMarkedSynced: number }> {
+    if (imeis.length === 0) {
+      return { deploymentsCreated: 0, individualsMarkedSynced: 0 };
+    }
+    const uniqueImeis = Array.from(new Set(imeis.map((s) => String(s).trim()).filter(Boolean)));
+    if (uniqueImeis.length === 0) {
+      return { deploymentsCreated: 0, individualsMarkedSynced: 0 };
+    }
+
+    const inds = await db
+      .select()
+      .from(individuals)
+      .where(and(eq(individuals.studyId, studyId), inArray(individuals.localIdentifier, uniqueImeis)));
+    const localToInd = new Map(inds.map((i) => [String(i.localIdentifier), i]));
+
+    const existingDeps = await db
+      .select()
+      .from(deployments)
+      .where(eq(deployments.studyId, studyId));
+    const existingByMb = new Map(existingDeps.map((d) => [Number(d.movebankId), d]));
+    const today = new Date().toISOString().slice(0, 10);
+
+    let deploymentsCreated = 0;
+    for (const imei of uniqueImeis) {
+      const ind = localToInd.get(imei);
+      if (!ind) continue;
+
+      const imeiNum = Number(imei);
+      if (!Number.isFinite(imeiNum) || imeiNum <= 0) continue;
+      const depMovebankId = -imeiNum;
+
+      const existing = existingByMb.get(depMovebankId);
+      if (existing) {
+        if (existing.deployOff !== null || String(existing.individualId) !== String(ind.movebankId)) {
+          await db
+            .update(deployments)
+            .set({
+              deployOff: null,
+              individualId: ind.movebankId,
+              localIdentifier: imei,
+              synced: true,
+            })
+            .where(eq(deployments.id, existing.id));
+        }
+      } else {
+        await db
+          .insert(deployments)
+          .values({
+            studyId,
+            movebankId: depMovebankId,
+            individualId: ind.movebankId,
+            localIdentifier: imei,
+            deployOn: today,
+            deployOff: null,
+            synced: true,
+          })
+          .onConflictDoNothing();
+        deploymentsCreated++;
+      }
+    }
+
+    const updateResult = await db
+      .update(individuals)
+      .set({ synced: true })
+      .where(and(eq(individuals.studyId, studyId), inArray(individuals.localIdentifier, uniqueImeis)))
+      .returning({ id: individuals.id });
+
+    return {
+      deploymentsCreated,
+      individualsMarkedSynced: updateResult.length,
+    };
+  }
+
   async getAllSpecies(): Promise<Species[]> {
     return db.select().from(species);
   }

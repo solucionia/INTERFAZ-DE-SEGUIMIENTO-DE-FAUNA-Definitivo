@@ -255,8 +255,13 @@ export async function parseOrnitelaCsv(
     accDuplicates += r.duplicates;
   }
 
-  const metadataEntries = Array.from(individualsSet).map((name) => ({ name }));
+  const imeisList = Array.from(individualsSet);
+  const metadataEntries = imeisList.map((name) => ({ name }));
   await storage.createIndividualsWithMetadata(studyId, metadataEntries);
+  const linkResult = await storage.upsertOrnitelaDeploymentsForIndividuals(studyId, imeisList);
+  details.push(
+    `Vinculación Ornitela: ${linkResult.deploymentsCreated} deployments nuevos, ${linkResult.individualsMarkedSynced} individuos marcados como sincronizados`
+  );
 
   let reportedDataType: string;
   if (gpsImported > 0 && accImported > 0) reportedDataType = "gps+acc";
