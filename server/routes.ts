@@ -1891,6 +1891,172 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/studies/:id/backfill", checkRole("superuser"), requireStudyAccess, async (req, res) => {
+    const MANUAL_MAX_BACKFILL_DAYS = 90;
+    const MIN_GAP_MS = 60 * 1000;
+    const studyId = String(req.params.id);
+
+    try {
+      const study = await storage.getStudyDecrypted(studyId);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      if (!hasMovebankCredentials(study)) {
+        return res.status(400).json({ message: "Este estudio no tiene credenciales de Movebank configuradas" });
+      }
+      const block = movebankRateLimiter.isBlocked();
+      if (block.blocked) {
+        return res.status(429).json({ message: block.reason, blockedUntil: block.blockedUntil?.toISOString() });
+      }
+
+      const individuals = await storage.getIndividuals(studyId);
+      const targets = individuals.filter(i => i.localIdentifier && i.localIdentifier.trim() !== "");
+      const total = targets.length;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      let aborted = false;
+      const isClosed = () => aborted || res.writableEnded || res.destroyed || !res.writable;
+      const send = (event: string, data: Record<string, unknown>) => {
+        if (isClosed()) return;
+        try {
+          res.write(`event: ${event}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch {
+          aborted = true;
+        }
+      };
+      res.on("close", () => { aborted = true; });
+      res.on("error", () => { aborted = true; });
+
+      send("start", { total, maxBackfillDays: MANUAL_MAX_BACKFILL_DAYS });
+
+      let processed = 0;
+      let totalGps = 0;
+      let totalAcc = 0;
+      let stoppedByRateLimit = false;
+
+      const startedAt = Date.now();
+
+      for (const animal of targets) {
+        if (isClosed()) { aborted = true; break; }
+        const localId = animal.localIdentifier!;
+        const blk = movebankRateLimiter.isBlocked();
+        if (blk.blocked) {
+          stoppedByRateLimit = true;
+          send("rate-limit", { reason: blk.reason, blockedUntil: blk.blockedUntil?.toISOString() });
+          break;
+        }
+
+        const now = Date.now();
+        const cap = now - MANUAL_MAX_BACKFILL_DAYS * 24 * 60 * 60 * 1000;
+
+        const gpsRange = await storage.getCachedTimestampRange(studyId, localId, "gps");
+        const accRange = await storage.getCachedTimestampRange(studyId, localId, "acc");
+        const gpsFrom = gpsRange && Number.isFinite(gpsRange.max) ? Math.max(gpsRange.max + 1, cap) : cap;
+        const accFrom = accRange && Number.isFinite(accRange.max) ? Math.max(accRange.max + 1, cap) : cap;
+        const wantGps = gpsFrom < now - MIN_GAP_MS;
+        const wantAcc = accFrom < now - MIN_GAP_MS;
+
+        let animalGps = 0;
+        let animalAcc = 0;
+        try {
+          if (wantGps) {
+            const rows = await fetchMovebankEvents(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!, localId, 653, gpsFrom, now);
+            await movebankDelay();
+            const toCache = rows
+              .filter(r => r.location_lat && r.location_long)
+              .map(r => ({
+                studyId, individualLocalIdentifier: localId,
+                timestamp: new Date(r.timestamp).getTime(),
+                latitude: parseFloat(r.location_lat), longitude: parseFloat(r.location_long),
+                groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
+                heading: r.heading ? parseFloat(r.heading) : null,
+                heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+              }))
+              .filter(p => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
+            if (toCache.length > 0) await storage.insertCachedGpsEvents(toCache);
+            await storage.recordFetchedRange(studyId, localId, "gps", gpsFrom, now);
+            animalGps = toCache.length;
+            totalGps += animalGps;
+          }
+
+          const blk2 = movebankRateLimiter.isBlocked();
+          if (blk2.blocked) {
+            stoppedByRateLimit = true;
+            send("rate-limit", { reason: blk2.reason, blockedUntil: blk2.blockedUntil?.toISOString() });
+            processed++;
+            send("animal", { localId, gps: animalGps, acc: 0, processed, total, totalGps, totalAcc });
+            break;
+          }
+
+          if (wantAcc) {
+            const rows = await fetchMovebankEvents(study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!, localId, 2365683, accFrom, now);
+            await movebankDelay();
+            const toCache: { studyId: string; individualLocalIdentifier: string; timestamp: number; xAcceleration: number; yAcceleration: number; zAcceleration: number; rawData: string | null }[] = [];
+            for (const r of rows) {
+              const rawAxes = r.accelerations_raw || r.eobs_accelerations_raw || "";
+              const ts = new Date(r.timestamp).getTime();
+              if (isNaN(ts)) continue;
+              if (rawAxes) {
+                const vals = rawAxes.split(/\s+/).map(Number);
+                for (let i = 0; i + 2 < vals.length; i += 3) {
+                  if (!isNaN(vals[i]) && !isNaN(vals[i + 1]) && !isNaN(vals[i + 2])) {
+                    toCache.push({ studyId, individualLocalIdentifier: localId, timestamp: ts + i * 10, xAcceleration: vals[i], yAcceleration: vals[i + 1], zAcceleration: vals[i + 2], rawData: i === 0 ? rawAxes : null });
+                  }
+                }
+              } else {
+                toCache.push({ studyId, individualLocalIdentifier: localId, timestamp: ts, xAcceleration: parseFloat(r.acceleration_x || "0"), yAcceleration: parseFloat(r.acceleration_y || "0"), zAcceleration: parseFloat(r.acceleration_z || "0"), rawData: null });
+              }
+            }
+            if (toCache.length > 0) await storage.insertCachedAccEvents(toCache);
+            await storage.recordFetchedRange(studyId, localId, "acc", accFrom, now);
+            animalAcc = toCache.length;
+            totalAcc += animalAcc;
+          }
+        } catch (e: any) {
+          const isRateLimit = (e instanceof MovebankError && e.statusCode === 429) || (e?.statusCode === 429);
+          if (isRateLimit) {
+            stoppedByRateLimit = true;
+            send("rate-limit", { reason: e.message });
+            processed++;
+            send("animal", { localId, gps: animalGps, acc: animalAcc, processed, total, totalGps, totalAcc, error: e.message });
+            break;
+          }
+          send("animal-error", { localId, error: e.message });
+        }
+
+        processed++;
+        send("animal", { localId, gps: animalGps, acc: animalAcc, processed, total, totalGps, totalAcc });
+      }
+
+      const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
+      const status = stoppedByRateLimit ? "partial" : (aborted ? "aborted" : "success");
+      const details = `manual: ${processed}/${total} animales, ${totalGps} GPS, ${totalAcc} ACC, cortado: ${stoppedByRateLimit}, abortado: ${aborted}, dur: ${duration}s`;
+      try {
+        await storage.createCronLog("movebank_sync", status, details);
+      } catch {}
+
+      if (!isClosed()) {
+        send("done", { processed, total, totalGps, totalAcc, stoppedByRateLimit, aborted, durationSec: duration, status });
+        try { res.end(); } catch {}
+      }
+    } catch (e: any) {
+      log(`Backfill error: ${e.message}`, "movebank");
+      if (!res.headersSent) {
+        return res.status(500).json({ message: `Error en backfill: ${e.message}` });
+      }
+      try {
+        if (res.writable && !res.writableEnded) {
+          res.write(`event: error\ndata: ${JSON.stringify({ message: e.message })}\n\n`);
+          res.end();
+        }
+      } catch {}
+    }
+  });
+
   app.post("/api/studies/:id/repair-deployments-local", requireSuperuser, requireStudyAccess, async (req, res) => {
     try {
       log(`Repair-deployments-local iniciado para estudio: ${req.params.id}`, "movebank");

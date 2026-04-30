@@ -808,6 +808,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async recordFetchedRange(studyId: string, individual: string, sensorType: string, rangeStart: number, rangeEnd: number): Promise<void> {
+    const MIN_VALID_EPOCH_MS = 1_000_000_000_000;
+    if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) ||
+        rangeStart < MIN_VALID_EPOCH_MS || rangeEnd < MIN_VALID_EPOCH_MS ||
+        rangeEnd <= rangeStart) {
+      throw new Error(`recordFetchedRange: rango inválido (start=${rangeStart}, end=${rangeEnd}). Debe ser epoch ms >= ${MIN_VALID_EPOCH_MS} y end > start.`);
+    }
     const existing = await db.select()
       .from(cachedFetchRanges)
       .where(and(

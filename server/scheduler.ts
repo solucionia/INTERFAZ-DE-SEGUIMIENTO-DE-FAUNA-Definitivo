@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { storage } from "./storage";
-import { fetchMovebankEvents } from "./movebank";
+import { fetchMovebankEvents, MovebankError } from "./movebank";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert, sendEmissionSummaryEmail, sendImmobilityAlertEmail } from "./emailService";
 import { DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds } from "@shared/schema";
@@ -12,15 +12,45 @@ import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 
 const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
 
+const SCHEDULER_MAX_BACKFILL_DAYS = 30;
+const MIN_GAP_MS = 60 * 1000;
+
+async function computeBackfillRange(
+  studyId: string,
+  individualLocalId: string,
+  sensorType: "gps" | "acc",
+  now: number,
+  maxBackfillDays: number,
+): Promise<{ fromTs: number; toTs: number } | null> {
+  const cap = now - maxBackfillDays * 24 * 60 * 60 * 1000;
+  const range = await storage.getCachedTimestampRange(studyId, individualLocalId, sensorType);
+  let fromTs: number;
+  if (range && Number.isFinite(range.max) && range.max > 0) {
+    fromTs = Math.max(range.max + 1, cap);
+  } else {
+    fromTs = cap;
+  }
+  if (fromTs >= now - MIN_GAP_MS) return null;
+  return { fromTs, toTs: now };
+}
+
 async function runEventDetection() {
   const startTime = Date.now();
   log("Cron: Iniciando deteccion automatica de eventos...", "cron");
+
+  let syncStudies = 0;
+  let syncAnimals = 0;
+  let syncGpsRows = 0;
+  let syncAccRows = 0;
+  let syncStoppedByRateLimit = false;
+  let syncErrors = 0;
 
   try {
     const blockCheck = movebankRateLimiter.isBlocked();
     if (blockCheck.blocked) {
       log(`Cron: Movebank bloqueado — ${blockCheck.reason}. Saltando detección de eventos.`, "cron");
       await storage.createCronLog("event_detection", "skipped", blockCheck.reason);
+      await storage.createCronLog("movebank_sync", "skipped", blockCheck.reason);
       return;
     }
 
@@ -28,10 +58,11 @@ async function runEventDetection() {
     let totalEvents = 0;
     let totalEmails = 0;
 
-    for (const { study, activeIndividuals } of studiesWithAnimals) {
+    studyLoop: for (const { study, activeIndividuals } of studiesWithAnimals) {
       const studyBlockCheck = movebankRateLimiter.isBlocked();
       if (studyBlockCheck.blocked) {
         log(`Cron: Movebank bloqueado durante ejecución — saltando estudios restantes`, "cron");
+        syncStoppedByRateLimit = true;
         break;
       }
 
@@ -45,7 +76,6 @@ async function runEventDetection() {
       }
 
       const now = Date.now();
-      const sixHoursAgo = now - 6 * 60 * 60 * 1000;
       let studyEvents = 0;
 
       if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
@@ -63,12 +93,42 @@ async function runEventDetection() {
         continue;
       }
 
+      syncStudies++;
+
       for (const animal of activeIndividuals) {
+        const gpsBlock = movebankRateLimiter.isBlocked();
+        if (gpsBlock.blocked) {
+          log(`Cron: Rate limit alcanzado durante "${study.name}" — parando sync`, "cron");
+          syncStoppedByRateLimit = true;
+          break studyLoop;
+        }
+
+        const gpsBackfill = await computeBackfillRange(study.id, animal.localIdentifier, "gps", now, SCHEDULER_MAX_BACKFILL_DAYS);
+        const accBackfill = await computeBackfillRange(study.id, animal.localIdentifier, "acc", now, SCHEDULER_MAX_BACKFILL_DAYS);
+
+        if (!gpsBackfill && !accBackfill) {
+          continue;
+        }
+
+        syncAnimals++;
+
         try {
-          const gpsRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 653, sixHoursAgo, now);
-          await movebankDelay();
-          const accRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 2365683, sixHoursAgo, now);
-          await movebankDelay();
+          let gpsRows: Record<string, string>[] = [];
+          if (gpsBackfill) {
+            gpsRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 653, gpsBackfill.fromTs, gpsBackfill.toTs);
+            await movebankDelay();
+          }
+
+          const accBlock = movebankRateLimiter.isBlocked();
+          if (accBlock.blocked) {
+            syncStoppedByRateLimit = true;
+          }
+
+          let accRows: Record<string, string>[] = [];
+          if (accBackfill && !syncStoppedByRateLimit) {
+            accRows = await fetchMovebankEvents(study.movebankStudyId, decryptedUsername, decryptedPassword, animal.localIdentifier, 2365683, accBackfill.fromTs, accBackfill.toTs);
+            await movebankDelay();
+          }
 
           const gpsSamples = gpsRows
             .filter((r) => r.location_lat && r.location_long)
@@ -94,7 +154,10 @@ async function runEventDetection() {
             .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
           if (gpsToCache.length > 0) {
             await storage.insertCachedGpsEvents(gpsToCache);
-            await storage.recordFetchedRange(study.id, animal.localIdentifier, "gps", sixHoursAgo, now);
+            syncGpsRows += gpsToCache.length;
+          }
+          if (gpsBackfill) {
+            await storage.recordFetchedRange(study.id, animal.localIdentifier, "gps", gpsBackfill.fromTs, gpsBackfill.toTs);
           }
 
           const accSamples: { timestamp: number; x: number; y: number; z: number }[] = [];
@@ -139,7 +202,10 @@ async function runEventDetection() {
           }
           if (accToCache.length > 0) {
             await storage.insertCachedAccEvents(accToCache);
-            await storage.recordFetchedRange(study.id, animal.localIdentifier, "acc", sixHoursAgo, now);
+            syncAccRows += accToCache.length;
+          }
+          if (accBackfill && !syncStoppedByRateLimit) {
+            await storage.recordFetchedRange(study.id, animal.localIdentifier, "acc", accBackfill.fromTs, accBackfill.toTs);
           }
 
           if (accSamples.length > 0) {
@@ -163,6 +229,13 @@ async function runEventDetection() {
             }
           }
         } catch (e: any) {
+          syncErrors++;
+          const isRateLimit = (e instanceof MovebankError && e.statusCode === 429) || (e?.statusCode === 429);
+          if (isRateLimit) {
+            syncStoppedByRateLimit = true;
+            log(`Cron: 429 detectado en "${study.name}/${animal.localIdentifier}" — parando sync`, "cron");
+            break studyLoop;
+          }
           log(`Cron: Error en Movebank para estudio "${study.name}", animal "${animal.localIdentifier}": ${e.message}`, "cron");
         }
       }
@@ -173,10 +246,15 @@ async function runEventDetection() {
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
     await storage.createCronLog("event_detection", "success", `${totalEvents} eventos, ${totalEmails} emails, duración: ${totalDuration}s`);
+    const syncStatus = syncStoppedByRateLimit ? "partial" : "success";
+    const syncDetails = `${syncStudies} estudios, ${syncAnimals} animales, ${syncGpsRows} GPS, ${syncAccRows} ACC, errores: ${syncErrors}, cortado: ${syncStoppedByRateLimit}, duración: ${totalDuration}s`;
+    await storage.createCronLog("movebank_sync", syncStatus, syncDetails);
     log(`Cron: Deteccion completada - ${totalEvents} eventos, ${totalEmails} emails (${totalDuration}s)`, "cron");
+    log(`Cron: Sync Movebank - ${syncDetails}`, "cron");
   } catch (e: any) {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
     await storage.createCronLog("event_detection", "error", `${e.message} (duración: ${totalDuration}s)`);
+    await storage.createCronLog("movebank_sync", "error", `${e.message} | parcial: ${syncStudies}e/${syncAnimals}a/${syncGpsRows}g/${syncAccRows}a | duración: ${totalDuration}s`);
     log(`Cron: Error en deteccion: ${e.message} (${totalDuration}s)`, "cron");
   }
 }

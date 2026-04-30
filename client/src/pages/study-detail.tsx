@@ -56,6 +56,8 @@ export default function StudyDetail() {
   const [saving, setSaving] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [ornitelaSyncing, setOrnitelaSyncing] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ processed: number; total: number; gps: number; acc: number; current?: string; stopped?: boolean } | null>(null);
   const [ornitelaDevices, setOrnitelaDevices] = useState<any[]>([]);
   const [ornitelaDevicesLoading, setOrnitelaDevicesLoading] = useState(false);
   const [ornitelaSyncResult, setOrnitelaSyncResult] = useState<any>(null);
@@ -259,6 +261,83 @@ export default function StudyDetail() {
       }
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleBackfill = async () => {
+    if (!studyId) return;
+    setBackfilling(true);
+    setBackfillProgress({ processed: 0, total: 0, gps: 0, acc: 0 });
+    try {
+      const res = await fetch(`/api/studies/${studyId}/backfill`, {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "text/event-stream" },
+      });
+      if (!res.ok || !res.body) {
+        let msg = `Error ${res.status}`;
+        try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
+        toast({ title: "No se pudo iniciar el backfill", description: msg, variant: "destructive" });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let stoppedByRateLimit = false;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let evtName = "message";
+          let dataStr = "";
+          for (const ln of lines) {
+            if (ln.startsWith("event:")) evtName = ln.slice(6).trim();
+            else if (ln.startsWith("data:")) dataStr += ln.slice(5).trim();
+          }
+          if (!dataStr) continue;
+          let payload: any = {};
+          try { payload = JSON.parse(dataStr); } catch { continue; }
+          if (evtName === "start") {
+            setBackfillProgress({ processed: 0, total: payload.total || 0, gps: 0, acc: 0 });
+          } else if (evtName === "animal") {
+            setBackfillProgress({
+              processed: payload.processed || 0,
+              total: payload.total || 0,
+              gps: payload.totalGps || 0,
+              acc: payload.totalAcc || 0,
+              current: payload.localId,
+            });
+          } else if (evtName === "rate-limit") {
+            stoppedByRateLimit = true;
+            toast({ title: "Movebank limitado", description: payload.reason || "Se alcanzó el límite de Movebank", variant: "destructive" });
+          } else if (evtName === "animal-error") {
+            // continúa
+          } else if (evtName === "done") {
+            setBackfillProgress(p => p ? { ...p, stopped: !!payload.stoppedByRateLimit, processed: payload.processed, total: payload.total, gps: payload.totalGps, acc: payload.totalAcc } : null);
+            const status = payload.status || (payload.stoppedByRateLimit ? "partial" : "success");
+            const desc = `${payload.processed}/${payload.total} animales · ${payload.totalGps} GPS · ${payload.totalAcc} ACC · ${payload.durationSec}s`;
+            toast({
+              title: status === "success" ? "Backfill completado" : status === "partial" ? "Backfill parcial (límite Movebank)" : "Backfill abortado",
+              description: desc,
+              variant: status === "success" ? "default" : "destructive",
+            });
+            queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "last-positions"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
+          } else if (evtName === "error") {
+            toast({ title: "Error en backfill", description: payload.message || "Error desconocido", variant: "destructive" });
+          }
+        }
+      }
+      if (stoppedByRateLimit) queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
+    } catch (e: any) {
+      toast({ title: "Error en backfill", description: e.message || "Error desconocido", variant: "destructive" });
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -487,6 +566,20 @@ export default function StudyDetail() {
             >
               <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
               {syncing ? "Sincronizando..." : mbStatus?.blocked ? "Movebank limitado" : "Sincronizar con Movebank"}
+            </Button>
+          )}
+          {isSuperuser && (
+            <Button
+              onClick={handleBackfill}
+              disabled={backfilling || mbStatus?.blocked}
+              variant="secondary"
+              title={mbStatus?.blocked && mbStatus.blockedUntil ? `Disponible a las ${new Date(mbStatus.blockedUntil).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}` : "Descarga GPS/ACC de los últimos 90 días por animal"}
+              data-testid="button-backfill-gps"
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${backfilling ? "animate-spin" : ""}`} />
+              {backfilling && backfillProgress
+                ? `Descargando ${backfillProgress.processed}/${backfillProgress.total}…`
+                : "Sincronizar datos GPS"}
             </Button>
           )}
           {isSuperuser && study.ornitelaEnabled && (
