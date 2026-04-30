@@ -467,6 +467,13 @@ async function runOrnitelaSync() {
   }
 }
 
+export {
+  runEventDetection,
+  runEmissionCheck,
+  runImmobilityCheck,
+  runOrnitelaSync,
+};
+
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
 

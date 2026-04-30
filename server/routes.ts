@@ -17,6 +17,7 @@ import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 import { ornitelaSync, type OrnitelaDevice } from "./ornitelaSync";
+import { runEventDetection, runEmissionCheck, runImmobilityCheck, runOrnitelaSync } from "./scheduler";
 
 function fmtDate(isoStr: string): string {
   if (!isoStr) return "";
@@ -127,6 +128,114 @@ export async function registerRoutes(
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  const safeEqual = (a: string, b: string): boolean => {
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
+  };
+
+  let syncAllRunning = false;
+  let syncAllStartedAt: string | null = null;
+
+  app.post("/api/sync-all", async (req: Request, res: Response) => {
+    const expectedSecret = process.env.SYNC_SECRET;
+    if (!expectedSecret) {
+      return res.status(503).json({
+        ok: false,
+        error: "SYNC_SECRET no configurado en el servidor",
+      });
+    }
+
+    const providedRaw = req.headers["x-sync-secret"];
+    const provided = Array.isArray(providedRaw) ? providedRaw[0] : providedRaw;
+
+    if (!provided || typeof provided !== "string" || !safeEqual(provided, expectedSecret)) {
+      return res.status(401).json({ ok: false, error: "Token inválido" });
+    }
+
+    if (syncAllRunning) {
+      return res.status(409).json({
+        ok: false,
+        error: "Ya hay una sincronización en curso",
+        runningSince: syncAllStartedAt,
+      });
+    }
+    syncAllRunning = true;
+
+    const startedAt = new Date().toISOString();
+    syncAllStartedAt = startedAt;
+    const startedAtMs = Date.parse(startedAt);
+    log("sync-all: ejecución manual iniciada via /api/sync-all", "sync-all");
+
+    const tasks: { name: string; fn: () => Promise<void> }[] = [
+      { name: "event_detection", fn: runEventDetection },
+      { name: "emission_check", fn: runEmissionCheck },
+      { name: "immobility_check", fn: runImmobilityCheck },
+      { name: "ornitela_sync", fn: runOrnitelaSync },
+    ];
+
+    const results: Record<string, {
+      ok: boolean;
+      durationSeconds: string;
+      logStatus?: string;
+      logDetails?: string | null;
+      error?: string;
+    }> = {};
+
+    try {
+      for (const t of tasks) {
+        const t0 = Date.now();
+        try {
+          await t.fn();
+        } catch (err: any) {
+          results[t.name] = {
+            ok: false,
+            durationSeconds: ((Date.now() - t0) / 1000).toFixed(1),
+            error: err?.message || String(err),
+          };
+          continue;
+        }
+
+        const durationSeconds = ((Date.now() - t0) / 1000).toFixed(1);
+        try {
+          const logRow = await pool.query<{ status: string; details: string | null }>(
+            "SELECT status, details FROM cron_logs WHERE task_type = $1 AND run_at >= to_timestamp($2 / 1000.0) ORDER BY run_at DESC LIMIT 1",
+            [t.name, startedAtMs]
+          );
+          const row = logRow.rows[0];
+          if (row) {
+            results[t.name] = {
+              ok: row.status === "success" || row.status === "skipped",
+              durationSeconds,
+              logStatus: row.status,
+              logDetails: row.details,
+            };
+          } else {
+            results[t.name] = { ok: true, durationSeconds, logStatus: "no_log" };
+          }
+        } catch {
+          results[t.name] = { ok: true, durationSeconds, logStatus: "log_query_failed" };
+        }
+      }
+    } finally {
+      syncAllRunning = false;
+      syncAllStartedAt = null;
+    }
+
+    const finishedAt = new Date().toISOString();
+    const totalSeconds = Math.round((Date.parse(finishedAt) - startedAtMs) / 1000);
+    log(`sync-all: ejecución manual completada en ${totalSeconds}s`, "sync-all");
+
+    return res.json({
+      ok: true,
+      startedAt,
+      finishedAt,
+      totalSeconds,
+      tasks: results,
+    });
   });
 
   app.use("/api", apiLimiter);
