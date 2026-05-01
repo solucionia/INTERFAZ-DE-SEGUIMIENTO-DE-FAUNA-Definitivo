@@ -44,6 +44,8 @@ async function runEventDetection() {
   let syncAccRows = 0;
   let syncStoppedByRateLimit = false;
   let syncErrors = 0;
+  let syncGpsAttempts = 0;
+  let syncGpsZeroAnimals = 0;
 
   try {
     const blockCheck = movebankRateLimiter.isBlocked();
@@ -157,6 +159,8 @@ async function runEventDetection() {
             syncGpsRows += gpsToCache.length;
           }
           if (gpsBackfill) {
+            syncGpsAttempts++;
+            if (gpsToCache.length === 0) syncGpsZeroAnimals++;
             await storage.recordFetchedRange(study.id, animal.localIdentifier, "gps", gpsBackfill.fromTs, gpsBackfill.toTs);
           }
 
@@ -251,6 +255,14 @@ async function runEventDetection() {
     await storage.createCronLog("movebank_sync", syncStatus, syncDetails);
     log(`Cron: Deteccion completada - ${totalEvents} eventos, ${totalEmails} emails (${totalDuration}s)`, "cron");
     log(`Cron: Sync Movebank - ${syncDetails}`, "cron");
+
+    if (syncGpsAttempts >= 5) {
+      const zeroPct = (syncGpsZeroAnimals / syncGpsAttempts) * 100;
+      if (zeroPct > 80) {
+        log(`Cron: WARN: Posible problema con parámetros Movebank: ${zeroPct.toFixed(1)}% de animales (${syncGpsZeroAnimals}/${syncGpsAttempts}) devolvieron 0 GPS`, "cron");
+        await storage.createCronLog("movebank_sync_anomaly", "warn", `${zeroPct.toFixed(1)}% animales con 0 GPS (${syncGpsZeroAnimals}/${syncGpsAttempts})`);
+      }
+    }
   } catch (e: any) {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
     await storage.createCronLog("event_detection", "error", `${e.message} (duración: ${totalDuration}s)`);

@@ -1937,6 +1937,8 @@ export async function registerRoutes(
       let totalGps = 0;
       let totalAcc = 0;
       let stoppedByRateLimit = false;
+      let gpsAttempts = 0;
+      let gpsZeroAnimals = 0;
 
       const startedAt = Date.now();
 
@@ -1981,6 +1983,8 @@ export async function registerRoutes(
             await storage.recordFetchedRange(studyId, localId, "gps", gpsFrom, now);
             animalGps = toCache.length;
             totalGps += animalGps;
+            gpsAttempts++;
+            if (animalGps === 0) gpsZeroAnimals++;
           }
 
           const blk2 = movebankRateLimiter.isBlocked();
@@ -2038,6 +2042,16 @@ export async function registerRoutes(
       try {
         await storage.createCronLog("movebank_sync", status, details);
       } catch {}
+
+      if (gpsAttempts >= 5) {
+        const zeroPct = (gpsZeroAnimals / gpsAttempts) * 100;
+        if (zeroPct > 80) {
+          log(`Backfill: WARN: Posible problema con parámetros Movebank: ${zeroPct.toFixed(1)}% de animales (${gpsZeroAnimals}/${gpsAttempts}) devolvieron 0 GPS`, "movebank");
+          try {
+            await storage.createCronLog("movebank_sync_anomaly", "warn", `manual ${study.name}: ${zeroPct.toFixed(1)}% animales con 0 GPS (${gpsZeroAnimals}/${gpsAttempts})`);
+          } catch {}
+        }
+      }
 
       if (!isClosed()) {
         send("done", { processed, total, totalGps, totalAcc, stoppedByRateLimit, aborted, durationSec: duration, status });
