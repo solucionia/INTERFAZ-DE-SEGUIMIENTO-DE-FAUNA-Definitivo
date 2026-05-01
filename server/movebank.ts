@@ -4,6 +4,20 @@ import { movebankRateLimiter } from "./movebankRateLimit";
 const MOVEBANK_BASE = "https://www.movebank.org/movebank/service/direct-read";
 const MOVEBANK_TIMEOUT_MS = 60000;
 
+export function formatMovebankTimestamp(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return (
+    d.getUTCFullYear() +
+    p(d.getUTCMonth() + 1) +
+    p(d.getUTCDate()) +
+    p(d.getUTCHours()) +
+    p(d.getUTCMinutes()) +
+    p(d.getUTCSeconds()) +
+    p(d.getUTCMilliseconds(), 3)
+  );
+}
+
 export class MovebankError extends Error {
   public statusCode: number;
   constructor(message: string, statusCode: number) {
@@ -157,8 +171,8 @@ export async function fetchMovebankEvents(
     study_id: studyId.toString(),
     individual_local_identifier: individualLocalIdentifier,
     sensor_type_id: sensorTypeId.toString(),
-    timestamp_start: timestampStart.toString(),
-    timestamp_end: timestampEnd.toString(),
+    timestamp_start: formatMovebankTimestamp(timestampStart),
+    timestamp_end: formatMovebankTimestamp(timestampEnd),
   });
   const url = `${MOVEBANK_BASE}?${params.toString()}`;
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
