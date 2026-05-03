@@ -516,6 +516,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDetectedEvent(event: InsertDetectedEvent): Promise<DetectedEvent> {
+    const [existing] = await db.select().from(detectedEvents)
+      .where(and(
+        eq(detectedEvents.studyId, event.studyId),
+        eq(detectedEvents.individualLocalId, event.individualLocalId),
+        eq(detectedEvents.eventType, event.eventType),
+        eq(detectedEvents.timestampStart, event.timestampStart),
+      ))
+      .limit(1);
+    if (existing) return existing;
     const [created] = await db.insert(detectedEvents).values(event as any).returning();
     return created;
   }
