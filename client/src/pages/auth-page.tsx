@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, PawPrint } from "lucide-react";
@@ -113,13 +114,14 @@ export default function AuthPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="login-password">Contraseña</Label>
-                  <Input
+                  <PasswordInput
                     id="login-password"
-                    type="password"
                     placeholder="••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
+                    autoComplete="current-password"
                     data-testid="input-login-password"
+                    toggleTestId="button-toggle-login-password"
                   />
                   {errors.loginPassword && <p className="text-sm text-destructive">{errors.loginPassword}</p>}
                 </div>
@@ -156,25 +158,27 @@ export default function AuthPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="reg-password">Contraseña</Label>
-                  <Input
+                  <PasswordInput
                     id="reg-password"
-                    type="password"
                     placeholder="••••••"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
+                    autoComplete="new-password"
                     data-testid="input-register-password"
+                    toggleTestId="button-toggle-register-password"
                   />
                   {errors.regPassword && <p className="text-sm text-destructive">{errors.regPassword}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="reg-confirm">Confirmar contraseña</Label>
-                  <Input
+                  <PasswordInput
                     id="reg-confirm"
-                    type="password"
                     placeholder="••••••"
                     value={regConfirm}
                     onChange={(e) => setRegConfirm(e.target.value)}
+                    autoComplete="new-password"
                     data-testid="input-register-confirm"
+                    toggleTestId="button-toggle-register-confirm"
                   />
                   {errors.regConfirm && <p className="text-sm text-destructive">{errors.regConfirm}</p>}
                 </div>

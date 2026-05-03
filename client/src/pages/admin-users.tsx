@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -147,7 +148,7 @@ export default function AdminUsers() {
               </div>
               <div className="space-y-1">
                 <Label>Contraseña</Label>
-                <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" data-testid="input-new-user-password" />
+                <PasswordInput value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" autoComplete="new-password" data-testid="input-new-user-password" toggleTestId="button-toggle-new-user-password" />
               </div>
               <div className="space-y-1">
                 <Label>Email para alertas (opcional)</Label>
@@ -338,22 +339,24 @@ export default function AdminUsers() {
           <div className="space-y-4 py-2">
             <div className="space-y-1">
               <Label>Nueva contraseña</Label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={resetNewPassword}
                 onChange={(e) => setResetNewPassword(e.target.value)}
                 placeholder="Mínimo 6 caracteres"
+                autoComplete="new-password"
                 data-testid="input-reset-password"
+                toggleTestId="button-toggle-reset-password"
               />
             </div>
             <div className="space-y-1">
               <Label>Confirmar contraseña</Label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={resetConfirmPassword}
                 onChange={(e) => setResetConfirmPassword(e.target.value)}
                 placeholder="Repite la contraseña"
+                autoComplete="new-password"
                 data-testid="input-reset-password-confirm"
+                toggleTestId="button-toggle-reset-password-confirm"
               />
               {resetConfirmPassword.length > 0 && resetNewPassword !== resetConfirmPassword && (
                 <p className="text-xs text-destructive mt-1">Las contraseñas no coinciden</p>

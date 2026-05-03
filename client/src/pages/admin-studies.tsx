@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -438,10 +439,11 @@ export default function AdminStudies() {
                       <FormItem>
                         <FormLabel>Contraseña de Movebank (opcional)</FormLabel>
                         <FormControl>
-                          <Input
-                            type="password"
+                          <PasswordInput
                             placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
+                            autoComplete="new-password"
                             data-testid="input-study-mb-pass"
+                            toggleTestId="button-toggle-study-mb-pass"
                             {...field}
                           />
                         </FormControl>
@@ -503,10 +505,11 @@ export default function AdminStudies() {
                       <FormItem>
                         <FormLabel>Password Ornitela</FormLabel>
                         <FormControl>
-                          <Input
-                            type="password"
+                          <PasswordInput
                             placeholder={editStudy ? "Dejar vacío para mantener actual" : "••••••"}
+                            autoComplete="new-password"
                             data-testid="input-ornitela-password"
+                            toggleTestId="button-toggle-ornitela-password"
                             {...field}
                           />
                         </FormControl>
