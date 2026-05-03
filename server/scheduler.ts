@@ -564,16 +564,89 @@ export {
   runOrnitelaSync,
 };
 
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const CATCHUP_DELAY_MS = 5000;
+
+let catchupChecked = false;
+let catchupRunning = false;
+
+async function runAllScheduledTasks(label: string) {
+  log(`Cron: ${label} — ejecutando event detection`, "cron");
+  await runEventDetection();
+  log(`Cron: ${label} — ejecutando emission check`, "cron");
+  await runEmissionCheck();
+  log(`Cron: ${label} — ejecutando immobility check`, "cron");
+  await runImmobilityCheck();
+  log(`Cron: ${label} — ejecutando Ornitela sync`, "cron");
+  await runOrnitelaSync();
+}
+
+async function maybeRunStartupCatchup() {
+  if (catchupChecked) return;
+  catchupChecked = true;
+
+  try {
+    const [lastDetection, lastCatchup] = await Promise.all([
+      storage.getLastCronRunAt("event_detection"),
+      storage.getLastCronRunAt("startup_catchup"),
+    ]);
+
+    const now = Date.now();
+    const lastTs = Math.max(
+      lastDetection ? lastDetection.getTime() : 0,
+      lastCatchup ? lastCatchup.getTime() : 0,
+    );
+
+    if (lastTs > 0 && now - lastTs < SIX_HOURS_MS) {
+      const hoursAgo = ((now - lastTs) / (60 * 60 * 1000)).toFixed(1);
+      log(`Cron: Última ejecución hace ${hoursAgo}h — no se requiere catch-up al arranque`, "cron");
+      return;
+    }
+
+    if (catchupRunning) return;
+    catchupRunning = true;
+
+    const reason = lastTs > 0
+      ? `${((now - lastTs) / (60 * 60 * 1000)).toFixed(1)}h desde última ejecución`
+      : "sin ejecuciones previas registradas";
+
+    log(`Cron: Catch-up al arranque (${reason}) — disparando tareas...`, "cron");
+    // Marca temprana para que otros procesos / instancias autoscale que arranquen
+    // simultáneamente vean un registro reciente y omitan el catch-up duplicado.
+    await storage.createCronLog("startup_catchup", "running", reason);
+
+    const startTime = Date.now();
+    try {
+      await runAllScheduledTasks("startup-catchup");
+      const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+      await storage.createCronLog("startup_catchup", "success", `${reason} (duración: ${totalDuration}s)`);
+      log(`Cron: Catch-up al arranque completado (${totalDuration}s)`, "cron");
+    } catch (e: any) {
+      const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
+      await storage.createCronLog("startup_catchup", "error", `${e?.message || e} (duración: ${totalDuration}s)`);
+      log(`Cron: Error en catch-up al arranque: ${e?.message || e}`, "cron");
+    } finally {
+      catchupRunning = false;
+    }
+  } catch (e: any) {
+    log(`Cron: Error comprobando catch-up al arranque: ${e?.message || e}`, "cron");
+  }
+}
+
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
 
   cron.schedule(CRON_INTERVAL, async () => {
     log("Cron: Ejecutando tareas programadas...", "cron");
-    await runEventDetection();
-    await runEmissionCheck();
-    await runImmobilityCheck();
-    await runOrnitelaSync();
+    await runAllScheduledTasks("scheduled");
   });
+
+  // Catch-up al arranque para entornos Autoscale: si han pasado más de 6h
+  // desde la última ejecución (o no hay registros), ejecutar inmediatamente
+  // tras un pequeño retraso para no bloquear el arranque del servidor.
+  setTimeout(() => {
+    void maybeRunStartupCatchup();
+  }, CATCHUP_DELAY_MS);
 
   log("Cron: Scheduler iniciado correctamente", "cron");
 }

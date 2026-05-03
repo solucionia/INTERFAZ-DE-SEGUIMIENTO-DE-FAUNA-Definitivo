@@ -71,6 +71,7 @@ export interface IStorage {
   getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]>;
 
   createCronLog(taskType: string, status: string, details?: string): Promise<void>;
+  getLastCronRunAt(taskType: string): Promise<Date | null>;
 
   getSavedAnalyses(studyId: string, userId: string): Promise<SavedAnalysis[]>;
   getSavedAnalysis(id: string): Promise<SavedAnalysis | undefined>;
@@ -593,6 +594,19 @@ export class DatabaseStorage implements IStorage {
 
   async createCronLog(taskType: string, status: string, details?: string): Promise<void> {
     await db.insert(cronLogs).values({ taskType, status, details });
+  }
+
+  async getLastCronRunAt(taskType: string): Promise<Date | null> {
+    const [row] = await db
+      .select({ runAt: cronLogs.runAt })
+      .from(cronLogs)
+      .where(and(
+        eq(cronLogs.taskType, taskType),
+        sql`${cronLogs.status} NOT IN ('error', 'skipped')`,
+      ))
+      .orderBy(desc(cronLogs.runAt))
+      .limit(1);
+    return row?.runAt ?? null;
   }
 
   async getSavedAnalyses(studyId: string, userId: string): Promise<SavedAnalysis[]> {
