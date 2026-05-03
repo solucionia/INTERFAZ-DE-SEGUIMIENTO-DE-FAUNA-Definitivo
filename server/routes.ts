@@ -2269,32 +2269,87 @@ export async function registerRoutes(
     }
   });
 
+  const ORNITELA_DEVICE_DELAY_MS = 1500;
+  const ORNITELA_MAX_DEVICES_PER_CALL = 50;
+
   app.post("/api/studies/:id/ornitela-sync", requireSuperuser, async (req, res) => {
-    try {
-      const studyId = req.params.id;
+    const studyId = req.params.id;
+    const requestedStartIndex = Math.max(0, Number(req.body?.startIndex) || 0);
+    const isContinuationBatch = requestedStartIndex > 0;
+    if (!isContinuationBatch) {
       const lastSync = ornitelaSyncTimestamps.get(studyId) || 0;
       const thirtyMinMs = 30 * 60 * 1000;
       if (Date.now() - lastSync < thirtyMinMs) {
         const minutesLeft = Math.ceil((thirtyMinMs - (Date.now() - lastSync)) / 60000);
         return res.status(429).json({ message: `Sincronización limitada. Espera ${minutesLeft} minutos.` });
       }
+    }
 
-      const study = await storage.getStudyDecrypted(studyId);
-      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
-      if (!study.ornitelaUsername || !study.ornitelaPassword) {
-        return res.status(400).json({ message: "Credenciales de Ornitela no configuradas" });
+    let study;
+    try {
+      study = await storage.getStudyDecrypted(studyId);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+    if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+    if (!study.ornitelaUsername || !study.ornitelaPassword) {
+      return res.status(400).json({ message: "Credenciales de Ornitela no configuradas" });
+    }
+
+    const panelUrl = study.ornitelaPanelUrl || "https://cpanel.glosendas.net";
+    const hoursBack = Number(req.body?.hoursBack) || 168;
+    const startIndex = requestedStartIndex;
+    const maxDevices = Math.min(
+      ORNITELA_MAX_DEVICES_PER_CALL,
+      Math.max(1, Number(req.body?.maxDevices) || ORNITELA_MAX_DEVICES_PER_CALL),
+    );
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    let aborted = false;
+    const isClosed = () => aborted || res.writableEnded || res.destroyed || !res.writable;
+    const send = (event: string, data: Record<string, unknown>) => {
+      if (isClosed()) return;
+      try {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        aborted = true;
       }
+    };
+    res.on("close", () => { aborted = true; });
+    res.on("error", () => { aborted = true; });
 
-      const panelUrl = study.ornitelaPanelUrl || "https://cpanel.glosendas.net";
-      const hoursBack = Number(req.body.hoursBack) || 168;
+    const startedAt = Date.now();
 
+    try {
+      send("login", { panelUrl });
       const session = await ornitelaSync.login(panelUrl, study.ornitelaUsername, study.ornitelaPassword);
-      const devices = await ornitelaSync.getDeviceList(panelUrl, session);
+      const allDevices = await ornitelaSync.getDeviceList(panelUrl, session);
 
-      if (devices.length === 0) {
+      if (allDevices.length === 0) {
         await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
-        return res.json({ message: "No se encontraron dispositivos en el panel de Ornitela", devices: 0, totalGps: 0, totalAcc: 0 });
+        send("done", { totalDevices: 0, processed: 0, totalGps: 0, totalAcc: 0, hasMore: false, message: "No se encontraron dispositivos" });
+        try { res.end(); } catch {}
+        return;
       }
+
+      const slice = allDevices.slice(startIndex, startIndex + maxDevices);
+      const hasMore = startIndex + slice.length < allDevices.length;
+      const nextStartIndex = hasMore ? startIndex + slice.length : null;
+
+      send("start", {
+        totalDevices: allDevices.length,
+        startIndex,
+        batchSize: slice.length,
+        hasMore,
+        nextStartIndex,
+        hoursBack,
+      });
 
       const now = new Date();
       const fromDate = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
@@ -2306,50 +2361,113 @@ export async function registerRoutes(
         const min = String(d.getUTCMinutes()).padStart(2, "0");
         return `${y}-${m}-${day} ${h}:${min}`;
       };
+      const fromStr = fmtDt(fromDate);
+      const toStr = fmtDt(now);
 
-      const csvResults = await ornitelaSync.downloadAllDevicesCSV(panelUrl, session, devices, fmtDt(fromDate), fmtDt(now));
-
-      let totalGps = 0, totalAcc = 0, totalGpsDup = 0, totalAccDup = 0, totalErrors = 0;
+      let processed = 0;
+      let totalGps = 0;
+      let totalAcc = 0;
+      let totalGpsDup = 0;
+      let totalAccDup = 0;
+      let totalErrors = 0;
       const deviceResults: any[] = [];
 
-      for (const csvResult of csvResults) {
-        if (csvResult.error || !csvResult.csv || csvResult.csv.trim().length < 10) {
-          deviceResults.push({ imei: csvResult.imei, name: csvResult.name, error: csvResult.error || "CSV vacío", gps: 0, acc: 0 });
-          continue;
+      for (let i = 0; i < slice.length; i++) {
+        if (isClosed()) { aborted = true; break; }
+        const device = slice[i];
+
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, ORNITELA_DEVICE_DELAY_MS));
         }
+        if (isClosed()) { aborted = true; break; }
+
+        let deviceGps = 0;
+        let deviceAcc = 0;
+        let deviceGpsDup = 0;
+        let deviceAccDup = 0;
+        let deviceSubformat: string | undefined;
+        let deviceError: string | undefined;
+
         try {
-          const importResult = await parseOrnitelaCsv(csvResult.csv, studyId, storage);
-          totalGps += importResult.gpsImported;
-          totalAcc += importResult.accImported;
-          totalGpsDup += importResult.gpsDuplicates;
-          totalAccDup += importResult.accDuplicates;
-          totalErrors += importResult.errors;
-          deviceResults.push({
-            imei: csvResult.imei, name: csvResult.name,
-            gps: importResult.gpsImported, acc: importResult.accImported,
-            gpsDup: importResult.gpsDuplicates, accDup: importResult.accDuplicates,
-            errors: importResult.errors, subformat: importResult.ornitela_subformat,
-          });
-        } catch (parseErr: any) {
-          deviceResults.push({ imei: csvResult.imei, name: csvResult.name, error: parseErr.message, gps: 0, acc: 0 });
+          const csv = await ornitelaSync.downloadCSV(panelUrl, session, device.imei, fromStr, toStr);
+          if (!csv || csv.trim().length < 10) {
+            deviceError = "CSV vacío";
+          } else {
+            const importResult = await parseOrnitelaCsv(csv, studyId, storage);
+            deviceGps = importResult.gpsImported;
+            deviceAcc = importResult.accImported;
+            deviceGpsDup = importResult.gpsDuplicates;
+            deviceAccDup = importResult.accDuplicates;
+            deviceSubformat = importResult.ornitela_subformat;
+            totalErrors += importResult.errors;
+            totalGps += deviceGps;
+            totalAcc += deviceAcc;
+            totalGpsDup += deviceGpsDup;
+            totalAccDup += deviceAccDup;
+          }
+        } catch (err: any) {
+          deviceError = err.message || String(err);
+          log(`Ornitela error en dispositivo ${device.name} (${device.imei}): ${deviceError}`, "ornitela");
         }
+
+        const entry = {
+          imei: device.imei,
+          name: device.name,
+          gps: deviceGps,
+          acc: deviceAcc,
+          gpsDup: deviceGpsDup,
+          accDup: deviceAccDup,
+          subformat: deviceSubformat,
+          error: deviceError,
+        };
+        deviceResults.push(entry);
+        processed++;
+        send("device", {
+          ...entry,
+          processed,
+          batchSize: slice.length,
+          totalDevices: allDevices.length,
+          totalGps,
+          totalAcc,
+        });
       }
 
       await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
+      // Solo aplicar el cooldown de 30 min cuando finaliza la sincronización completa,
+      // no entre batches (que son llamadas continuadas del mismo flujo).
+      if (!hasMore) {
+        ornitelaSyncTimestamps.set(studyId, Date.now());
+      }
 
-      ornitelaSyncTimestamps.set(studyId, Date.now());
+      const durationSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+      log(`Ornitela sync (lote ${startIndex}-${startIndex + processed}/${allDevices.length}): ${totalGps} GPS, ${totalAcc} ACC (${durationSec}s)${hasMore ? " — continúa" : " — fin"}`, "ornitela");
 
-      log(`Ornitela sync completado: ${devices.length} dispositivos, ${totalGps} GPS, ${totalAcc} ACC`, "ornitela");
-
-      return res.json({
-        devices: devices.length,
-        totalGps, totalAcc, totalGpsDup, totalAccDup, totalErrors,
-        deviceResults,
-        syncedAt: new Date().toISOString(),
-      });
+      if (!isClosed()) {
+        send("done", {
+          totalDevices: allDevices.length,
+          processed,
+          totalGps,
+          totalAcc,
+          totalGpsDup,
+          totalAccDup,
+          totalErrors,
+          deviceResults,
+          hasMore,
+          nextStartIndex,
+          durationSec,
+          syncedAt: new Date().toISOString(),
+        });
+        try { res.end(); } catch {}
+      }
     } catch (e: any) {
-      const statusCode = e.statusCode || 500;
-      return res.status(statusCode).json({ message: e.message });
+      log(`Ornitela sync error: ${e.message}`, "ornitela");
+      if (!res.headersSent) {
+        return res.status(e.statusCode || 500).json({ message: e.message });
+      }
+      if (!isClosed()) {
+        send("error", { message: e.message });
+        try { res.end(); } catch {}
+      }
     }
   });
 

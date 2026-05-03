@@ -61,6 +61,7 @@ export default function StudyDetail() {
   const [ornitelaDevices, setOrnitelaDevices] = useState<any[]>([]);
   const [ornitelaDevicesLoading, setOrnitelaDevicesLoading] = useState(false);
   const [ornitelaSyncResult, setOrnitelaSyncResult] = useState<any>(null);
+  const [ornitelaProgress, setOrnitelaProgress] = useState<{ processed: number; total: number; gps: number; acc: number; current?: string } | null>(null);
   const [ornitelaPanelOpen, setOrnitelaPanelOpen] = useState(false);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
@@ -342,32 +343,125 @@ export default function StudyDetail() {
   };
 
   const handleOrnitelaSync = async () => {
+    if (!studyId) return;
     setOrnitelaSyncing(true);
     setOrnitelaSyncResult(null);
+    setOrnitelaProgress({ processed: 0, total: 0, gps: 0, acc: 0 });
+
+    const accumulated: { devices: number; totalGps: number; totalAcc: number; totalGpsDup: number; totalAccDup: number; totalErrors: number; deviceResults: any[] } = {
+      devices: 0, totalGps: 0, totalAcc: 0, totalGpsDup: 0, totalAccDup: 0, totalErrors: 0, deviceResults: [],
+    };
+
+    let startIndex = 0;
+    let totalDevicesGlobal = 0;
+    let aborted = false;
+
     try {
-      const res = await apiRequest("POST", `/api/studies/${studyId}/ornitela-sync`, { hoursBack: 168 });
-      const data = await res.json();
-      setOrnitelaSyncResult(data);
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
-      toast({
-        title: "Sincronización Ornitela completada",
-        description: `Dispositivos: ${data.devices || 0}, GPS: ${data.totalGps || 0}, Acelerómetro: ${data.totalAcc || 0}`,
-      });
-    } catch (e: any) {
-      let errorMsg = "Error desconocido al sincronizar con Ornitela";
-      if (e.message) {
-        const colonIdx = e.message.indexOf(": ");
-        const body = colonIdx >= 0 ? e.message.substring(colonIdx + 2) : e.message;
-        try {
-          const parsed = JSON.parse(body);
-          if (parsed.message) errorMsg = parsed.message;
-          else errorMsg = body;
-        } catch {
-          errorMsg = body;
+      while (!aborted) {
+        const res = await fetch(`/api/studies/${studyId}/ornitela-sync`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          body: JSON.stringify({ hoursBack: 168, startIndex, maxDevices: 50 }),
+        });
+        if (!res.ok || !res.body) {
+          let msg = `Error ${res.status}`;
+          try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
+          toast({ title: "Error Ornitela", description: msg, variant: "destructive" });
+          aborted = true;
+          break;
         }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let nextStartIndex: number | null = null;
+        let hasMore = false;
+        let batchDone = false;
+        let receivedDone = false;
+
+        while (!batchDone) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let evtName = "message";
+            let dataStr = "";
+            for (const ln of lines) {
+              if (ln.startsWith("event:")) evtName = ln.slice(6).trim();
+              else if (ln.startsWith("data:")) dataStr += ln.slice(5).trim();
+            }
+            if (!dataStr) continue;
+            let payload: any = {};
+            try { payload = JSON.parse(dataStr); } catch { continue; }
+
+            if (evtName === "start") {
+              totalDevicesGlobal = payload.totalDevices || 0;
+              setOrnitelaProgress(p => ({
+                processed: p?.processed || 0,
+                total: totalDevicesGlobal,
+                gps: p?.gps || 0,
+                acc: p?.acc || 0,
+              }));
+            } else if (evtName === "device") {
+              accumulated.deviceResults.push({
+                imei: payload.imei, name: payload.name,
+                gps: payload.gps || 0, acc: payload.acc || 0,
+                gpsDup: payload.gpsDup, accDup: payload.accDup,
+                error: payload.error, subformat: payload.subformat,
+              });
+              accumulated.totalGps += payload.gps || 0;
+              accumulated.totalAcc += payload.acc || 0;
+              accumulated.totalGpsDup += payload.gpsDup || 0;
+              accumulated.totalAccDup += payload.accDup || 0;
+              accumulated.devices = accumulated.deviceResults.length;
+              setOrnitelaProgress({
+                processed: startIndex + (payload.processed || 0),
+                total: totalDevicesGlobal,
+                gps: accumulated.totalGps,
+                acc: accumulated.totalAcc,
+                current: payload.name || payload.imei,
+              });
+            } else if (evtName === "done") {
+              hasMore = !!payload.hasMore;
+              nextStartIndex = payload.nextStartIndex ?? null;
+              receivedDone = true;
+              batchDone = true;
+            } else if (evtName === "error") {
+              toast({ title: "Error Ornitela", description: payload.message || "Error desconocido", variant: "destructive" });
+              aborted = true;
+              batchDone = true;
+            }
+          }
+        }
+
+        if (aborted) break;
+        if (!receivedDone) {
+          aborted = true;
+          toast({ title: "Conexión interrumpida", description: "El stream se cerró antes de completar el lote. Datos parciales guardados.", variant: "destructive" });
+          break;
+        }
+        if (!hasMore || nextStartIndex == null) break;
+        startIndex = nextStartIndex;
       }
-      toast({ title: "Error Ornitela", description: errorMsg, variant: "destructive" });
+
+      if (!aborted) {
+        setOrnitelaSyncResult(accumulated);
+        queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
+        toast({
+          title: "Sincronización Ornitela completada",
+          description: `${accumulated.devices}/${totalDevicesGlobal || accumulated.devices} dispositivos · ${accumulated.totalGps} GPS · ${accumulated.totalAcc} ACC`,
+        });
+      } else if (accumulated.devices > 0) {
+        setOrnitelaSyncResult(accumulated);
+      }
+    } catch (e: any) {
+      toast({ title: "Error Ornitela", description: e.message || "Error desconocido", variant: "destructive" });
     } finally {
       setOrnitelaSyncing(false);
     }
@@ -590,7 +684,11 @@ export default function StudyDetail() {
               data-testid="button-sync-ornitela"
             >
               <RefreshCw className={`w-4 h-4 mr-2 ${ornitelaSyncing ? "animate-spin" : ""}`} />
-              {ornitelaSyncing ? "Sincronizando..." : "Sincronizar Ornitela"}
+              {ornitelaSyncing && ornitelaProgress && ornitelaProgress.total > 0
+                ? `Ornitela ${ornitelaProgress.processed}/${ornitelaProgress.total}…`
+                : ornitelaSyncing
+                ? "Sincronizando..."
+                : "Sincronizar Ornitela"}
             </Button>
           )}
         </div>
@@ -910,8 +1008,17 @@ export default function StudyDetail() {
                     data-testid="button-ornitela-sync-now"
                   >
                     <RefreshCw className={`w-4 h-4 mr-2 ${ornitelaSyncing ? "animate-spin" : ""}`} />
-                    {ornitelaSyncing ? "Sincronizando..." : "Sincronizar ahora"}
+                    {ornitelaSyncing && ornitelaProgress && ornitelaProgress.total > 0
+                      ? `${ornitelaProgress.processed}/${ornitelaProgress.total}…`
+                      : ornitelaSyncing
+                      ? "Sincronizando..."
+                      : "Sincronizar ahora"}
                   </Button>
+                  {ornitelaSyncing && ornitelaProgress && ornitelaProgress.total > 0 && (
+                    <span className="text-xs text-muted-foreground" data-testid="text-ornitela-progress">
+                      {ornitelaProgress.gps} GPS · {ornitelaProgress.acc} ACC{ornitelaProgress.current ? ` · ${ornitelaProgress.current}` : ""}
+                    </span>
+                  )}
                 </div>
 
                 {ornitelaDevices.length > 0 && (
