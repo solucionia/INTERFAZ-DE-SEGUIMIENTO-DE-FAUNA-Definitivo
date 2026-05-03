@@ -28,15 +28,17 @@ export default function Dashboard() {
   const { user } = useAuth();
   const { data: studies, isLoading } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
+    refetchInterval: 30000,
   });
 
   const { data: summary, isLoading: summaryLoading } = useQuery<DashboardSummary>({
     queryKey: ["/api/dashboard/summary"],
+    refetchInterval: 30000,
   });
 
   const { data: mbStatus } = useQuery<MovebankStatus>({
     queryKey: ["/api/movebank/status"],
-    refetchInterval: 60000,
+    refetchInterval: 30000,
   });
 
   const activeCount = studies?.filter((s) => s.active).length || 0;

@@ -28,6 +28,7 @@ import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useRegisterSync } from "@/lib/sync-status";
 import {
   Table,
   TableBody,
@@ -77,19 +78,26 @@ export default function StudyDetail() {
   const { data: individuals, isLoading: individualsLoading } = useQuery<Individual[]>({
     queryKey: ["/api/studies", studyId, "individuals"],
     enabled: !!studyId,
+    refetchInterval: 60000,
   });
 
   const { data: deployments } = useQuery<Deployment[]>({
     queryKey: ["/api/studies", studyId, "deployments"],
     enabled: !!studyId,
     staleTime: 30000,
+    refetchInterval: 60000,
   });
 
   const { data: gpsCounts } = useQuery<Record<string, { count: number; lastTimestamp: number | null }>>({
     queryKey: ["/api/studies", studyId, "gps-counts"],
     enabled: !!studyId,
     staleTime: 60000,
+    refetchInterval: 60000,
   });
+
+  useRegisterSync("Movebank: sincronizando estudio", syncing);
+  useRegisterSync("Movebank: backfill", backfilling);
+  useRegisterSync("Ornitela: sincronizando", ornitelaSyncing);
 
   const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
     queryKey: ["/api/projects"],

@@ -173,6 +173,7 @@ export default function LastPositions() {
     queryKey: [`/api/studies/${selectedStudyId}/last-positions?points=${numPoints}`],
     enabled: !!selectedStudyId,
     staleTime: 60000,
+    refetchInterval: 300000,
   });
 
   const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({

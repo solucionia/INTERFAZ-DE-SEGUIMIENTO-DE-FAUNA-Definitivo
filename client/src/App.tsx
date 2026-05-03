@@ -25,9 +25,27 @@ import ImmobilityMonitor from "@/pages/immobility-monitor";
 import LastPositions from "@/pages/last-positions";
 import AdminSpecies from "@/pages/admin-species";
 import AdminProjects from "@/pages/admin-projects";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, RefreshCw } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
+import { SyncStatusProvider, useSyncStatus } from "@/lib/sync-status";
 import type { ComponentType } from "react";
+
+function SyncStatusBadge() {
+  const { active } = useSyncStatus();
+  if (active.length === 0) return null;
+  const label = active.length === 1 ? active[0] : `Sincronizando ${active.length} tareas`;
+  return (
+    <div
+      className="flex items-center gap-2 rounded-full bg-primary/10 text-primary border border-primary/20 px-3 py-1 text-xs font-medium animate-pulse"
+      data-testid="badge-sync-status"
+      title={active.join(", ")}
+    >
+      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+      <span className="hidden sm:inline">{label}</span>
+      <span className="sm:hidden">Sincronizando…</span>
+    </div>
+  );
+}
 
 function RoleGuard({ component: Component, allowed }: { component: ComponentType; allowed: string[] }) {
   const { user } = useAuth();
@@ -90,6 +108,7 @@ function AppLayout() {
           <header className="flex items-center justify-between gap-2 p-2 border-b sticky top-0 bg-background z-50">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <div className="flex items-center gap-2">
+              <SyncStatusBadge />
               <button
                 onClick={() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }))}
                 className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground border rounded-md px-3 py-1 hover-elevate"
@@ -118,7 +137,9 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <AuthProvider>
-            <AppLayout />
+            <SyncStatusProvider>
+              <AppLayout />
+            </SyncStatusProvider>
           </AuthProvider>
           <Toaster />
         </TooltipProvider>
