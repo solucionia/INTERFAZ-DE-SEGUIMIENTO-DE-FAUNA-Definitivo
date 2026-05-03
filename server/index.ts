@@ -66,12 +66,10 @@ app.use((req, res, next) => {
 });
 
 import { startScheduler } from "./scheduler";
-import { bootstrapPedro } from "./bootstrapPedro";
 
 (async () => {
   initEncryption();
   await migrateEncryptCredentials();
-  await bootstrapPedro();
   await registerRoutes(httpServer, app);
   startScheduler();
 
