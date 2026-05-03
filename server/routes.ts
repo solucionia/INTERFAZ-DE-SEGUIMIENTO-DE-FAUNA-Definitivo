@@ -1899,7 +1899,13 @@ export async function registerRoutes(
   app.post("/api/studies/:id/backfill", checkRole("superuser"), requireStudyAccess, async (req, res) => {
     const MANUAL_MAX_BACKFILL_DAYS = 90;
     const MIN_GAP_MS = 60 * 1000;
+    const BACKFILL_MAX_ANIMALS_PER_CALL = 50;
     const studyId = String(req.params.id);
+    const startIndex = Math.max(0, Number(req.body?.startIndex) || 0);
+    const maxAnimals = Math.min(
+      BACKFILL_MAX_ANIMALS_PER_CALL,
+      Math.max(1, Number(req.body?.maxAnimals) || BACKFILL_MAX_ANIMALS_PER_CALL),
+    );
 
     try {
       const study = await storage.getStudyDecrypted(studyId);
@@ -1913,8 +1919,12 @@ export async function registerRoutes(
       }
 
       const individuals = await storage.getIndividuals(studyId);
-      const targets = individuals.filter(i => i.localIdentifier && i.localIdentifier.trim() !== "");
+      const allTargets = individuals.filter(i => i.localIdentifier && i.localIdentifier.trim() !== "");
+      const totalAll = allTargets.length;
+      const targets = allTargets.slice(startIndex, startIndex + maxAnimals);
       const total = targets.length;
+      const hasMore = startIndex + total < totalAll;
+      const nextStartIndex = hasMore ? startIndex + total : null;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -1936,7 +1946,7 @@ export async function registerRoutes(
       res.on("close", () => { aborted = true; });
       res.on("error", () => { aborted = true; });
 
-      send("start", { total, maxBackfillDays: MANUAL_MAX_BACKFILL_DAYS });
+      send("start", { total, totalAll, startIndex, batchSize: total, hasMore, nextStartIndex, maxBackfillDays: MANUAL_MAX_BACKFILL_DAYS });
 
       let processed = 0;
       let totalGps = 0;
@@ -2059,7 +2069,15 @@ export async function registerRoutes(
       }
 
       if (!isClosed()) {
-        send("done", { processed, total, totalGps, totalAcc, stoppedByRateLimit, aborted, durationSec: duration, status });
+        send("done", {
+          processed, total, totalAll,
+          startIndex, batchSize: total,
+          hasMore: hasMore && !stoppedByRateLimit && !aborted,
+          nextStartIndex: (hasMore && !stoppedByRateLimit && !aborted) ? nextStartIndex : null,
+          totalGps, totalAcc,
+          stoppedByRateLimit, aborted,
+          durationSec: duration, status,
+        });
         try { res.end(); } catch {}
       }
     } catch (e: any) {

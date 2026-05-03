@@ -269,72 +269,136 @@ export default function StudyDetail() {
     if (!studyId) return;
     setBackfilling(true);
     setBackfillProgress({ processed: 0, total: 0, gps: 0, acc: 0 });
+
+    let startIndex = 0;
+    let totalAll = 0;
+    let cumulativeProcessed = 0;
+    let cumulativeGps = 0;
+    let cumulativeAcc = 0;
+    let aborted = false;
+    let stoppedByRateLimit = false;
+    let lastStatus: string = "success";
+    let lastDuration: string | undefined;
+
     try {
-      const res = await fetch(`/api/studies/${studyId}/backfill`, {
-        method: "POST",
-        credentials: "include",
-        headers: { Accept: "text/event-stream" },
-      });
-      if (!res.ok || !res.body) {
-        let msg = `Error ${res.status}`;
-        try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
-        toast({ title: "No se pudo iniciar el backfill", description: msg, variant: "destructive" });
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let stoppedByRateLimit = false;
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-        for (const part of parts) {
-          const lines = part.split("\n");
-          let evtName = "message";
-          let dataStr = "";
-          for (const ln of lines) {
-            if (ln.startsWith("event:")) evtName = ln.slice(6).trim();
-            else if (ln.startsWith("data:")) dataStr += ln.slice(5).trim();
-          }
-          if (!dataStr) continue;
-          let payload: any = {};
-          try { payload = JSON.parse(dataStr); } catch { continue; }
-          if (evtName === "start") {
-            setBackfillProgress({ processed: 0, total: payload.total || 0, gps: 0, acc: 0 });
-          } else if (evtName === "animal") {
-            setBackfillProgress({
-              processed: payload.processed || 0,
-              total: payload.total || 0,
-              gps: payload.totalGps || 0,
-              acc: payload.totalAcc || 0,
-              current: payload.localId,
-            });
-          } else if (evtName === "rate-limit") {
-            stoppedByRateLimit = true;
-            toast({ title: "Movebank limitado", description: payload.reason || "Se alcanzó el límite de Movebank", variant: "destructive" });
-          } else if (evtName === "animal-error") {
-            // continúa
-          } else if (evtName === "done") {
-            setBackfillProgress(p => p ? { ...p, stopped: !!payload.stoppedByRateLimit, processed: payload.processed, total: payload.total, gps: payload.totalGps, acc: payload.totalAcc } : null);
-            const status = payload.status || (payload.stoppedByRateLimit ? "partial" : "success");
-            const desc = `${payload.processed}/${payload.total} animales · ${payload.totalGps} GPS · ${payload.totalAcc} ACC · ${payload.durationSec}s`;
-            toast({
-              title: status === "success" ? "Backfill completado" : status === "partial" ? "Backfill parcial (límite Movebank)" : "Backfill abortado",
-              description: desc,
-              variant: status === "success" ? "default" : "destructive",
-            });
-            queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "last-positions"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
-          } else if (evtName === "error") {
-            toast({ title: "Error en backfill", description: payload.message || "Error desconocido", variant: "destructive" });
+      while (!aborted) {
+        const res = await fetch(`/api/studies/${studyId}/backfill`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          body: JSON.stringify({ startIndex, maxAnimals: 50 }),
+        });
+        if (!res.ok || !res.body) {
+          let msg = `Error ${res.status}`;
+          try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
+          toast({ title: "No se pudo iniciar el backfill", description: msg, variant: "destructive" });
+          aborted = true;
+          break;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let nextStartIndex: number | null = null;
+        let hasMore = false;
+        let receivedDone = false;
+        let batchDone = false;
+
+        while (!batchDone) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let evtName = "message";
+            let dataStr = "";
+            for (const ln of lines) {
+              if (ln.startsWith("event:")) evtName = ln.slice(6).trim();
+              else if (ln.startsWith("data:")) dataStr += ln.slice(5).trim();
+            }
+            if (!dataStr) continue;
+            let payload: any = {};
+            try { payload = JSON.parse(dataStr); } catch { continue; }
+
+            if (evtName === "start") {
+              totalAll = payload.totalAll || payload.total || 0;
+              setBackfillProgress({
+                processed: cumulativeProcessed,
+                total: totalAll,
+                gps: cumulativeGps,
+                acc: cumulativeAcc,
+              });
+            } else if (evtName === "animal") {
+              setBackfillProgress({
+                processed: startIndex + (payload.processed || 0),
+                total: totalAll,
+                gps: cumulativeGps + (payload.totalGps || 0),
+                acc: cumulativeAcc + (payload.totalAcc || 0),
+                current: payload.localId,
+              });
+            } else if (evtName === "rate-limit") {
+              stoppedByRateLimit = true;
+              toast({ title: "Movebank limitado", description: payload.reason || "Se alcanzó el límite de Movebank", variant: "destructive" });
+            } else if (evtName === "animal-error") {
+              // continúa
+            } else if (evtName === "done") {
+              cumulativeProcessed = startIndex + (payload.processed || 0);
+              cumulativeGps += payload.totalGps || 0;
+              cumulativeAcc += payload.totalAcc || 0;
+              hasMore = !!payload.hasMore;
+              nextStartIndex = payload.nextStartIndex ?? null;
+              if (payload.stoppedByRateLimit) stoppedByRateLimit = true;
+              if (payload.aborted) aborted = true;
+              lastStatus = payload.status || lastStatus;
+              lastDuration = payload.durationSec;
+              receivedDone = true;
+              batchDone = true;
+            } else if (evtName === "error") {
+              toast({ title: "Error en backfill", description: payload.message || "Error desconocido", variant: "destructive" });
+              aborted = true;
+              batchDone = true;
+            }
           }
         }
+
+        if (aborted) break;
+        if (!receivedDone) {
+          aborted = true;
+          toast({ title: "Conexión interrumpida", description: "El stream se cerró antes de completar el lote. Datos parciales guardados.", variant: "destructive" });
+          break;
+        }
+        if (stoppedByRateLimit) break;
+        if (!hasMore || nextStartIndex == null) break;
+        if (nextStartIndex <= startIndex) {
+          aborted = true;
+          toast({ title: "Backfill interrumpido", description: "El servidor no avanzó el índice de paginación. Datos parciales guardados.", variant: "destructive" });
+          break;
+        }
+        startIndex = nextStartIndex;
       }
-      if (stoppedByRateLimit) queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
+
+      const finalTotal = totalAll || cumulativeProcessed;
+      setBackfillProgress({
+        processed: cumulativeProcessed,
+        total: finalTotal,
+        gps: cumulativeGps,
+        acc: cumulativeAcc,
+        stopped: stoppedByRateLimit,
+      });
+
+      const desc = `${cumulativeProcessed}/${finalTotal} animales · ${cumulativeGps} GPS · ${cumulativeAcc} ACC${lastDuration ? ` · último lote ${lastDuration}s` : ""}`;
+      const finalStatus = stoppedByRateLimit ? "partial" : (aborted ? "aborted" : (lastStatus || "success"));
+      if (!aborted || stoppedByRateLimit) {
+        toast({
+          title: finalStatus === "success" ? "Backfill completado" : finalStatus === "partial" ? "Backfill parcial (límite Movebank)" : "Backfill abortado",
+          description: desc,
+          variant: finalStatus === "success" ? "default" : "destructive",
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "last-positions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/movebank/status"] });
     } catch (e: any) {
       toast({ title: "Error en backfill", description: e.message || "Error desconocido", variant: "destructive" });
     } finally {
