@@ -84,7 +84,7 @@ export default function StudyDetail() {
     staleTime: 30000,
   });
 
-  const { data: gpsCounts } = useQuery<Record<string, number>>({
+  const { data: gpsCounts } = useQuery<Record<string, { count: number; lastTimestamp: number | null }>>({
     queryKey: ["/api/studies", studyId, "gps-counts"],
     enabled: !!studyId,
     staleTime: 60000,
@@ -728,7 +728,7 @@ export default function StudyDetail() {
                     <TableHead>Etapa</TableHead>
                     <TableHead>Proyecto</TableHead>
                     <TableHead>Nº Historial</TableHead>
-                    <TableHead>Eventos GPS</TableHead>
+                    <TableHead>GPS local</TableHead>
                     <TableHead>Estado</TableHead>
                     {canEditIndividuals && <TableHead className="w-10"></TableHead>}
                   </TableRow>
@@ -787,14 +787,32 @@ export default function StudyDetail() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-center" data-testid={`text-gps-count-${ind.movebankId}`}>
+                        <TableCell data-testid={`text-gps-count-${ind.movebankId}`}>
                           {(() => {
-                            const count = gpsCounts?.[ind.localIdentifier || `ID-${ind.movebankId}`];
-                            if (count == null) return <span className="text-muted-foreground">—</span>;
+                            const entry = gpsCounts?.[ind.localIdentifier || `ID-${ind.movebankId}`];
+                            const count = entry?.count ?? 0;
+                            if (!entry || count === 0) {
+                              return (
+                                <div className="flex items-center gap-1.5 text-muted-foreground">
+                                  <Database className="w-3.5 h-3.5" />
+                                  <span className="text-xs">Sin datos</span>
+                                </div>
+                              );
+                            }
+                            const lastDate = entry.lastTimestamp
+                              ? new Date(entry.lastTimestamp).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
+                              : null;
                             return (
-                              <Badge variant="outline" className={count > 0 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : ""}>
-                                {count.toLocaleString()}
-                              </Badge>
+                              <div className="flex flex-col gap-0.5">
+                                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 w-fit">
+                                  {count.toLocaleString()}
+                                </Badge>
+                                {lastDate && (
+                                  <span className="text-xs text-muted-foreground">
+                                    Último: {lastDate}
+                                  </span>
+                                )}
+                              </div>
                             );
                           })()}
                         </TableCell>

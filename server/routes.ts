@@ -1115,15 +1115,20 @@ export async function registerRoutes(
   app.get("/api/studies/:id/gps-counts", requireStudyAccess, async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT individual_local_identifier, COUNT(*)::int AS count
+        `SELECT individual_local_identifier,
+                COUNT(*)::int AS count,
+                MAX(timestamp)::bigint AS last_timestamp
          FROM cached_gps_events
          WHERE study_id = $1
          GROUP BY individual_local_identifier`,
         [req.params.id]
       );
-      const counts: Record<string, number> = {};
+      const counts: Record<string, { count: number; lastTimestamp: number | null }> = {};
       for (const r of rows) {
-        counts[r.individual_local_identifier] = r.count;
+        counts[r.individual_local_identifier] = {
+          count: r.count,
+          lastTimestamp: r.last_timestamp != null ? Number(r.last_timestamp) : null,
+        };
       }
       return res.json(counts);
     } catch (e: any) {
