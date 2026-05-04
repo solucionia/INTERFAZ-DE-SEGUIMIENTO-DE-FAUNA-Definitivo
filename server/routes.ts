@@ -1900,12 +1900,20 @@ export async function registerRoutes(
     const MANUAL_MAX_BACKFILL_DAYS = 90;
     const MIN_GAP_MS = 60 * 1000;
     const BACKFILL_MAX_ANIMALS_PER_CALL = 50;
+    const BACKFILL_REQUEST_TIMEOUT_MS = 25 * 60 * 1000;
+    req.setTimeout(BACKFILL_REQUEST_TIMEOUT_MS);
+    res.setTimeout(BACKFILL_REQUEST_TIMEOUT_MS);
     const studyId = String(req.params.id);
-    const startIndex = Math.max(0, Number(req.body?.startIndex) || 0);
     const maxAnimals = Math.min(
       BACKFILL_MAX_ANIMALS_PER_CALL,
       Math.max(1, Number(req.body?.maxAnimals) || BACKFILL_MAX_ANIMALS_PER_CALL),
     );
+    // El backfill prioriza siempre los animales con menor cobertura GPS y menos
+    // recientemente intentados. La selección interna ignora startIndex (siempre
+    // arranca desde el principio del orden recalculado), pero echamos un cursor
+    // monotónicamente creciente al cliente para que su guard de progreso no se
+    // dispare y la cadena de lotes pueda continuar.
+    const inputStartIndex = Math.max(0, Number(req.body?.startIndex) || 0);
 
     try {
       const study = await storage.getStudyDecrypted(studyId);
@@ -1919,12 +1927,20 @@ export async function registerRoutes(
       }
 
       const individuals = await storage.getIndividuals(studyId);
-      const allTargets = individuals.filter(i => i.localIdentifier && i.localIdentifier.trim() !== "");
+      const validTargets = individuals.filter(i => i.localIdentifier && i.localIdentifier.trim() !== "");
+      const meta = await storage.getBackfillCandidateMetadata(studyId);
+      const allTargets = [...validTargets].sort((a, b) => {
+        const ma = meta.get(a.localIdentifier!) ?? { gpsCount: 0, lastGpsFetchedTo: null };
+        const mb = meta.get(b.localIdentifier!) ?? { gpsCount: 0, lastGpsFetchedTo: null };
+        if (ma.gpsCount !== mb.gpsCount) return ma.gpsCount - mb.gpsCount;
+        const ta = ma.lastGpsFetchedTo ?? -1;
+        const tb = mb.lastGpsFetchedTo ?? -1;
+        if (ta !== tb) return ta - tb;
+        return a.localIdentifier!.localeCompare(b.localIdentifier!);
+      });
       const totalAll = allTargets.length;
-      const targets = allTargets.slice(startIndex, startIndex + maxAnimals);
+      const targets = allTargets.slice(0, maxAnimals);
       const total = targets.length;
-      const hasMore = startIndex + total < totalAll;
-      const nextStartIndex = hasMore ? startIndex + total : null;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -1946,7 +1962,7 @@ export async function registerRoutes(
       res.on("close", () => { aborted = true; });
       res.on("error", () => { aborted = true; });
 
-      send("start", { total, totalAll, startIndex, batchSize: total, hasMore, nextStartIndex, maxBackfillDays: MANUAL_MAX_BACKFILL_DAYS });
+      send("start", { total, totalAll, startIndex: inputStartIndex, batchSize: total, hasMore: totalAll > total, nextStartIndex: totalAll > total ? inputStartIndex + total : null, maxBackfillDays: MANUAL_MAX_BACKFILL_DAYS });
 
       let processed = 0;
       let totalGps = 0;
@@ -2069,11 +2085,17 @@ export async function registerRoutes(
       }
 
       if (!isClosed()) {
+        // Detenemos el bucle si: hubo rate-limit, abort, no quedan más candidatos,
+        // o el lote completo no produjo datos (animales atascados sin transmisión).
+        const madeProgress = totalGps > 0 || totalAcc > 0;
+        const moreCandidates = totalAll > total;
+        const hasMore = moreCandidates && madeProgress && !stoppedByRateLimit && !aborted;
+        const nextStartIndex = hasMore ? inputStartIndex + total : null;
         send("done", {
           processed, total, totalAll,
-          startIndex, batchSize: total,
-          hasMore: hasMore && !stoppedByRateLimit && !aborted,
-          nextStartIndex: (hasMore && !stoppedByRateLimit && !aborted) ? nextStartIndex : null,
+          startIndex: inputStartIndex, batchSize: total,
+          hasMore,
+          nextStartIndex,
           totalGps, totalAcc,
           stoppedByRateLimit, aborted,
           durationSec: duration, status,

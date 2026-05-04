@@ -9,6 +9,10 @@ import { migrateEncryptCredentials } from "./migrateEncrypt";
 const app = express();
 app.set("trust proxy", 1);
 const httpServer = createServer(app);
+// Subimos los timeouts a 25 min para soportar respuestas SSE largas (backfill
+// Movebank). El default de Node 18+ corta a los 5 min.
+httpServer.requestTimeout = 25 * 60 * 1000;
+httpServer.headersTimeout = 26 * 60 * 1000;
 
 app.use(compression());
 

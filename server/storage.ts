@@ -73,6 +73,8 @@ export interface IStorage {
   createCronLog(taskType: string, status: string, details?: string): Promise<void>;
   getLastCronRunAt(taskType: string): Promise<Date | null>;
 
+  getBackfillCandidateMetadata(studyId: string): Promise<Map<string, { gpsCount: number; lastGpsFetchedTo: number | null }>>;
+
   getSavedAnalyses(studyId: string, userId: string): Promise<SavedAnalysis[]>;
   getSavedAnalysis(id: string): Promise<SavedAnalysis | undefined>;
   createSavedAnalysis(analysis: InsertSavedAnalysis): Promise<SavedAnalysis>;
@@ -729,6 +731,47 @@ export class DatabaseStorage implements IStorage {
     const alertCountsByType = await this.getDetectedEventStats(studyIds);
 
     return { totalAnimals, recentAlerts, alertCountsByType };
+  }
+
+  async getBackfillCandidateMetadata(
+    studyId: string,
+  ): Promise<Map<string, { gpsCount: number; lastGpsFetchedTo: number | null }>> {
+    const map = new Map<string, { gpsCount: number; lastGpsFetchedTo: number | null }>();
+
+    const gpsRows = await db
+      .select({
+        localId: cachedGpsEvents.individualLocalIdentifier,
+        n: count(),
+      })
+      .from(cachedGpsEvents)
+      .where(eq(cachedGpsEvents.studyId, studyId))
+      .groupBy(cachedGpsEvents.individualLocalIdentifier);
+    for (const r of gpsRows) {
+      map.set(String(r.localId), { gpsCount: Number(r.n), lastGpsFetchedTo: null });
+    }
+
+    const fetchRows = await db
+      .select({
+        localId: cachedFetchRanges.individualLocalIdentifier,
+        maxEnd: sql<number>`MAX(${cachedFetchRanges.rangeEnd})`,
+      })
+      .from(cachedFetchRanges)
+      .where(
+        and(
+          eq(cachedFetchRanges.studyId, studyId),
+          eq(cachedFetchRanges.sensorType, "gps"),
+        ),
+      )
+      .groupBy(cachedFetchRanges.individualLocalIdentifier);
+    for (const r of fetchRows) {
+      const k = String(r.localId);
+      const cur = map.get(k);
+      const lastTo = r.maxEnd != null ? Number(r.maxEnd) : null;
+      if (cur) cur.lastGpsFetchedTo = lastTo;
+      else map.set(k, { gpsCount: 0, lastGpsFetchedTo: lastTo });
+    }
+
+    return map;
   }
 
   async getCachedGpsEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedGpsEvent[]> {
