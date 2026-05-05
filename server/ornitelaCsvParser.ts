@@ -17,7 +17,7 @@ export interface OrnitelaImportResult {
   isV2: boolean;
 }
 
-function parseCsvLine(line: string, separator: string): string[] {
+export function parseCsvLine(line: string, separator: string): string[] {
   const result: string[] = [];
   let current = "";
   let inQuotes = false;

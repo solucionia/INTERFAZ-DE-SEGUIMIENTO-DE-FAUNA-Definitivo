@@ -348,3 +348,12 @@ export const cachedFetchRanges = pgTable("cached_fetch_ranges", {
 });
 
 export type CachedFetchRange = typeof cachedFetchRanges.$inferSelect;
+
+export const processedSftpFiles = pgTable("processed_sftp_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  filename: text("filename").notNull().unique(),
+  processedAt: timestamp("processed_at").defaultNow().notNull(),
+  recordsCount: integer("records_count").notNull().default(0),
+});
+
+export type ProcessedSftpFile = typeof processedSftpFiles.$inferSelect;

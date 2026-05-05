@@ -18,6 +18,7 @@ import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 import { ornitelaSync, type OrnitelaDevice } from "./ornitelaSync";
 import { runEventDetection, runEmissionCheck, runImmobilityCheck, runOrnitelaSync } from "./scheduler";
+import { sftpWatcher } from "./services/sftpWatcher";
 
 function fmtDate(isoStr: string): string {
   if (!isoStr) return "";
@@ -377,6 +378,33 @@ export async function registerRoutes(
 
   app.get("/api/movebank/status", requireAuth, async (req, res) => {
     return res.json(movebankRateLimiter.getStatus());
+  });
+
+  app.get("/api/sftp/status", requireAuth, async (_req, res) => {
+    try {
+      const status = await sftpWatcher.getStatus();
+      return res.json(status);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error obteniendo estado SFTP: ${e.message}` });
+    }
+  });
+
+  app.post("/api/sftp/run-now", checkRole("superuser"), async (_req, res) => {
+    try {
+      const result = await sftpWatcher.tick();
+      if (result === null) {
+        return res.status(409).json({ message: "Ya hay una ejecución SFTP en curso" });
+      }
+      if (result.globalError) {
+        return res.status(502).json({
+          message: `Fallo SFTP: ${result.globalError}`,
+          result,
+        });
+      }
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error ejecutando SFTP: ${e.message}` });
+    }
   });
 
   app.get("/api/dashboard/summary", requireAuth, async (req, res) => {

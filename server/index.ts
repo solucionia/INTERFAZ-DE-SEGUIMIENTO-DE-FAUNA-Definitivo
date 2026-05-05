@@ -70,12 +70,14 @@ app.use((req, res, next) => {
 });
 
 import { startScheduler } from "./scheduler";
+import { sftpWatcher } from "./services/sftpWatcher";
 
 (async () => {
   initEncryption();
   await migrateEncryptCredentials();
   await registerRoutes(httpServer, app);
   startScheduler();
+  sftpWatcher.start();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

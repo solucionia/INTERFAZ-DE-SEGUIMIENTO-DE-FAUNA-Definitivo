@@ -16,6 +16,7 @@ import {
   type CachedGpsEvent, type CachedAccEvent, type CachedFetchRange,
   type Species, type InsertSpecies,
   type Project, type InsertProject,
+  processedSftpFiles, type ProcessedSftpFile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -136,6 +137,12 @@ export interface IStorage {
 
   getProjectCountsBySpecies(): Promise<Record<number, number>>;
   getIndividualCountsByProject(): Promise<Record<number, number>>;
+
+  getProcessedSftpFile(filename: string): Promise<ProcessedSftpFile | undefined>;
+  recordProcessedSftpFile(filename: string, recordsCount: number): Promise<void>;
+  listProcessedSftpFiles(limit: number): Promise<ProcessedSftpFile[]>;
+  countProcessedSftpFiles(): Promise<number>;
+  findOrnitelaStudyForDevice(deviceId: string): Promise<string | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1171,6 +1178,42 @@ export class DatabaseStorage implements IStorage {
       if (r.speciesId != null) result[r.speciesId] = Number(r.cnt);
     }
     return result;
+  }
+
+  async getProcessedSftpFile(filename: string): Promise<ProcessedSftpFile | undefined> {
+    const [row] = await db.select().from(processedSftpFiles).where(eq(processedSftpFiles.filename, filename)).limit(1);
+    return row;
+  }
+
+  async recordProcessedSftpFile(filename: string, recordsCount: number): Promise<void> {
+    await db.insert(processedSftpFiles)
+      .values({ filename, recordsCount })
+      .onConflictDoUpdate({
+        target: processedSftpFiles.filename,
+        set: { recordsCount, processedAt: new Date() },
+      });
+  }
+
+  async listProcessedSftpFiles(limit: number): Promise<ProcessedSftpFile[]> {
+    return db.select().from(processedSftpFiles).orderBy(desc(processedSftpFiles.processedAt)).limit(limit);
+  }
+
+  async countProcessedSftpFiles(): Promise<number> {
+    const [r] = await db.select({ n: count() }).from(processedSftpFiles);
+    return Number(r?.n ?? 0);
+  }
+
+  async findOrnitelaStudyForDevice(deviceId: string): Promise<string | null> {
+    const [dep] = await db.select({ studyId: deployments.studyId })
+      .from(deployments)
+      .where(eq(deployments.localIdentifier, deviceId))
+      .limit(1);
+    if (dep) return dep.studyId;
+    const enabled = await db.select({ id: studies.id })
+      .from(studies)
+      .where(and(eq(studies.ornitelaEnabled, true), eq(studies.active, true)));
+    if (enabled.length === 1) return enabled[0].id;
+    return null;
   }
 
   async getIndividualCountsByProject(): Promise<Record<number, number>> {
