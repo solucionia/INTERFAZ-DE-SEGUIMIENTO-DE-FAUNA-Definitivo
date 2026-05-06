@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type RefObject } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -846,6 +846,7 @@ export default function GeoAnalysis() {
                   setShowMcpPcts={setShowMcpPcts}
                   mapLayer={mapLayer}
                   setMapLayer={setMapLayer}
+                  mapContainerRef={mapContainerRef}
                 />
               ) : (
                 <>
@@ -944,6 +945,7 @@ function ComprehensiveResults({
   setShowMcpPcts,
   mapLayer,
   setMapLayer,
+  mapContainerRef,
 }: {
   data: any;
   filteredGeojson: any;
@@ -955,6 +957,7 @@ function ComprehensiveResults({
   setShowMcpPcts: (v: number[]) => void;
   mapLayer: "kernel" | "mcp";
   setMapLayer: (v: "kernel" | "mcp") => void;
+  mapContainerRef: RefObject<HTMLDivElement>;
 }) {
   const perInd = data.perIndividual || [];
   const isMulti = perInd.length > 1;
