@@ -207,6 +207,93 @@ export async function sendImmobilityAlertEmail(
   }
 }
 
+export interface CriticalImmobilityEmailRow {
+  individual: string;
+  species: string;
+  type: "immobility" | "no_transmission";
+  studyName: string;
+  hoursSinceLast: number | null;
+  hoursImmobile: number | null;
+  lastTransmission: number | null;
+  lat: number | null;
+  lon: number | null;
+}
+
+export async function sendCriticalImmobilityEmail(
+  toEmail: string,
+  rows: CriticalImmobilityEmailRow[]
+): Promise<boolean> {
+  const transport = getTransporter();
+  if (!transport) {
+    log("SMTP no configurado - alerta crítica de inmovilidad no enviada", "email");
+    return false;
+  }
+  if (rows.length === 0) return false;
+
+  const today = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+  const tableRows = rows.map((r) => {
+    const typeLabel = r.type === "no_transmission" ? "Sin transmisión" : "Inmovilidad";
+    const hoursStr = r.hoursSinceLast != null
+      ? `${r.hoursSinceLast.toFixed(1)} h sin datos`
+      : (r.hoursImmobile != null ? `${r.hoursImmobile.toFixed(1)} h inmóvil` : "—");
+    const lastDate = r.lastTransmission
+      ? new Date(r.lastTransmission).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })
+      : "—";
+    const mapsLink = r.lat != null && r.lon != null
+      ? `<a href="https://www.google.com/maps?q=${r.lat},${r.lon}" style="color:#3b82f6;text-decoration:underline" target="_blank">Ver mapa (${r.lat.toFixed(5)}, ${r.lon.toFixed(5)})</a>`
+      : "—";
+    return `<tr style="border-bottom:1px solid #e5e7eb">
+      <td style="padding:6px 8px"><strong>${r.individual}</strong></td>
+      <td style="padding:6px 8px">${r.species}</td>
+      <td style="padding:6px 8px">${r.studyName}</td>
+      <td style="padding:6px 8px">${typeLabel}</td>
+      <td style="padding:6px 8px;color:#ef4444;font-weight:bold">${hoursStr}</td>
+      <td style="padding:6px 8px">${lastDate}</td>
+      <td style="padding:6px 8px">${mapsLink}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:850px;margin:0 auto">
+      <div style="background:#ef4444;color:white;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h2 style="margin:0;font-size:18px">⚠️ ${rows.length} animal(es) sin transmisión / inmóvil(es) — ${today}</h2>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:20px;border-radius:0 0 8px 8px">
+        <p style="margin:0 0 16px;color:#374151">Nuevas alertas críticas detectadas por el sistema de mortalidad:</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px">
+          <thead>
+            <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb">
+              <th style="padding:8px;text-align:left">Animal</th>
+              <th style="padding:8px;text-align:left">Especie</th>
+              <th style="padding:8px;text-align:left">Estudio</th>
+              <th style="padding:8px;text-align:left">Tipo</th>
+              <th style="padding:8px;text-align:left">Tiempo</th>
+              <th style="padding:8px;text-align:left">Última transmisión</th>
+              <th style="padding:8px;text-align:left">Última posición</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <p style="margin:0;font-size:12px;color:#9ca3af">WildTrack — Sistema de Seguimiento de Fauna Silvestre · alerta automática</p>
+      </div>
+    </div>`;
+
+  try {
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: `[WildTrack] ⚠️ ${rows.length} animales sin transmisión - ${today}`,
+      html,
+    });
+    log(`Email crítico de inmovilidad enviado a ${toEmail} (${rows.length} alertas)`, "email");
+    return true;
+  } catch (e: any) {
+    log(`Error enviando email crítico de inmovilidad: ${e.message}`, "email");
+    return false;
+  }
+}
+
 export async function sendEventAlert(event: DetectedEvent, toEmail: string, studyName: string): Promise<boolean> {
   const transport = getTransporter();
   if (!transport) {

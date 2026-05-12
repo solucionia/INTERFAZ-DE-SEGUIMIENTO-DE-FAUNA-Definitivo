@@ -17,7 +17,7 @@ import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 import { ornitelaSync, type OrnitelaDevice } from "./ornitelaSync";
-import { runEventDetection, runEmissionCheck, runImmobilityCheck, runOrnitelaSync } from "./scheduler";
+import { runEventDetection, runEmissionCheck, runOrnitelaSync } from "./scheduler";
 import { sftpWatcher } from "./services/sftpWatcher";
 
 function fmtDate(isoStr: string): string {
@@ -171,10 +171,13 @@ export async function registerRoutes(
     const startedAtMs = Date.parse(startedAt);
     log("sync-all: ejecución manual iniciada via /api/sync-all", "sync-all");
 
+    // Nota: immobility_check NO se incluye aquí. Tiene su propio cron dedicado
+    // cada 2h (`IMMOBILITY_CRON_INTERVAL`) con mutex single-flight; incluirlo en
+    // el bundle de 6h provocaría overlap en horas alineadas (0/6/12/18h) y
+    // emails duplicados de "nuevas" alertas críticas.
     const tasks: { name: string; fn: () => Promise<void> }[] = [
       { name: "event_detection", fn: runEventDetection },
       { name: "emission_check", fn: runEmissionCheck },
-      { name: "immobility_check", fn: runImmobilityCheck },
       { name: "ornitela_sync", fn: runOrnitelaSync },
     ];
 

@@ -58,6 +58,10 @@ export interface IStorage {
   getDetectedEvents(studyId: string, timestampStart?: number, timestampEnd?: number): Promise<DetectedEvent[]>;
   createDetectedEvent(event: InsertDetectedEvent): Promise<DetectedEvent>;
   deleteDetectedEventsForStudy(studyId: string): Promise<void>;
+  findRecentUnresolvedDetectedEvent(studyId: string, individualLocalId: string, eventType: string, sinceCreatedAtMs: number): Promise<DetectedEvent | undefined>;
+  markDetectedEventsResolved(studyId: string, individualLocalId: string, eventTypes: string[]): Promise<number>;
+  insertDetectedEventNoDedupe(event: InsertDetectedEvent): Promise<DetectedEvent>;
+  getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number } | undefined>;
 
   getAlertLog(eventId: string, email: string): Promise<boolean>;
   createAlertLog(eventId: string, email: string): Promise<void>;
@@ -541,6 +545,56 @@ export class DatabaseStorage implements IStorage {
 
   async deleteDetectedEventsForStudy(studyId: string): Promise<void> {
     await db.delete(detectedEvents).where(eq(detectedEvents.studyId, studyId));
+  }
+
+  async findRecentUnresolvedDetectedEvent(studyId: string, individualLocalId: string, eventType: string, sinceCreatedAtMs: number): Promise<DetectedEvent | undefined> {
+    const sinceDate = new Date(sinceCreatedAtMs);
+    const [existing] = await db.select().from(detectedEvents)
+      .where(and(
+        eq(detectedEvents.studyId, studyId),
+        eq(detectedEvents.individualLocalId, individualLocalId),
+        eq(detectedEvents.eventType, eventType as any),
+        eq(detectedEvents.resolvedStatus, false),
+        gte(detectedEvents.createdAt, sinceDate),
+      ))
+      .orderBy(desc(detectedEvents.createdAt))
+      .limit(1);
+    return existing;
+  }
+
+  async markDetectedEventsResolved(studyId: string, individualLocalId: string, eventTypes: string[]): Promise<number> {
+    if (eventTypes.length === 0) return 0;
+    const result = await db.update(detectedEvents)
+      .set({ resolvedStatus: true })
+      .where(and(
+        eq(detectedEvents.studyId, studyId),
+        eq(detectedEvents.individualLocalId, individualLocalId),
+        eq(detectedEvents.resolvedStatus, false),
+        inArray(detectedEvents.eventType, eventTypes as any),
+      ))
+      .returning({ id: detectedEvents.id });
+    return result.length;
+  }
+
+  async insertDetectedEventNoDedupe(event: InsertDetectedEvent): Promise<DetectedEvent> {
+    const [created] = await db.insert(detectedEvents).values(event as any).returning();
+    return created;
+  }
+
+  async getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number } | undefined> {
+    const [row] = await db.select({
+      timestamp: cachedGpsEvents.timestamp,
+      latitude: cachedGpsEvents.latitude,
+      longitude: cachedGpsEvents.longitude,
+    })
+      .from(cachedGpsEvents)
+      .where(and(
+        eq(cachedGpsEvents.studyId, studyId),
+        eq(cachedGpsEvents.individualLocalIdentifier, individualLocalId),
+      ))
+      .orderBy(desc(cachedGpsEvents.timestamp))
+      .limit(1);
+    return row;
   }
 
   async getAlertLog(eventId: string, email: string): Promise<boolean> {

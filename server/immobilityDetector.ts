@@ -64,6 +64,18 @@ export interface NoTransmissionAlert {
   severity: string;
 }
 
+export interface NewCriticalAlert {
+  individual: string;
+  species: string;
+  type: "immobility" | "no_transmission";
+  studyName: string;
+  hoursSinceLast: number | null;
+  hoursImmobile: number | null;
+  lastTransmission: number | null;
+  lat: number | null;
+  lon: number | null;
+}
+
 export interface ImmobilityAnalysisResult {
   summary: {
     totalAnimals: number;
@@ -73,6 +85,7 @@ export interface ImmobilityAnalysisResult {
     criticalAlerts: number;
     analyzedAt: number;
     config: ImmobilityConfig;
+    excludedNoHistory: number;
   };
   immobilityAlerts: ImmobilityAlert[];
   noTransmissionAlerts: NoTransmissionAlert[];
@@ -90,6 +103,8 @@ export interface ImmobilityAnalysisResult {
     immobilePoints: number;
     immobilityGroups: number;
   };
+  newCriticalAlerts: NewCriticalAlert[];
+  resolvedCount: number;
 }
 
 const METERS_PER_DEGREE = 111320;
@@ -286,29 +301,51 @@ function checkTransmissionStatus(
   return { noTransmission, active };
 }
 
+const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export async function analyzeImmobility(
   studyId: string,
-  config: Partial<ImmobilityConfig> = {}
+  config: Partial<ImmobilityConfig> = {},
+  options: { persist?: boolean } = {}
 ): Promise<ImmobilityAnalysisResult> {
   const cfg: ImmobilityConfig = { ...DEFAULT_IMMOBILITY_CONFIG, ...config };
+  const persist = options.persist !== false;
   const now = Date.now();
   const startTime = now - cfg.hoursToAnalyze * 60 * 60 * 1000;
 
-  log(`Immobility: Analizando estudio ${studyId} (${cfg.hoursToAnalyze}h, umbral ${cfg.immobilityThresholdHours}h)`, "analysis");
+  log(`Immobility: Analizando estudio ${studyId} (${cfg.hoursToAnalyze}h, umbral ${cfg.immobilityThresholdHours}h, persist=${persist})`, "analysis");
 
   const studyData = await storage.getActiveStudiesWithDeployments();
   const studyInfo = studyData.find(s => s.study.id === studyId);
   if (!studyInfo) {
     return {
-      summary: { totalAnimals: 0, transmitting: 0, noTransmission: 0, immobile: 0, criticalAlerts: 0, analyzedAt: now, config: cfg },
+      summary: { totalAnimals: 0, transmitting: 0, noTransmission: 0, immobile: 0, criticalAlerts: 0, analyzedAt: now, config: cfg, excludedNoHistory: 0 },
       immobilityAlerts: [],
       noTransmissionAlerts: [],
       activeAnimals: [],
       stats: { totalGpsPoints: 0, immobilePoints: 0, immobilityGroups: 0 },
+      newCriticalAlerts: [],
+      resolvedCount: 0,
     };
   }
 
-  const { activeIndividuals } = studyInfo;
+  const { study, activeIndividuals } = studyInfo;
+
+  // Filtrar animales sin historial: si nunca han transmitido (no hay rango GPS en BD), excluir.
+  const filteredIndividuals: { localIdentifier: string; movebankId: number }[] = [];
+  let excludedNoHistory = 0;
+  for (const animal of activeIndividuals) {
+    const range = await storage.getCachedTimestampRange(studyId, animal.localIdentifier, "gps");
+    if (!range || !Number.isFinite(range.max) || range.max <= 0) {
+      excludedNoHistory++;
+      continue;
+    }
+    filteredIndividuals.push(animal);
+  }
+
+  if (excludedNoHistory > 0) {
+    log(`Immobility: Excluidos ${excludedNoHistory} animales sin historial GPS (lastTransmission=NULL)`, "analysis");
+  }
 
   const allInds = await storage.getIndividuals(studyId);
   const speciesMap = new Map<string, string>();
@@ -319,40 +356,167 @@ export async function analyzeImmobility(
   }
 
   const allGpsEvents: CachedGpsEvent[] = [];
-  for (const animal of activeIndividuals) {
+  for (const animal of filteredIndividuals) {
     const events = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, startTime, now);
     allGpsEvents.push(...events);
   }
 
-  log(`Immobility: ${allGpsEvents.length} GPS events para ${activeIndividuals.length} animales`, "analysis");
+  log(`Immobility: ${allGpsEvents.length} GPS events para ${filteredIndividuals.length} animales`, "analysis");
 
   const prepared = prepareData(allGpsEvents, cfg);
   prepared.sort((a, b) => a.individual.localeCompare(b.individual) || a.timestamp - b.timestamp);
   const analyzed = detectImmobility(prepared, cfg);
   const immobilityAlerts = identifyMortalityEvents(analyzed, cfg, speciesMap);
-  const { noTransmission, active } = checkTransmissionStatus(activeIndividuals, allGpsEvents, cfg, speciesMap, now);
+
+  // Estado de transmisión basado en histórico COMPLETO, no solo en la ventana analizada.
+  // Así detectamos animales que llevan mucho tiempo silenciados (>>96h) cuya última GPS
+  // ya no aparece en `allGpsEvents`.
+  const noTransmission: NoTransmissionAlert[] = [];
+  const active: ImmobilityAnalysisResult["activeAnimals"] = [];
+
+  for (const animal of filteredIndividuals) {
+    const lastEvt = await storage.getLatestCachedGpsEvent(studyId, animal.localIdentifier);
+    if (!lastEvt) {
+      // Defensivo (no debería ocurrir tras filtro previo): saltar.
+      continue;
+    }
+    const hoursSince = (now - lastEvt.timestamp) / (1000 * 60 * 60);
+    const species = speciesMap.get(animal.localIdentifier) || "Desconocida";
+
+    if (hoursSince >= cfg.noTransmissionThresholdHours) {
+      noTransmission.push({
+        individual: animal.localIdentifier,
+        species,
+        lastTransmission: lastEvt.timestamp,
+        hoursSinceLast: Math.round(hoursSince * 10) / 10,
+        daysSinceLast: Math.round((hoursSince / 24) * 10) / 10,
+        lastLat: lastEvt.latitude,
+        lastLon: lastEvt.longitude,
+        googleMapsUrl: `https://www.google.com/maps?q=${lastEvt.latitude},${lastEvt.longitude}`,
+        status: "SIN TRANSMISIÓN",
+        severity: hoursSince > 96 ? "critical" : "warning",
+      });
+    } else {
+      // Buscar groundSpeed real en la ventana si existe
+      let lastSpeed: number | null = null;
+      const windowEvts = allGpsEvents.filter(e => e.individualLocalIdentifier === animal.localIdentifier);
+      if (windowEvts.length > 0) {
+        const latestInWindow = windowEvts.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
+        lastSpeed = latestInWindow.groundSpeed;
+      }
+      active.push({
+        individual: animal.localIdentifier,
+        species,
+        lastTransmission: lastEvt.timestamp,
+        lastSpeed,
+        lastLat: lastEvt.latitude,
+        lastLon: lastEvt.longitude,
+        status: "ACTIVO",
+      });
+    }
+  }
 
   const immobilePoints = analyzed.filter(p => p.isImmobile).length;
   const groupIds = new Set(analyzed.filter(p => p.immobilityGroupId != null).map(p => p.immobilityGroupId));
 
-  for (const alert of immobilityAlerts) {
-    try {
-      await storage.createDetectedEvent({
-        studyId,
-        individualLocalId: alert.individual,
-        eventType: "mortality",
-        severity: alert.severity,
-        timestampStart: alert.alertStart,
-        timestampEnd: alert.alertEnd,
-        lat: alert.lastLat,
-        lng: alert.lastLon,
-        description: `Inmovilidad detectada: ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} registros. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
-        readStatus: false,
-        resolvedStatus: false,
-        accValues: null,
-      });
-    } catch (e: any) {
-      log(`Immobility: Error guardando evento para ${alert.individual}: ${e.message}`, "analysis");
+  const newCriticalAlerts: NewCriticalAlert[] = [];
+  let resolvedCount = 0;
+
+  if (persist) {
+    // 1) Inmovilidad: dedupe 24h por (study, individual, type, resolvedStatus=false)
+    for (const alert of immobilityAlerts) {
+      try {
+        const existing = await storage.findRecentUnresolvedDetectedEvent(
+          studyId, alert.individual, "mortality", now - DEDUP_WINDOW_MS,
+        );
+        if (existing) continue;
+
+        // Insert directo (bypass dedup duro por timestampStart en createDetectedEvent),
+        // ya que el dedup auténtico es la ventana de 24h verificada arriba.
+        await storage.insertDetectedEventNoDedupe({
+          studyId,
+          individualLocalId: alert.individual,
+          eventType: "mortality",
+          severity: alert.severity,
+          timestampStart: alert.alertStart,
+          timestampEnd: alert.alertEnd,
+          lat: alert.lastLat,
+          lng: alert.lastLon,
+          description: `Inmovilidad detectada: ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} registros. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
+          readStatus: false,
+          resolvedStatus: false,
+          accValues: null,
+        });
+
+        if (alert.severity === "critical") {
+          newCriticalAlerts.push({
+            individual: alert.individual,
+            species: alert.species,
+            type: "immobility",
+            studyName: study.name,
+            hoursSinceLast: null,
+            hoursImmobile: alert.hoursImmobile,
+            lastTransmission: alert.alertEnd,
+            lat: alert.lastLat,
+            lon: alert.lastLon,
+          });
+        }
+      } catch (e: any) {
+        log(`Immobility: Error guardando evento para ${alert.individual}: ${e.message}`, "analysis");
+      }
+    }
+
+    // 2) Sin transmisión: dedupe 24h por (study, individual, type, resolvedStatus=false).
+    // timestampStart=now (timestamp de detección) para evitar colisión con dedup duro
+    // de createDetectedEvent y permitir nuevas filas tras 24h.
+    for (const alert of noTransmission) {
+      try {
+        const existing = await storage.findRecentUnresolvedDetectedEvent(
+          studyId, alert.individual, "no_transmission", now - DEDUP_WINDOW_MS,
+        );
+        if (existing) continue;
+
+        await storage.insertDetectedEventNoDedupe({
+          studyId,
+          individualLocalId: alert.individual,
+          eventType: "no_transmission",
+          severity: alert.severity,
+          timestampStart: now,
+          timestampEnd: now,
+          lat: alert.lastLat,
+          lng: alert.lastLon,
+          description: `Sin transmisión: ${alert.hoursSinceLast ?? "?"}h (${alert.daysSinceLast ?? "?"} días). Última posición conocida: ${alert.lastTransmission ? new Date(alert.lastTransmission).toISOString() : "—"}`,
+          readStatus: false,
+          resolvedStatus: false,
+          accValues: null,
+        });
+
+        if (alert.severity === "critical") {
+          newCriticalAlerts.push({
+            individual: alert.individual,
+            species: alert.species,
+            type: "no_transmission",
+            studyName: study.name,
+            hoursSinceLast: alert.hoursSinceLast,
+            hoursImmobile: null,
+            lastTransmission: alert.lastTransmission,
+            lat: alert.lastLat,
+            lon: alert.lastLon,
+          });
+        }
+      } catch (e: any) {
+        log(`Immobility: Error guardando no_transmission para ${alert.individual}: ${e.message}`, "analysis");
+      }
+    }
+
+    // 3) Resolución: animales que vuelven a transmitir → marcar abiertas como resueltas
+    for (const a of active) {
+      try {
+        const n = await storage.markDetectedEventsResolved(studyId, a.individual, ["mortality", "no_transmission"]);
+        resolvedCount += n;
+      } catch (e: any) {
+        log(`Immobility: Error resolviendo eventos para ${a.individual}: ${e.message}`, "analysis");
+      }
     }
   }
 
@@ -361,13 +525,14 @@ export async function analyzeImmobility(
 
   const result: ImmobilityAnalysisResult = {
     summary: {
-      totalAnimals: activeIndividuals.length,
+      totalAnimals: filteredIndividuals.length,
       transmitting: active.length,
       noTransmission: noTransmission.length,
       immobile: immobilityAlerts.length,
       criticalAlerts,
       analyzedAt: now,
       config: cfg,
+      excludedNoHistory,
     },
     immobilityAlerts,
     noTransmissionAlerts: noTransmission,
@@ -377,9 +542,11 @@ export async function analyzeImmobility(
       immobilePoints,
       immobilityGroups: groupIds.size,
     },
+    newCriticalAlerts,
+    resolvedCount,
   };
 
-  log(`Immobility: Análisis completado - ${immobilityAlerts.length} inmóviles, ${noTransmission.length} sin transmisión, ${active.length} activos`, "analysis");
+  log(`Immobility: Análisis completado - ${immobilityAlerts.length} inmóviles, ${noTransmission.length} sin transmisión, ${active.length} activos, ${newCriticalAlerts.length} nuevas críticas, ${resolvedCount} resueltas`, "analysis");
 
   return result;
 }

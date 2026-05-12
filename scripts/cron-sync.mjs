@@ -6,8 +6,11 @@
  * para forzar la ejecución de:
  *   - event_detection
  *   - emission_check
- *   - immobility_check
  *   - ornitela_sync
+ *
+ * NOTA: immobility_check NO se ejecuta aquí. Tiene su propio cron dedicado
+ * cada 2h (IMMOBILITY_CRON_INTERVAL = "0 *\/2 * * *") con mutex single-flight
+ * para evitar emails duplicados de alertas críticas en horas alineadas.
  *
  * Uso (Replit Scheduled Deployment):
  *   - Comando: node scripts/cron-sync.mjs

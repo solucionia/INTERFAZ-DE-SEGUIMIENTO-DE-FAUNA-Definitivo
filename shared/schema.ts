@@ -188,7 +188,7 @@ export const insertSpeciesProfileSchema = createInsertSchema(speciesProfiles).om
 export type InsertSpeciesProfile = z.infer<typeof insertSpeciesProfileSchema>;
 export type SpeciesProfile = typeof speciesProfiles.$inferSelect;
 
-export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation"] as const;
+export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission"] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
 export const EVENT_SEVERITY: Record<EventType, string> = {
@@ -197,6 +197,7 @@ export const EVENT_SEVERITY: Record<EventType, string> = {
   fight: "warning",
   feeding: "info",
   incubation: "info",
+  no_transmission: "critical",
 };
 
 export const EVENT_COLORS: Record<EventType, string> = {
@@ -205,6 +206,7 @@ export const EVENT_COLORS: Record<EventType, string> = {
   fight: "#f97316",
   feeding: "#22c55e",
   incubation: "#3b82f6",
+  no_transmission: "#dc2626",
 };
 
 export const EVENT_LABELS: Record<EventType, string> = {
@@ -213,6 +215,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   fight: "Pelea / Depredación",
   feeding: "Alimentación",
   incubation: "Incubación / Vuelo",
+  no_transmission: "Sin transmisión",
 };
 
 export const detectedEvents = pgTable("detected_events", {
