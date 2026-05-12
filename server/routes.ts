@@ -2115,6 +2115,16 @@ export async function registerRoutes(
         }
       }
 
+      if (totalGps > 0 || totalAcc > 0) {
+        try {
+          const { triggerImmobilityAnalysisInBackground } = await import("./immobilityDetector");
+          triggerImmobilityAnalysisInBackground(studyId, "manual-backfill");
+          log(`Backfill: análisis de alertas disparado en background para estudio ${studyId}`, "movebank");
+        } catch (e: any) {
+          log(`Backfill: error disparando análisis en background: ${e?.message ?? e}`, "movebank");
+        }
+      }
+
       if (!isClosed()) {
         // Detenemos el bucle si: hubo rate-limit, abort, no quedan más candidatos,
         // o el lote completo no produjo datos (animales atascados sin transmisión).

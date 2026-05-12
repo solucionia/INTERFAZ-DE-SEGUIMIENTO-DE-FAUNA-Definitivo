@@ -324,6 +324,29 @@ function checkTransmissionStatus(
 
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+const inFlightAnalyses = new Set<string>();
+
+export function triggerImmobilityAnalysisInBackground(studyId: string, source: string): void {
+  if (inFlightAnalyses.has(studyId)) {
+    log(`Immobility[bg/${source}]: estudio ${studyId} ya en análisis — saltando trigger`, "analysis");
+    return;
+  }
+  inFlightAnalyses.add(studyId);
+  setImmediate(() => {
+    analyzeImmobility(studyId)
+      .then(result => {
+        const newCrit = result.newCriticalAlerts?.length ?? 0;
+        log(`Immobility[bg/${source}]: estudio ${studyId} OK — ${result.immobilityAlerts.length} inmov, ${result.noTransmissionAlerts.length} sin tx, ${result.zoneDeviationAlerts?.length ?? 0} zona, ${newCrit} críticos nuevos`, "analysis");
+      })
+      .catch(err => {
+        log(`Immobility[bg/${source}]: estudio ${studyId} ERROR — ${err?.message ?? err}`, "analysis");
+      })
+      .finally(() => {
+        inFlightAnalyses.delete(studyId);
+      });
+  });
+}
+
 export async function analyzeImmobility(
   studyId: string,
   config: Partial<ImmobilityConfig> = {},

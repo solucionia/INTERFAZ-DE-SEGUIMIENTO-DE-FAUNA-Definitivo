@@ -60,6 +60,7 @@ async function runEventDetection() {
     let totalEvents = 0;
     let totalEmails = 0;
 
+    const studiesWithNewData = new Set<string>();
     studyLoop: for (const { study, activeIndividuals } of studiesWithAnimals) {
       const studyBlockCheck = movebankRateLimiter.isBlocked();
       if (studyBlockCheck.blocked) {
@@ -157,6 +158,7 @@ async function runEventDetection() {
           if (gpsToCache.length > 0) {
             await storage.insertCachedGpsEvents(gpsToCache);
             syncGpsRows += gpsToCache.length;
+            studiesWithNewData.add(study.id);
           }
           if (gpsBackfill) {
             syncGpsAttempts++;
@@ -207,6 +209,7 @@ async function runEventDetection() {
           if (accToCache.length > 0) {
             await storage.insertCachedAccEvents(accToCache);
             syncAccRows += accToCache.length;
+            studiesWithNewData.add(study.id);
           }
           if (accBackfill && !syncStoppedByRateLimit) {
             await storage.recordFetchedRange(study.id, animal.localIdentifier, "acc", accBackfill.fromTs, accBackfill.toTs);
@@ -255,6 +258,14 @@ async function runEventDetection() {
     await storage.createCronLog("movebank_sync", syncStatus, syncDetails);
     log(`Cron: Deteccion completada - ${totalEvents} eventos, ${totalEmails} emails (${totalDuration}s)`, "cron");
     log(`Cron: Sync Movebank - ${syncDetails}`, "cron");
+
+    if (studiesWithNewData.size > 0) {
+      const { triggerImmobilityAnalysisInBackground } = await import("./immobilityDetector");
+      log(`Cron: Disparando análisis de alertas en background para ${studiesWithNewData.size} estudios con datos nuevos`, "cron");
+      for (const sid of Array.from(studiesWithNewData)) {
+        triggerImmobilityAnalysisInBackground(sid, "cron-sync");
+      }
+    }
 
     if (syncGpsAttempts >= 5) {
       const zeroPct = (syncGpsZeroAnimals / syncGpsAttempts) * 100;
