@@ -210,13 +210,14 @@ export async function sendImmobilityAlertEmail(
 export interface CriticalImmobilityEmailRow {
   individual: string;
   species: string;
-  type: "immobility" | "no_transmission";
+  type: "immobility" | "no_transmission" | "zone_deviation";
   studyName: string;
   hoursSinceLast: number | null;
   hoursImmobile: number | null;
   lastTransmission: number | null;
   lat: number | null;
   lon: number | null;
+  kmOutside: number | null;
 }
 
 export async function sendCriticalImmobilityEmail(
@@ -233,10 +234,14 @@ export async function sendCriticalImmobilityEmail(
   const today = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
 
   const tableRows = rows.map((r) => {
-    const typeLabel = r.type === "no_transmission" ? "Sin transmisión" : "Inmovilidad";
+    const typeLabel =
+      r.type === "no_transmission" ? "Sin transmisión" :
+      r.type === "zone_deviation" ? "Desviación de zona" :
+      "Inmovilidad";
     const hoursStr = r.hoursSinceLast != null
       ? `${r.hoursSinceLast.toFixed(1)} h sin datos`
       : (r.hoursImmobile != null ? `${r.hoursImmobile.toFixed(1)} h inmóvil` : "—");
+    const kmStr = r.kmOutside != null ? `${r.kmOutside.toFixed(2)} km` : "—";
     const lastDate = r.lastTransmission
       ? new Date(r.lastTransmission).toLocaleString("es-ES", { timeZone: "Europe/Madrid" })
       : "—";
@@ -249,6 +254,7 @@ export async function sendCriticalImmobilityEmail(
       <td style="padding:6px 8px">${r.studyName}</td>
       <td style="padding:6px 8px">${typeLabel}</td>
       <td style="padding:6px 8px;color:#ef4444;font-weight:bold">${hoursStr}</td>
+      <td style="padding:6px 8px;color:#a855f7;font-weight:bold">${kmStr}</td>
       <td style="padding:6px 8px">${lastDate}</td>
       <td style="padding:6px 8px">${mapsLink}</td>
     </tr>`;
@@ -269,6 +275,7 @@ export async function sendCriticalImmobilityEmail(
               <th style="padding:8px;text-align:left">Estudio</th>
               <th style="padding:8px;text-align:left">Tipo</th>
               <th style="padding:8px;text-align:left">Tiempo</th>
+              <th style="padding:8px;text-align:left">Km fuera de zona</th>
               <th style="padding:8px;text-align:left">Última transmisión</th>
               <th style="padding:8px;text-align:left">Última posición</th>
             </tr>

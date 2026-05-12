@@ -188,7 +188,7 @@ export const insertSpeciesProfileSchema = createInsertSchema(speciesProfiles).om
 export type InsertSpeciesProfile = z.infer<typeof insertSpeciesProfileSchema>;
 export type SpeciesProfile = typeof speciesProfiles.$inferSelect;
 
-export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission"] as const;
+export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission", "zone_deviation"] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
 export const EVENT_SEVERITY: Record<EventType, string> = {
@@ -198,6 +198,7 @@ export const EVENT_SEVERITY: Record<EventType, string> = {
   feeding: "info",
   incubation: "info",
   no_transmission: "critical",
+  zone_deviation: "warning",
 };
 
 export const EVENT_COLORS: Record<EventType, string> = {
@@ -207,6 +208,7 @@ export const EVENT_COLORS: Record<EventType, string> = {
   feeding: "#22c55e",
   incubation: "#3b82f6",
   no_transmission: "#dc2626",
+  zone_deviation: "#a855f7",
 };
 
 export const EVENT_LABELS: Record<EventType, string> = {
@@ -216,6 +218,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   feeding: "Alimentación",
   incubation: "Incubación / Vuelo",
   no_transmission: "Sin transmisión",
+  zone_deviation: "Desviación de zona",
 };
 
 export const detectedEvents = pgTable("detected_events", {
@@ -230,6 +233,7 @@ export const detectedEvents = pgTable("detected_events", {
   lng: doublePrecision("lng"),
   accValues: jsonb("acc_values").$type<{ x: number; y: number; z: number }[]>(),
   description: text("description"),
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
   readStatus: boolean("read_status").notNull().default(false),
   resolvedStatus: boolean("resolved_status").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),

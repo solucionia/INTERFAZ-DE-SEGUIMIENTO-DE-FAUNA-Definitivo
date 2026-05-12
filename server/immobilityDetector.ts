@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import type { CachedGpsEvent } from "@shared/schema";
 import { log } from "./index";
+import * as turf from "@turf/turf";
 
 export interface ImmobilityConfig {
   hoursToAnalyze: number;
@@ -67,13 +68,31 @@ export interface NoTransmissionAlert {
 export interface NewCriticalAlert {
   individual: string;
   species: string;
-  type: "immobility" | "no_transmission";
+  type: "immobility" | "no_transmission" | "zone_deviation";
   studyName: string;
   hoursSinceLast: number | null;
   hoursImmobile: number | null;
   lastTransmission: number | null;
   lat: number | null;
   lon: number | null;
+  kmOutside: number | null;
+}
+
+export interface ZoneDeviationAlert {
+  individual: string;
+  species: string;
+  kmOutside: number;
+  dynamicRadiusKm: number;
+  centroidLat: number;
+  centroidLon: number;
+  lastLat: number;
+  lastLon: number;
+  lastTimestamp: number;
+  accActivity: number | null;
+  accSamples: number;
+  severity: "critical" | "warning";
+  googleMapsUrl: string;
+  status: string;
 }
 
 export interface ImmobilityAnalysisResult {
@@ -86,9 +105,11 @@ export interface ImmobilityAnalysisResult {
     analyzedAt: number;
     config: ImmobilityConfig;
     excludedNoHistory: number;
+    zoneDeviation: number;
   };
   immobilityAlerts: ImmobilityAlert[];
   noTransmissionAlerts: NoTransmissionAlert[];
+  zoneDeviationAlerts: ZoneDeviationAlert[];
   activeAnimals: {
     individual: string;
     species: string;
@@ -319,9 +340,10 @@ export async function analyzeImmobility(
   const studyInfo = studyData.find(s => s.study.id === studyId);
   if (!studyInfo) {
     return {
-      summary: { totalAnimals: 0, transmitting: 0, noTransmission: 0, immobile: 0, criticalAlerts: 0, analyzedAt: now, config: cfg, excludedNoHistory: 0 },
+      summary: { totalAnimals: 0, transmitting: 0, noTransmission: 0, immobile: 0, criticalAlerts: 0, analyzedAt: now, config: cfg, excludedNoHistory: 0, zoneDeviation: 0 },
       immobilityAlerts: [],
       noTransmissionAlerts: [],
+      zoneDeviationAlerts: [],
       activeAnimals: [],
       stats: { totalGpsPoints: 0, immobilePoints: 0, immobilityGroups: 0 },
       newCriticalAlerts: [],
@@ -459,6 +481,7 @@ export async function analyzeImmobility(
             lastTransmission: alert.alertEnd,
             lat: alert.lastLat,
             lon: alert.lastLon,
+            kmOutside: null,
           });
         }
       } catch (e: any) {
@@ -502,6 +525,7 @@ export async function analyzeImmobility(
             lastTransmission: alert.lastTransmission,
             lat: alert.lastLat,
             lon: alert.lastLon,
+            kmOutside: null,
           });
         }
       } catch (e: any) {
@@ -520,8 +544,155 @@ export async function analyzeImmobility(
     }
   }
 
+  // ===== Análisis de desviación de zona (solo Ornitela) =====
+  const zoneDeviationAlerts: ZoneDeviationAlert[] = [];
+  if (study.ornitelaEnabled === true) {
+    const ZONE_HISTORY_DAYS = 30;
+    const ZONE_MIN_HISTORY_DAYS = 7;
+    const ZONE_MIN_RADIUS_KM = 5;
+    const ZONE_PERCENTILE = 0.95;
+    const ACC_WINDOW_HOURS = 2;
+    const ACC_HIGH_ACTIVITY = 150;
+    const ACC_LOW_ACTIVITY = 30;
+    const zoneStart = now - ZONE_HISTORY_DAYS * 24 * 60 * 60 * 1000;
+    const accStart = now - ACC_WINDOW_HOURS * 60 * 60 * 1000;
+
+    for (const animal of filteredIndividuals) {
+      try {
+        const histPts = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, zoneStart, now);
+        if (histPts.length < 2) continue;
+
+        const minTs = histPts.reduce((m, p) => Math.min(m, p.timestamp), Infinity);
+        const historyDays = (now - minTs) / (1000 * 60 * 60 * 24);
+        if (historyDays < ZONE_MIN_HISTORY_DAYS) continue;
+
+        const lastPt = histPts.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
+
+        const fc = turf.featureCollection(
+          histPts.map(p => turf.point([p.longitude, p.latitude]))
+        );
+        const centroid = turf.centroid(fc);
+        const [centroidLon, centroidLat] = centroid.geometry.coordinates;
+
+        const distances = histPts.map(p =>
+          turf.distance(centroid, turf.point([p.longitude, p.latitude]), { units: "kilometers" })
+        ).sort((a, b) => a - b);
+        const idx = Math.floor(ZONE_PERCENTILE * (distances.length - 1));
+        const p95 = distances[Math.max(0, idx)];
+        const dynamicRadiusKm = Math.max(p95, ZONE_MIN_RADIUS_KM);
+
+        const lastDistKm = turf.distance(centroid, turf.point([lastPt.longitude, lastPt.latitude]), { units: "kilometers" });
+        if (lastDistKm <= dynamicRadiusKm) continue;
+
+        const kmOutside = Math.round((lastDistKm - dynamicRadiusKm) * 100) / 100;
+
+        const accEvts = await storage.getCachedAccEvents(studyId, animal.localIdentifier, accStart, now);
+        let accActivity: number | null = null;
+        if (accEvts.length > 0) {
+          const sum = accEvts.reduce((s, e) => s + Math.abs(e.yAcceleration), 0);
+          accActivity = Math.round((sum / accEvts.length) * 10) / 10;
+        }
+
+        let severity: "critical" | "warning";
+        if (accActivity == null) {
+          severity = "warning";
+        } else if (accActivity > ACC_HIGH_ACTIVITY) {
+          severity = "warning";
+        } else if (accActivity < ACC_LOW_ACTIVITY) {
+          severity = "critical";
+        } else {
+          severity = "warning";
+        }
+
+        const species = speciesMap.get(animal.localIdentifier) || "Desconocida";
+        zoneDeviationAlerts.push({
+          individual: animal.localIdentifier,
+          species,
+          kmOutside,
+          dynamicRadiusKm: Math.round(dynamicRadiusKm * 100) / 100,
+          centroidLat,
+          centroidLon,
+          lastLat: lastPt.latitude,
+          lastLon: lastPt.longitude,
+          lastTimestamp: lastPt.timestamp,
+          accActivity,
+          accSamples: accEvts.length,
+          severity,
+          googleMapsUrl: `https://www.google.com/maps?q=${lastPt.latitude},${lastPt.longitude}`,
+          status: "FUERA DE ZONA",
+        });
+      } catch (e: any) {
+        log(`Zone: Error analizando ${animal.localIdentifier}: ${e.message}`, "analysis");
+      }
+    }
+
+    if (persist) {
+      // Persistencia + dedup 24h + email crítico para zone_deviation
+      for (const z of zoneDeviationAlerts) {
+        try {
+          const existing = await storage.findRecentUnresolvedDetectedEvent(
+            studyId, z.individual, "zone_deviation", now - DEDUP_WINDOW_MS,
+          );
+          if (existing) continue;
+
+          await storage.insertDetectedEventNoDedupe({
+            studyId,
+            individualLocalId: z.individual,
+            eventType: "zone_deviation",
+            severity: z.severity,
+            timestampStart: z.lastTimestamp,
+            timestampEnd: z.lastTimestamp,
+            lat: z.lastLat,
+            lng: z.lastLon,
+            description: `Desviación de zona: ${z.kmOutside} km fuera del radio habitual (${z.dynamicRadiusKm} km). Actividad ACC (eje Y, ${ACC_WINDOW_HOURS}h): ${z.accActivity ?? "n/d"} (${z.accSamples} muestras)`,
+            metadata: {
+              km_outside: z.kmOutside,
+              dynamic_radius_km: z.dynamicRadiusKm,
+              centroid_lat: z.centroidLat,
+              centroid_lng: z.centroidLon,
+              acc_activity_y: z.accActivity,
+              acc_samples: z.accSamples,
+            } as any,
+            readStatus: false,
+            resolvedStatus: false,
+            accValues: null,
+          });
+
+          if (z.severity === "critical") {
+            newCriticalAlerts.push({
+              individual: z.individual,
+              species: z.species,
+              type: "zone_deviation",
+              studyName: study.name,
+              hoursSinceLast: null,
+              hoursImmobile: null,
+              lastTransmission: z.lastTimestamp,
+              lat: z.lastLat,
+              lon: z.lastLon,
+              kmOutside: z.kmOutside,
+            });
+          }
+        } catch (e: any) {
+          log(`Zone: Error guardando evento para ${z.individual}: ${e.message}`, "analysis");
+        }
+      }
+
+      // Auto-resolución: si el animal ya está dentro del radio (no aparece en alertas)
+      // marcamos sus zone_deviation abiertas como resueltas.
+      const flagged = new Set(zoneDeviationAlerts.map(z => z.individual));
+      for (const animal of filteredIndividuals) {
+        if (flagged.has(animal.localIdentifier)) continue;
+        try {
+          const n = await storage.markDetectedEventsResolved(studyId, animal.localIdentifier, ["zone_deviation"]);
+          resolvedCount += n;
+        } catch {}
+      }
+    }
+  }
+
   const criticalAlerts = immobilityAlerts.filter(a => a.severity === "critical").length +
-    noTransmission.filter(a => a.severity === "critical").length;
+    noTransmission.filter(a => a.severity === "critical").length +
+    zoneDeviationAlerts.filter(a => a.severity === "critical").length;
 
   const result: ImmobilityAnalysisResult = {
     summary: {
@@ -533,9 +704,11 @@ export async function analyzeImmobility(
       analyzedAt: now,
       config: cfg,
       excludedNoHistory,
+      zoneDeviation: zoneDeviationAlerts.length,
     },
     immobilityAlerts,
     noTransmissionAlerts: noTransmission,
+    zoneDeviationAlerts,
     activeAnimals: active,
     stats: {
       totalGpsPoints: allGpsEvents.length,
@@ -546,7 +719,7 @@ export async function analyzeImmobility(
     resolvedCount,
   };
 
-  log(`Immobility: Análisis completado - ${immobilityAlerts.length} inmóviles, ${noTransmission.length} sin transmisión, ${active.length} activos, ${newCriticalAlerts.length} nuevas críticas, ${resolvedCount} resueltas`, "analysis");
+  log(`Immobility: Análisis completado - ${immobilityAlerts.length} inmóviles, ${noTransmission.length} sin transmisión, ${zoneDeviationAlerts.length} fuera de zona, ${active.length} activos, ${newCriticalAlerts.length} nuevas críticas, ${resolvedCount} resueltas`, "analysis");
 
   return result;
 }

@@ -44,6 +44,7 @@ import {
   Activity,
   Users,
   ShieldAlert,
+  Compass,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from "react-leaflet";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
@@ -81,6 +82,23 @@ interface NoTransmissionAlert {
   severity: string;
 }
 
+interface ZoneDeviationAlert {
+  individual: string;
+  species: string;
+  kmOutside: number;
+  dynamicRadiusKm: number;
+  centroidLat: number;
+  centroidLon: number;
+  lastLat: number;
+  lastLon: number;
+  lastTimestamp: number;
+  accActivity: number | null;
+  accSamples: number;
+  severity: "critical" | "warning";
+  googleMapsUrl: string;
+  status: string;
+}
+
 interface ActiveAnimal {
   individual: string;
   species: string;
@@ -106,9 +124,11 @@ interface AnalysisResult {
       speedThreshold: number;
       positionChangeThreshold: number;
     };
+    zoneDeviation?: number;
   };
   immobilityAlerts: ImmobilityAlert[];
   noTransmissionAlerts: NoTransmissionAlert[];
+  zoneDeviationAlerts?: ZoneDeviationAlert[];
   activeAnimals: ActiveAnimal[];
   stats: {
     totalGpsPoints: number;
@@ -206,6 +226,17 @@ export default function ImmobilityMonitor() {
           detail: a.hoursSinceLast ? `${Math.round(a.hoursSinceLast)}h sin datos` : "Sin datos GPS",
         });
       }
+    }
+    for (const a of result.zoneDeviationAlerts ?? []) {
+      mapPoints.push({
+        lat: a.lastLat,
+        lng: a.lastLon,
+        color: "#a855f7",
+        label: "FUERA DE ZONA",
+        individual: a.individual,
+        species: a.species,
+        detail: `${a.kmOutside} km fuera (radio ${a.dynamicRadiusKm} km)`,
+      });
     }
     for (const a of result.activeAnimals) {
       mapPoints.push({
@@ -569,6 +600,74 @@ export default function ImmobilityMonitor() {
             </Card>
           )}
 
+          {result.zoneDeviationAlerts && result.zoneDeviationAlerts.length > 0 && (
+            <Card className="border-purple-500/30">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2 text-purple-500">
+                  <Compass className="w-5 h-5" />
+                  Desviación de zona ({result.zoneDeviationAlerts.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Animal</TableHead>
+                        <TableHead>Especie</TableHead>
+                        <TableHead>Km fuera de zona</TableHead>
+                        <TableHead>Radio habitual</TableHead>
+                        <TableHead>Actividad ACC (eje Y)</TableHead>
+                        <TableHead>Severidad</TableHead>
+                        <TableHead>Acciones</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {result.zoneDeviationAlerts.map((a, i) => (
+                        <TableRow key={i} data-testid={`row-zone-deviation-${i}`}>
+                          <TableCell className="font-medium">{a.individual}</TableCell>
+                          <TableCell className="text-xs">{a.species}</TableCell>
+                          <TableCell>
+                            <span className="font-bold text-purple-500" data-testid={`text-km-outside-${i}`}>{a.kmOutside} km</span>
+                          </TableCell>
+                          <TableCell>{a.dynamicRadiusKm} km</TableCell>
+                          <TableCell>
+                            {a.accActivity != null ? (
+                              <span className="text-xs">
+                                <span className="font-bold">{a.accActivity}</span>
+                                <span className="text-muted-foreground ml-1">({a.accSamples} muestras)</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sin datos ACC</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={a.severity === "critical" ? "destructive" : "secondary"} data-testid={`badge-zone-severity-${i}`}>
+                              {a.severity === "critical" ? "CRÍTICO" : "WARNING"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <a
+                              href={a.googleMapsUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                              data-testid={`link-maps-zone-${i}`}
+                            >
+                              <MapPin className="w-3 h-3" />
+                              Google Maps
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {result.activeAnimals.length > 0 && (
             <Collapsible open={showActiveAnimals} onOpenChange={setShowActiveAnimals}>
               <Card className="border-green-500/30">
@@ -619,7 +718,7 @@ export default function ImmobilityMonitor() {
             </Collapsible>
           )}
 
-          {result.immobilityAlerts.length === 0 && result.noTransmissionAlerts.length === 0 && (
+          {result.immobilityAlerts.length === 0 && result.noTransmissionAlerts.length === 0 && (result.zoneDeviationAlerts?.length ?? 0) === 0 && (
             <Card>
               <CardContent className="p-8 text-center">
                 <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-500" />

@@ -1,0 +1,50 @@
+Añade una nueva alerta de tipo `zone_deviation` al sistema de detección 
+de mortalidad existente. NO tocar la lógica actual de `mortality` ni 
+`no_transmission`.
+
+CONTEXTO: Solo para animales de Ornitela. Combina GPS + acelerómetro.
+
+1. RADIO DINÁMICO POR ANIMAL
+Para cada animal calcula su "zona habitual" usando sus últimos 30 días 
+de datos GPS en caché:
+- Centro: centroide de todos sus puntos GPS históricos
+- Radio: percentil 95 de distancias desde el centroide (con Turf.js, 
+  ya está instalado)
+- Mínimo 5km de radio aunque el percentil salga menor (evita 
+  falsos positivos en animales muy sedentarios)
+- Si el animal tiene menos de 7 días de histórico, excluirlo del 
+  análisis de zona (no hay baseline suficiente)
+
+2. DETECCIÓN DE DESVIACIÓN
+Cuando el último punto GPS del animal esté fuera de su radio dinámico:
+- Calcula cuántos km está fuera del radio
+- Consulta los datos de acelerómetro de las últimas 2h del mismo animal
+- Si hay datos de acelerómetro: calcula media de actividad (eje Y)
+  - Actividad alta (>150 en eje Y) + fuera de zona → severidad WARNING 
+    (puede ser vuelo largo normal)
+  - Actividad baja (<30 en eje Y) + fuera de zona → severidad CRITICAL 
+    (animal inmóvil en zona desconocida, posible problema)
+- Si no hay datos de acelerómetro: severidad WARNING por defecto
+
+3. PERSISTENCIA
+Guardar en detected_events con type='zone_deviation', mismo sistema de 
+dedup 24h y auto-resolución que ya existe. Campos adicionales en metadata 
+JSON: { km_outside, dynamic_radius_km, centroid_lat, centroid_lng }
+
+4. EMAIL
+Incluir las alertas zone_deviation CRITICAL en el email existente a 
+jjiglesias@grefa.org. Añadir columna "km fuera de zona" en la tabla 
+del email.
+
+5. CRON
+Cambiar el intervalo del cron de mortalidad de `0 */2 * * *` a 
+`*/30 * * * *` (cada 30 minutos). El análisis de zona corre en el 
+mismo cron junto a mortality y no_transmission.
+
+6. UI
+En /immobility añadir una sección "Desviación de zona (X)" al mismo 
+nivel que las secciones de Inmovilidad y Sin Transmisión que ya existen. 
+Mostrar: animal, especie, km fuera de zona, radio habitual, actividad 
+acelerómetro, severidad. Sin cambiar el diseño existente.
+
+No modificar los análisis de mortality ni no_transmission existentes.

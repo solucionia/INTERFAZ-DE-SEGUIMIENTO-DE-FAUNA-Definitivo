@@ -451,11 +451,14 @@ async function runImmobilityCheck() {
             lastTransmission: c.lastTransmission,
             lat: c.lat,
             lon: c.lon,
+            kmOutside: c.kmOutside,
           });
         }
 
-        if (alertCount > 0 || result.resolvedCount > 0) {
-          log(`Cron: Inmovilidad ${study.name}: ${result.immobilityAlerts.length} inmoviles, ${result.noTransmissionAlerts.length} sin transmision, ${result.newCriticalAlerts.length} nuevas criticas, ${result.resolvedCount} resueltas`, "cron");
+        const zoneCount = result.zoneDeviationAlerts.length;
+        const totalForLog = alertCount + zoneCount;
+        if (totalForLog > 0 || result.resolvedCount > 0) {
+          log(`Cron: Inmovilidad ${study.name}: ${result.immobilityAlerts.length} inmoviles, ${result.noTransmissionAlerts.length} sin transmision, ${zoneCount} fuera de zona, ${result.newCriticalAlerts.length} nuevas criticas, ${result.resolvedCount} resueltas`, "cron");
         }
       } catch (e: any) {
         log(`Cron: Error en inmovilidad para "${study.name}": ${e.message}`, "cron");
@@ -669,7 +672,7 @@ async function maybeRunStartupCatchup() {
   }
 }
 
-const IMMOBILITY_CRON_INTERVAL = process.env.IMMOBILITY_CRON_INTERVAL || "0 */2 * * *";
+const IMMOBILITY_CRON_INTERVAL = process.env.IMMOBILITY_CRON_INTERVAL || "*/30 * * * *";
 
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
