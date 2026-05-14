@@ -27,6 +27,7 @@ import AdminSpecies from "@/pages/admin-species";
 import AdminProjects from "@/pages/admin-projects";
 import { Loader2, Search, RefreshCw } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
+import { NotificationBell } from "@/components/notification-bell";
 import { SyncStatusProvider, useSyncStatus } from "@/lib/sync-status";
 import type { ComponentType } from "react";
 
@@ -118,6 +119,7 @@ function AppLayout() {
                 <span>Buscar animal...</span>
                 <kbd className="text-xs bg-muted px-1.5 py-0.5 rounded">Ctrl+K</kbd>
               </button>
+              <NotificationBell />
               <ThemeToggle />
             </div>
           </header>

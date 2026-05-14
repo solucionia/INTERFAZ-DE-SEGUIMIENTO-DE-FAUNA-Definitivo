@@ -683,7 +683,7 @@ async function maybeRunStartupCatchup() {
   }
 }
 
-const IMMOBILITY_CRON_INTERVAL = process.env.IMMOBILITY_CRON_INTERVAL || "*/30 * * * *";
+const IMMOBILITY_CRON_INTERVAL = process.env.IMMOBILITY_CRON_INTERVAL || "*/5 * * * *";
 
 export function startScheduler() {
   log(`Cron: Programando tareas con intervalo "${CRON_INTERVAL}"`, "cron");
