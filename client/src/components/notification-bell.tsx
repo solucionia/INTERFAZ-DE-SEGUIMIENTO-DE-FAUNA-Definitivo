@@ -41,18 +41,38 @@ export function NotificationBell() {
       if (!res.ok) throw new Error("Error cargando alertas");
       return res.json();
     },
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
     refetchOnWindowFocus: true,
+    refetchOnMount: "always",
+    staleTime: 0,
   });
 
   const events = data?.events ?? [];
   const unreadCount = data?.total ?? events.length;
 
+  const bellKey = ["/api/alerts/history", { readStatus: "false", limit: 15 }] as const;
+
   const markOneRead = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest("POST", `/api/alerts/${id}/read`, {});
     },
-    onSuccess: () => {
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: bellKey });
+      const prev = queryClient.getQueryData<AlertHistoryResponse>(bellKey);
+      if (prev) {
+        const nextEvents = prev.events.filter((e) => e.id !== id);
+        queryClient.setQueryData<AlertHistoryResponse>(bellKey, {
+          ...prev,
+          events: nextEvents,
+          total: Math.max(0, (prev.total ?? nextEvents.length + 1) - 1),
+        });
+      }
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(bellKey, ctx.prev);
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/alerts/history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
     },
@@ -64,9 +84,24 @@ export function NotificationBell() {
       if (ids.length === 0) return;
       await apiRequest("PATCH", "/api/alerts/bulk/read", { ids });
     },
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: bellKey });
+      const prev = queryClient.getQueryData<AlertHistoryResponse>(bellKey);
+      queryClient.setQueryData<AlertHistoryResponse>(bellKey, {
+        events: [],
+        total: 0,
+        stats: prev?.stats,
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(bellKey, ctx.prev);
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/alerts/history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
+    },
+    onSuccess: () => {
       toast({ title: "Notificaciones marcadas como leídas" });
     },
   });
