@@ -134,8 +134,6 @@ class SftpWatcher {
       );
       result.filesScanned = csvFiles.length;
 
-      const studiesWithNewData = new Set<string>();
-
       for (const f of csvFiles) {
         const remotePath = `${SFTP_REMOTE_DIR}/${f.name}`;
         const movedPath = `${SFTP_PROCESSED_DIR}/${f.name}`;
@@ -164,7 +162,6 @@ class SftpWatcher {
           const parseResult = await parseOrnitelaCsv(csv, studyId, storage);
           const records = parseResult.gpsImported + parseResult.accImported;
           await storage.recordProcessedSftpFile(f.name, records);
-          if (records > 0) studiesWithNewData.add(studyId);
 
           try {
             await sftp.rename(remotePath, movedPath);
@@ -196,21 +193,6 @@ class SftpWatcher {
       this.lastSuccessAt = Date.now();
       if (result.filesFailed === 0) this.lastError = null;
       else this.lastError = result.errors.slice(0, 3).join(" | ");
-
-      if (studiesWithNewData.size > 0) {
-        try {
-          const { triggerImmobilityAnalysisInBackground } = await import("../immobilityDetector");
-          log(
-            `SFTP: Disparando análisis de alertas para ${studiesWithNewData.size} estudio(s) con datos nuevos`,
-            "sftp",
-          );
-          for (const sid of Array.from(studiesWithNewData)) {
-            triggerImmobilityAnalysisInBackground(sid, "sftp-watcher");
-          }
-        } catch (trigErr: any) {
-          log(`SFTP: aviso al disparar análisis: ${trigErr?.message ?? trigErr}`, "sftp");
-        }
-      }
 
       try {
         await storage.createCronLog(

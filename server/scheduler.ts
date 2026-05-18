@@ -34,18 +34,8 @@ async function computeBackfillRange(
   return { fromTs, toTs: now };
 }
 
-const MOVEBANK_ENABLED = process.env.MOVEBANK_ENABLED === "1";
-
 async function runEventDetection() {
   const startTime = Date.now();
-
-  if (!MOVEBANK_ENABLED) {
-    log("Cron: Movebank deshabilitado (MOVEBANK_ENABLED!=1) — saltando sync y detección de eventos ACC", "cron");
-    await storage.createCronLog("event_detection", "skipped", "Movebank deshabilitado por MOVEBANK_ENABLED");
-    await storage.createCronLog("movebank_sync", "skipped", "Movebank deshabilitado por MOVEBANK_ENABLED");
-    return;
-  }
-
   log("Cron: Iniciando deteccion automatica de eventos...", "cron");
 
   let syncStudies = 0;
@@ -294,12 +284,6 @@ async function runEventDetection() {
 
 async function runEmissionCheck() {
   const startTime = Date.now();
-
-  if (!MOVEBANK_ENABLED) {
-    log("Cron: Movebank deshabilitado (MOVEBANK_ENABLED!=1) — saltando verificación de emisión", "cron");
-    return;
-  }
-
   log("Cron: Verificando alertas de emision...", "cron");
 
   try {
