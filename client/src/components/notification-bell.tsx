@@ -35,18 +35,22 @@ export function NotificationBell() {
   const { toast } = useToast();
 
   const { data, isLoading } = useQuery<AlertHistoryResponse>({
-    queryKey: ["/api/alerts/history", { readStatus: "false", limit: 15 }],
+    queryKey: ["/api/alerts/history", { readStatus: "false", resolvedStatus: "false", limit: 15 }],
     queryFn: async () => {
-      const res = await fetch("/api/alerts/history?readStatus=false&limit=15", { credentials: "include" });
+      const res = await fetch(
+        "/api/alerts/history?readStatus=false&resolvedStatus=false&limit=15",
+        { credentials: "include" },
+      );
       if (!res.ok) throw new Error("Error cargando alertas");
       return res.json();
     },
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
     refetchOnWindowFocus: true,
   });
 
   const events = data?.events ?? [];
-  const unreadCount = data?.total ?? events.length;
+  const totalUnread = data?.total ?? events.length;
+  const moreCount = Math.max(0, totalUnread - events.length);
 
   const markOneRead = useMutation({
     mutationFn: async (id: string) => {
@@ -82,13 +86,13 @@ export function NotificationBell() {
           aria-label="Notificaciones"
         >
           <Bell className="w-5 h-5" />
-          {unreadCount > 0 && (
+          {totalUnread > 0 && (
             <Badge
               variant="destructive"
               className="absolute -top-1 -right-1 h-5 min-w-5 px-1 text-[10px] flex items-center justify-center rounded-full"
               data-testid="badge-notification-count"
             >
-              {unreadCount > 99 ? "99+" : unreadCount}
+              {totalUnread > 99 ? "99+" : totalUnread}
             </Badge>
           )}
         </Button>
@@ -100,9 +104,9 @@ export function NotificationBell() {
             <span className="font-semibold text-sm" data-testid="text-notifications-title">
               Notificaciones
             </span>
-            {unreadCount > 0 && (
+            {totalUnread > 0 && (
               <Badge variant="secondary" className="text-[10px]" data-testid="badge-unread-count">
-                {unreadCount} sin leer
+                {totalUnread} sin leer
               </Badge>
             )}
           </div>
@@ -189,6 +193,11 @@ export function NotificationBell() {
           )}
         </ScrollArea>
 
+        {moreCount > 0 && (
+          <div className="px-3 py-1.5 text-[11px] text-center text-muted-foreground border-t bg-muted/30" data-testid="text-more-count">
+            Mostrando {events.length} de {totalUnread} alertas activas
+          </div>
+        )}
         <Separator />
         <div className="p-2">
           <Link href="/alerts">
