@@ -41,7 +41,8 @@ export function NotificationBell() {
       if (!res.ok) throw new Error("Error cargando alertas");
       return res.json();
     },
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     refetchOnMount: "always",
     staleTime: 0,

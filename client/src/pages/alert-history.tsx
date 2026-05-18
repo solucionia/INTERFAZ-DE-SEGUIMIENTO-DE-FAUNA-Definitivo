@@ -69,7 +69,8 @@ export default function AlertHistory() {
       if (!res.ok) throw new Error("Error cargando historial");
       return res.json();
     },
-    refetchInterval: 15_000,
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
