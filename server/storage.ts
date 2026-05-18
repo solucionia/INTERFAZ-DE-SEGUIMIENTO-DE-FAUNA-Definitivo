@@ -87,7 +87,7 @@ export interface IStorage {
 
   updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null; role: string; password: string }>): Promise<User | undefined>;
 
-  updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean }>): Promise<DetectedEvent | undefined>;
+  updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean; description: string; timestampStart: number; timestampEnd: number; severity: string; lat: number | null; lng: number | null }>): Promise<DetectedEvent | undefined>;
   getAllDetectedEvents(filters?: {
     studyId?: string;
     eventType?: string;
@@ -697,8 +697,8 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean }>): Promise<DetectedEvent | undefined> {
-    const [updated] = await db.update(detectedEvents).set(data).where(eq(detectedEvents.id, id)).returning();
+  async updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean; description: string; timestampStart: number; timestampEnd: number; severity: string; lat: number | null; lng: number | null }>): Promise<DetectedEvent | undefined> {
+    const [updated] = await db.update(detectedEvents).set(data as any).where(eq(detectedEvents.id, id)).returning();
     return updated;
   }
 
@@ -741,6 +741,7 @@ export class DatabaseStorage implements IStorage {
     const events = await db.select().from(detectedEvents)
       .where(and(
         inArray(detectedEvents.studyId, studyIds),
+        eq(detectedEvents.resolvedStatus, false),
         gte(detectedEvents.timestampStart, thirtyDaysAgo)
       ));
     const stats: Record<string, number> = {};
@@ -784,7 +785,10 @@ export class DatabaseStorage implements IStorage {
 
     const recentAlerts = studyIds.length > 0
       ? await db.select().from(detectedEvents)
-          .where(inArray(detectedEvents.studyId, studyIds))
+          .where(and(
+            inArray(detectedEvents.studyId, studyIds),
+            eq(detectedEvents.resolvedStatus, false),
+          ))
           .orderBy(desc(detectedEvents.createdAt))
           .limit(10)
       : [];

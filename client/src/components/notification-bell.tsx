@@ -35,9 +35,9 @@ export function NotificationBell() {
   const { toast } = useToast();
 
   const { data, isLoading } = useQuery<AlertHistoryResponse>({
-    queryKey: ["/api/alerts/history", { readStatus: "false", limit: 15 }],
+    queryKey: ["/api/alerts/history", { readStatus: "false", resolvedStatus: "false", limit: 15 }],
     queryFn: async () => {
-      const res = await fetch("/api/alerts/history?readStatus=false&limit=15", { credentials: "include" });
+      const res = await fetch("/api/alerts/history?readStatus=false&resolvedStatus=false&limit=15", { credentials: "include" });
       if (!res.ok) throw new Error("Error cargando alertas");
       return res.json();
     },
@@ -51,7 +51,7 @@ export function NotificationBell() {
   const events = data?.events ?? [];
   const unreadCount = data?.total ?? events.length;
 
-  const bellKey = ["/api/alerts/history", { readStatus: "false", limit: 15 }] as const;
+  const bellKey = ["/api/alerts/history", { readStatus: "false", resolvedStatus: "false", limit: 15 }] as const;
 
   const markOneRead = useMutation({
     mutationFn: async (id: string) => {

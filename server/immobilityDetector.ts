@@ -512,15 +512,27 @@ export async function analyzeImmobility(
       }
     }
 
-    // 2) Sin transmisión: dedupe 24h por (study, individual, type, resolvedStatus=false).
-    // timestampStart=now (timestamp de detección) para evitar colisión con dedup duro
-    // de createDetectedEvent y permitir nuevas filas tras 24h.
+    // 2) Sin transmisión: una sola alerta abierta por animal. Si ya existe una
+    // sin resolver, se refresca su descripción/timestamp con el estado actual
+    // en vez de crear una nueva (evita acumular ruido en animales con
+    // transmisores perdidos por días/semanas).
     for (const alert of noTransmission) {
       try {
+        const description = `Sin transmisión: ${alert.hoursSinceLast ?? "?"}h (${alert.daysSinceLast ?? "?"} días). Última posición conocida: ${alert.lastTransmission ? new Date(alert.lastTransmission).toISOString() : "—"}`;
         const existing = await storage.findRecentUnresolvedDetectedEvent(
-          studyId, alert.individual, "no_transmission", now - DEDUP_WINDOW_MS,
+          studyId, alert.individual, "no_transmission", 0,
         );
-        if (existing) continue;
+        if (existing) {
+          await storage.updateDetectedEvent(existing.id, {
+            description,
+            timestampStart: now,
+            timestampEnd: now,
+            severity: alert.severity,
+            lat: alert.lastLat,
+            lng: alert.lastLon,
+          });
+          continue;
+        }
 
         await storage.insertDetectedEventNoDedupe({
           studyId,
@@ -531,7 +543,7 @@ export async function analyzeImmobility(
           timestampEnd: now,
           lat: alert.lastLat,
           lng: alert.lastLon,
-          description: `Sin transmisión: ${alert.hoursSinceLast ?? "?"}h (${alert.daysSinceLast ?? "?"} días). Última posición conocida: ${alert.lastTransmission ? new Date(alert.lastTransmission).toISOString() : "—"}`,
+          description,
           readStatus: false,
           resolvedStatus: false,
           accValues: null,
