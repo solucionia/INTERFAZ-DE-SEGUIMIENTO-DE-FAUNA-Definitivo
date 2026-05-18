@@ -324,14 +324,23 @@ function checkTransmissionStatus(
 
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const inFlightAnalyses = new Set<string>();
+// Serialización per-study: cualquier llamada a analyzeImmobility(studyId) — venga
+// del cron, del SFTP watcher, del backfill manual o del endpoint HTTP — espera a
+// que termine la anterior para el mismo estudio. Evita la race donde dos análisis
+// concurrentes podrían pasar a la vez la comprobación de "no_transmission abierto"
+// y crear dos filas. La cadena por estudio se libera cuando termina la ejecución.
+const studyAnalysisChain = new Map<string, Promise<unknown>>();
+// Trigger en background: solo evita encolar duplicados si ya hay una corrida
+// pendiente/activa para ese estudio (no afecta la corrección de la dedup, solo
+// la eficiencia: no tiene sentido encolar 3 triggers idénticos seguidos).
+const pendingBackgroundTriggers = new Set<string>();
 
 export function triggerImmobilityAnalysisInBackground(studyId: string, source: string): void {
-  if (inFlightAnalyses.has(studyId)) {
-    log(`Immobility[bg/${source}]: estudio ${studyId} ya en análisis — saltando trigger`, "analysis");
+  if (pendingBackgroundTriggers.has(studyId)) {
+    log(`Immobility[bg/${source}]: estudio ${studyId} ya en cola — saltando trigger`, "analysis");
     return;
   }
-  inFlightAnalyses.add(studyId);
+  pendingBackgroundTriggers.add(studyId);
   setImmediate(() => {
     analyzeImmobility(studyId)
       .then(result => {
@@ -342,12 +351,30 @@ export function triggerImmobilityAnalysisInBackground(studyId: string, source: s
         log(`Immobility[bg/${source}]: estudio ${studyId} ERROR — ${err?.message ?? err}`, "analysis");
       })
       .finally(() => {
-        inFlightAnalyses.delete(studyId);
+        pendingBackgroundTriggers.delete(studyId);
       });
   });
 }
 
-export async function analyzeImmobility(
+export function analyzeImmobility(
+  studyId: string,
+  config: Partial<ImmobilityConfig> = {},
+  options: { persist?: boolean } = {}
+): Promise<ImmobilityAnalysisResult> {
+  const prev = studyAnalysisChain.get(studyId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => undefined)
+    .then(() => analyzeImmobilityImpl(studyId, config, options));
+  studyAnalysisChain.set(studyId, next);
+  next.finally(() => {
+    if (studyAnalysisChain.get(studyId) === next) {
+      studyAnalysisChain.delete(studyId);
+    }
+  });
+  return next;
+}
+
+async function analyzeImmobilityImpl(
   studyId: string,
   config: Partial<ImmobilityConfig> = {},
   options: { persist?: boolean } = {}
