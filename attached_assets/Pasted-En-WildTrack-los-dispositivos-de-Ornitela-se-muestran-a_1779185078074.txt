@@ -1,0 +1,42 @@
+En WildTrack, los dispositivos de Ornitela se muestran actualmente solo 
+por su ID numérico. Los CSV de Ornitela incluyen un campo con el nombre 
+del animal asignado en el panel de Ornitela (cpanel.glosendas.net). 
+Necesito que ese nombre se extraiga y se muestre en toda la plataforma, 
+SIN reemplazar el ID — siempre se muestran ambos.
+
+1. PARSER: Abre server/ornitelaCsvParser.ts y localiza los campos que 
+ya se extraen. Añadir la extracción del campo de nombre del animal que 
+viene en el CSV de Ornitela. Busca aliases comunes: 'name', 'animal_name', 
+'individual_name', 'tag_name', 'animal_id_alias' o similares 
+(case-insensitive, igual que se hace con los ejes del acelerómetro). 
+Si el campo existe en el CSV, guardarlo. Si no viene, dejarlo null.
+
+2. BASE DE DATOS: Verificar si la tabla de dispositivos o animales ya 
+tiene columna para este nombre. Si no existe, añadirla 
+(migration de Drizzle: campo "ornitela_name", nullable string).
+Al procesar cada CSV, actualizar este campo con el nombre que venga 
+en los datos de Ornitela. Si el CSV no trae nombre, no sobreescribir 
+el valor que ya hubiera guardado.
+
+3. VISUALIZACIÓN — regla fija en toda la app:
+El formato de identificación siempre es: "Nombre (ID)"
+Ejemplos: "Sonora (247560)", "Águila_1 (213851)"
+Si no hay nombre asignado: mostrar solo el ID como hasta ahora: "247560"
+NUNCA mostrar solo el nombre sin el ID.
+
+Aplicar este formato en:
+- Tooltips/popups del mapa principal
+- Lista de dispositivos
+- Buscador/filtro (buscar por nombre O por ID indistintamente)
+- Cabeceras de la vista de detalle del animal
+- Historial de alertas (columna de dispositivo)
+- Análisis geoespacial (selector de animal)
+
+4. SINCRONIZACIÓN: Como los nombres en Ornitela los puede cambiar el 
+equipo de GREFA desde el panel de Ornitela, el campo ornitela_name debe 
+actualizarse automáticamente cada vez que llegue un CSV nuevo con ese 
+dispositivo, si el nombre ha cambiado.
+
+Busca primero server/ornitelaCsvParser.ts para ver exactamente qué 
+campos ya se extraen y cómo se llama el campo de nombre en los CSVs 
+reales antes de hacer nada.
