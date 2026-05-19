@@ -103,6 +103,14 @@ export function AppSidebar() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/alerts"}>
+                    <Link href="/admin/alerts" data-testid="link-admin-alerts">
+                      <Bell className="w-4 h-4" />
+                      <span>Alertas</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

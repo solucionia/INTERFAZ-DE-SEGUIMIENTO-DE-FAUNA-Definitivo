@@ -2237,6 +2237,38 @@ export async function registerRoutes(
     }
   });
 
+  // Configuración global de umbral "sin transmisión"
+  app.get("/api/admin/settings/no-transmission-threshold-days", checkRole("superuser", "user", "observer"), async (_req, res) => {
+    try {
+      const { getNoTransmissionThresholdDays, NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS, DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS } = await import("./immobilityDetector");
+      const days = await getNoTransmissionThresholdDays();
+      return res.json({ days, options: NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS, default: DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.put("/api/admin/settings/no-transmission-threshold-days", checkRole("superuser"), async (req, res) => {
+    try {
+      const { NO_TRANSMISSION_THRESHOLD_DAYS_KEY, NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS } = await import("./immobilityDetector");
+      const { z } = await import("zod");
+      const schema = z.object({
+        days: z.coerce.number().int().refine(
+          (n) => (NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS as readonly number[]).includes(n),
+          { message: `days debe ser uno de: ${NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS.join(", ")}` },
+        ),
+      });
+      const parsed = schema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
+      }
+      await storage.setSetting(NO_TRANSMISSION_THRESHOLD_DAYS_KEY, String(parsed.data.days));
+      return res.json({ days: parsed.data.days });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   // Immobility / Mortality Analysis
   app.post("/api/studies/:id/immobility-analysis", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {

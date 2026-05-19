@@ -263,6 +263,14 @@ export const insertEmissionAlertSchema = createInsertSchema(emissionAlerts).omit
 export type InsertEmissionAlert = z.infer<typeof insertEmissionAlertSchema>;
 export type EmissionAlert = typeof emissionAlerts.$inferSelect;
 
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type AppSetting = typeof appSettings.$inferSelect;
+
 export const cronLogs = pgTable("cron_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   taskType: text("task_type").notNull(),

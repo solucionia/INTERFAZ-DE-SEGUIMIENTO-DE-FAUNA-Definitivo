@@ -14,10 +14,27 @@ export interface ImmobilityConfig {
 export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
   hoursToAnalyze: 96,
   immobilityThresholdHours: 24,
-  noTransmissionThresholdHours: 48,
+  noTransmissionThresholdHours: 7 * 24,
   speedThreshold: 0.5,
   positionChangeThreshold: 0.0001,
 };
+
+export const NO_TRANSMISSION_THRESHOLD_DAYS_KEY = "no_transmission_threshold_days";
+export const DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS = 7;
+export const NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS = [5, 10, 15, 20] as const;
+
+export async function getNoTransmissionThresholdDays(): Promise<number> {
+  try {
+    const raw = await storage.getSetting(NO_TRANSMISSION_THRESHOLD_DAYS_KEY);
+    if (raw) {
+      const n = Number.parseInt(raw, 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  } catch (e: any) {
+    log(`Immobility: error leyendo setting ${NO_TRANSMISSION_THRESHOLD_DAYS_KEY}: ${e.message}`, "analysis");
+  }
+  return DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS;
+}
 
 interface PreparedPoint {
   individual: string;
@@ -353,6 +370,11 @@ export async function analyzeImmobility(
   options: { persist?: boolean } = {}
 ): Promise<ImmobilityAnalysisResult> {
   const cfg: ImmobilityConfig = { ...DEFAULT_IMMOBILITY_CONFIG, ...config };
+  // Si el caller no pasa explícitamente noTransmissionThresholdHours, usar el valor global persistido
+  if (config.noTransmissionThresholdHours === undefined) {
+    const days = await getNoTransmissionThresholdDays();
+    cfg.noTransmissionThresholdHours = days * 24;
+  }
   const persist = options.persist !== false;
   const now = Date.now();
   const startTime = now - cfg.hoursToAnalyze * 60 * 60 * 1000;
@@ -419,6 +441,10 @@ export async function analyzeImmobility(
   const noTransmission: NoTransmissionAlert[] = [];
   const active: ImmobilityAnalysisResult["activeAnimals"] = [];
 
+  // Las alertas de no-transmisión SOLO aplican a estudios Ornitela.
+  // Movebank tiene ciclos de transmisión muy variables (días/semanas) que generan falsos positivos.
+  const ornitelaOnly = study.ornitelaEnabled === true;
+
   for (const animal of filteredIndividuals) {
     const lastEvt = await storage.getLatestCachedGpsEvent(studyId, animal.localIdentifier);
     if (!lastEvt) {
@@ -429,19 +455,28 @@ export async function analyzeImmobility(
     const species = speciesMap.get(animal.localIdentifier) || "Desconocida";
 
     if (hoursSince >= cfg.noTransmissionThresholdHours) {
-      noTransmission.push({
-        individual: animal.localIdentifier,
-        species,
-        lastTransmission: lastEvt.timestamp,
-        hoursSinceLast: Math.round(hoursSince * 10) / 10,
-        daysSinceLast: Math.round((hoursSince / 24) * 10) / 10,
-        lastLat: lastEvt.latitude,
-        lastLon: lastEvt.longitude,
-        googleMapsUrl: `https://www.google.com/maps?q=${lastEvt.latitude},${lastEvt.longitude}`,
-        status: "SIN TRANSMISIÓN",
-        severity: hoursSince > 96 ? "critical" : "warning",
-      });
-    } else {
+      // Animal sin transmisión reciente:
+      // - Solo generamos alerta no_transmission para estudios Ornitela.
+      // - En cualquier caso, NO entra en `active` → no auto-resuelve mortality/no_transmission
+      //   sin evidencia real de nueva transmisión.
+      if (ornitelaOnly) {
+        noTransmission.push({
+          individual: animal.localIdentifier,
+          species,
+          lastTransmission: lastEvt.timestamp,
+          hoursSinceLast: Math.round(hoursSince * 10) / 10,
+          daysSinceLast: Math.round((hoursSince / 24) * 10) / 10,
+          lastLat: lastEvt.latitude,
+          lastLon: lastEvt.longitude,
+          googleMapsUrl: `https://www.google.com/maps?q=${lastEvt.latitude},${lastEvt.longitude}`,
+          status: "SIN TRANSMISIÓN",
+          severity: hoursSince > 96 ? "critical" : "warning",
+        });
+      }
+      // Continúa al siguiente animal sin tocar `active`.
+      continue;
+    }
+    {
       // Buscar groundSpeed real en la ventana si existe
       let lastSpeed: number | null = null;
       const windowEvts = allGpsEvents.filter(e => e.individualLocalIdentifier === animal.localIdentifier);

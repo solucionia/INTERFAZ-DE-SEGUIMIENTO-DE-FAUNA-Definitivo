@@ -17,6 +17,7 @@ import {
   type Species, type InsertSpecies,
   type Project, type InsertProject,
   processedSftpFiles, type ProcessedSftpFile,
+  appSettings,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -88,6 +89,9 @@ export interface IStorage {
   updateUser(id: string, data: Partial<{ name: string; email: string; alertEmail: string | null; role: string; password: string }>): Promise<User | undefined>;
 
   updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean; description: string; timestampStart: number; timestampEnd: number; severity: string; lat: number | null; lng: number | null }>): Promise<DetectedEvent | undefined>;
+
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
   getAllDetectedEvents(filters?: {
     studyId?: string;
     eventType?: string;
@@ -700,6 +704,18 @@ export class DatabaseStorage implements IStorage {
   async updateDetectedEvent(id: string, data: Partial<{ readStatus: boolean; resolvedStatus: boolean; description: string; timestampStart: number; timestampEnd: number; severity: string; lat: number | null; lng: number | null }>): Promise<DetectedEvent | undefined> {
     const [updated] = await db.update(detectedEvents).set(data as any).where(eq(detectedEvents.id, id)).returning();
     return updated;
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    const [row] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    return row?.value ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await db
+      .insert(appSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
   }
 
   async getAllDetectedEvents(filters?: {

@@ -25,6 +25,7 @@ import ImmobilityMonitor from "@/pages/immobility-monitor";
 import LastPositions from "@/pages/last-positions";
 import AdminSpecies from "@/pages/admin-species";
 import AdminProjects from "@/pages/admin-projects";
+import AdminAlerts from "@/pages/admin-alerts";
 import { Loader2, Search, RefreshCw } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
 import { NotificationBell } from "@/components/notification-bell";
@@ -71,6 +72,7 @@ function AuthenticatedRouter() {
       <Route path="/admin/users">{() => <RoleGuard component={AdminUsers} allowed={["superuser"]} />}</Route>
       <Route path="/admin/ref-species">{() => <RoleGuard component={AdminSpecies} allowed={["superuser"]} />}</Route>
       <Route path="/admin/ref-projects">{() => <RoleGuard component={AdminProjects} allowed={["superuser"]} />}</Route>
+      <Route path="/admin/alerts">{() => <RoleGuard component={AdminAlerts} allowed={["superuser"]} />}</Route>
       <Route path="/last-positions/:id" component={LastPositions} />
       <Route path="/last-positions" component={LastPositions} />
       <Route path="/monitor" component={EmissionMonitor} />
