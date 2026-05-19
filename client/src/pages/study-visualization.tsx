@@ -77,6 +77,7 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
+import { formatAnimalLabel, formatAnimalLabelById } from "@/lib/animal-label";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
@@ -258,6 +259,14 @@ export default function StudyVisualization() {
     if (projectFilterId === "all") return base;
     return base.filter(ind => ind.projectId === Number(projectFilterId));
   }, [individuals, projectFilterId]);
+
+  const individualByLocalId = useMemo(() => {
+    const map = new Map<string, Individual>();
+    for (const ind of individuals || []) {
+      if (ind.localIdentifier) map.set(ind.localIdentifier, ind);
+    }
+    return map;
+  }, [individuals]);
 
   const toggleAnimal = (localId: string) => {
     setSelectedAnimals((prev) =>
@@ -898,7 +907,7 @@ export default function StudyVisualization() {
                 {selectedAnimals.map((a) => (
                   <Badge key={`filter-${a}`} variant={activeAnimalFilter === a ? "default" : "outline"} className="cursor-pointer select-none text-xs"
                     style={activeAnimalFilter === a ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" } : {}}
-                    onClick={() => setActiveAnimalFilter(a)} data-testid={`badge-filter-${a}`}>{a}</Badge>
+                    onClick={() => setActiveAnimalFilter(a)} data-testid={`badge-filter-${a}`}>{formatAnimalLabelById(a, individualByLocalId)}</Badge>
                 ))}
               </>
             )}
@@ -1073,7 +1082,7 @@ export default function StudyVisualization() {
                                 eventHandlers={{ click: () => handleMapPointClick(p) }}>
                                 <Popup>
                                   <div className="text-xs space-y-0.5">
-                                    <div className="font-semibold">{animalId}</div>
+                                    <div className="font-semibold">{formatAnimalLabelById(animalId, individualByLocalId)}</div>
                                     <div>{format(new Date(p.timestamp), "dd/MM/yyyy HH:mm:ss", { locale: es })}</div>
                                     <div>Lat: {p.lat.toFixed(6)}, Lng: {p.lng.toFixed(6)}</div>
                                     {p.speed !== null && <div>Velocidad: {p.speed.toFixed(2)} m/s</div>}

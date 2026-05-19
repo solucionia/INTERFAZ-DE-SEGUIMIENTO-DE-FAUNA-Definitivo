@@ -58,7 +58,8 @@ function safeFloat(val: string | undefined): number | null {
 export async function parseOrnitelaCsv(
   csvContent: string,
   studyId: string,
-  storage: IStorage
+  storage: IStorage,
+  options?: { ornitelaName?: string | null }
 ): Promise<OrnitelaImportResult> {
   const lines = csvContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) {
@@ -264,6 +265,24 @@ export async function parseOrnitelaCsv(
   details.push(
     `Vinculación Ornitela: ${linkResult.deploymentsCreated} deployments nuevos, ${linkResult.individualsMarkedSynced} individuos marcados como sincronizados`
   );
+
+  // Persistir el nombre del animal que viene del panel Ornitela (no del CSV, que no lo trae).
+  // Solo si el caller lo proporciona (sync por panel HTTP). El SFTP watcher no tiene nombre.
+  const ornitelaNameFromPanel = options?.ornitelaName?.trim();
+  if (ornitelaNameFromPanel && imeisList.length > 0) {
+    let updated = 0;
+    for (const imei of imeisList) {
+      try {
+        const changed = await storage.updateIndividualOrnitelaName(studyId, imei, ornitelaNameFromPanel);
+        if (changed) updated++;
+      } catch {
+        // tragar; no romper la importación por un fallo de nombre
+      }
+    }
+    if (updated > 0) {
+      details.push(`Nombre Ornitela actualizado: "${ornitelaNameFromPanel}" en ${updated} animal(es)`);
+    }
+  }
 
   let reportedDataType: string;
   if (gpsImported > 0 && accImported > 0) reportedDataType = "gps+acc";

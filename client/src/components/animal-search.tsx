@@ -3,6 +3,7 @@ import type { Individual } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, X, Check } from "lucide-react";
+import { formatAnimalLabel, getAnimalDisplayName } from "@/lib/animal-label";
 
 function normalizeText(text: string): string {
   return text
@@ -47,6 +48,7 @@ export function AnimalSearch({
       const fields = [
         ind.localIdentifier || "",
         ind.nickName || "",
+        ind.ornitelaName || "",
         ind.taxonCanonicalName || "",
       ];
       return fields.some((f) => normalizeText(f).includes(norm));
@@ -176,10 +178,13 @@ export function AnimalSearch({
                         />
                       )}
                       <div className="flex-1 min-w-0">
-                        <span className="font-medium truncate block">{localId}</span>
+                        <span className="font-medium truncate block">{formatAnimalLabel(ind)}</span>
                         {(ind.nickName || ind.taxonCanonicalName) && (
                           <span className="text-xs text-muted-foreground truncate block">
-                            {[ind.nickName, ind.taxonCanonicalName].filter(Boolean).join(" · ")}
+                            {[
+                              ind.nickName && ind.nickName !== getAnimalDisplayName(ind) ? ind.nickName : null,
+                              ind.taxonCanonicalName,
+                            ].filter(Boolean).join(" · ")}
                           </span>
                         )}
                       </div>
@@ -227,14 +232,16 @@ export function AnimalSearch({
 
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5" data-testid="container-selected-animals">
-          {selected.map((localId) => (
+          {selected.map((localId) => {
+            const ind = selectableAnimals.find((i) => i.localIdentifier === localId);
+            return (
             <Badge
               key={localId}
               variant="secondary"
               className="gap-1 text-xs"
               data-testid={`chip-animal-${localId}`}
             >
-              {localId}
+              {ind ? formatAnimalLabel(ind) : localId}
               <button
                 type="button"
                 onClick={(e) => {
@@ -247,7 +254,8 @@ export function AnimalSearch({
                 <X className="w-3 h-3" />
               </button>
             </Badge>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

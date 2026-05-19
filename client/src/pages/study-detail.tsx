@@ -132,6 +132,7 @@ export default function StudyDetail() {
         const fields = [
           ind.localIdentifier || "",
           ind.nickName || "",
+          ind.ornitelaName || "",
           ind.taxonCanonicalName || "",
         ];
         return fields.some((f) =>
@@ -919,7 +920,9 @@ export default function StudyDetail() {
                             ) : (
                               <WifiOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             )}
-                            {ind.localIdentifier || `ID-${ind.movebankId}`}
+                            {ind.ornitelaName
+                              ? `${ind.ornitelaName} (${ind.localIdentifier || `ID-${ind.movebankId}`})`
+                              : (ind.localIdentifier || `ID-${ind.movebankId}`)}
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
@@ -1173,7 +1176,9 @@ export default function StudyDetail() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Editar: {editingIndividual?.localIdentifier || `ID-${editingIndividual?.movebankId}`}
+              Editar: {editingIndividual?.ornitelaName
+                ? `${editingIndividual.ornitelaName} (${editingIndividual.localIdentifier || `ID-${editingIndividual.movebankId}`})`
+                : (editingIndividual?.localIdentifier || `ID-${editingIndividual?.movebankId}`)}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">

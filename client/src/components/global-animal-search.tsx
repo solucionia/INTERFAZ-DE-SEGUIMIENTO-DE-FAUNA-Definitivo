@@ -11,6 +11,7 @@ import {
   CommandItem,
 } from "@/components/ui/command";
 import { Search, PawPrint } from "lucide-react";
+import { formatAnimalLabel } from "@/lib/animal-label";
 
 interface GlobalIndividual extends Individual {
   studyName: string;
@@ -76,17 +77,17 @@ export function GlobalAnimalSearch() {
               {inds.map((ind) => (
                 <CommandItem
                   key={ind.id}
-                  value={`${normalizeText(ind.localIdentifier || "")} ${normalizeText(ind.nickName || "")} ${normalizeText(ind.taxonCanonicalName || "")}`}
+                  value={`${normalizeText(ind.localIdentifier || "")} ${normalizeText(ind.ornitelaName || "")} ${normalizeText(ind.nickName || "")} ${normalizeText(ind.taxonCanonicalName || "")}`}
                   onSelect={() => handleSelect(ind)}
                   className="cursor-pointer"
                   data-testid={`global-result-${ind.localIdentifier}`}
                 >
                   <PawPrint className="w-4 h-4 mr-2 shrink-0 text-muted-foreground" />
                   <div className="flex-1 min-w-0">
-                    <span className="font-medium">{ind.localIdentifier}</span>
-                    {(ind.nickName || ind.taxonCanonicalName) && (
+                    <span className="font-medium">{formatAnimalLabel(ind)}</span>
+                    {ind.taxonCanonicalName && (
                       <span className="text-xs text-muted-foreground ml-2">
-                        {[ind.nickName, ind.taxonCanonicalName].filter(Boolean).join(" · ")}
+                        {ind.taxonCanonicalName}
                       </span>
                     )}
                   </div>

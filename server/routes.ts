@@ -1072,7 +1072,7 @@ export async function registerRoutes(
       const individuals = await storage.getIndividuals(studyId);
       const indMap = new Map(individuals.map(ind => [
         ind.localIdentifier || `ID-${ind.movebankId}`,
-        { nickName: ind.nickName || null, taxon: ind.taxonCanonicalName || null, projectId: ind.projectId || null }
+        { nickName: ind.nickName || null, ornitelaName: ind.ornitelaName || null, taxon: ind.taxonCanonicalName || null, projectId: ind.projectId || null }
       ]));
 
       const { rows: gpsRows } = await pool.query(
@@ -1113,10 +1113,11 @@ export async function registerRoutes(
         const lastTs = pts[0].timestamp;
         if (!globalLastUpdate || lastTs > globalLastUpdate) globalLastUpdate = lastTs;
 
-        const meta = indMap.get(id) || { nickName: null, taxon: null, projectId: null };
+        const meta = indMap.get(id) || { nickName: null, ornitelaName: null, taxon: null, projectId: null };
         result.push({
           individual: id,
           nickName: meta.nickName,
+          ornitelaName: meta.ornitelaName,
           taxon: meta.taxon,
           projectId: meta.projectId,
           points: pts,
@@ -1902,6 +1903,9 @@ export async function registerRoutes(
         sex: r.sex || null,
         animalLifeStage: r.animal_life_stage || null,
         synced: true,
+        ornitelaName: null,
+        projectId: null,
+        historyNumber: null,
       }));
 
       const deploymentsData = rawDeployments.map((r) => {
@@ -2522,7 +2526,7 @@ export async function registerRoutes(
           if (!csv || csv.trim().length < 10) {
             deviceError = "CSV vacío";
           } else {
-            const importResult = await parseOrnitelaCsv(csv, studyId, storage);
+            const importResult = await parseOrnitelaCsv(csv, studyId, storage, { ornitelaName: device.name });
             deviceGps = importResult.gpsImported;
             deviceAcc = importResult.accImported;
             deviceGpsDup = importResult.gpsDuplicates;

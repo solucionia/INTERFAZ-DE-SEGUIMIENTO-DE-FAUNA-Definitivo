@@ -45,6 +45,7 @@ import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/m
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { formatAnimalLabel } from "@/lib/animal-label";
 
 interface AnimalPoint {
   timestamp: number;
@@ -61,6 +62,7 @@ const HDOP_QUALITY_THRESHOLD = 5;
 interface AnimalData {
   individual: string;
   nickName: string | null;
+  ornitelaName?: string | null;
   taxon: string | null;
   projectId: number | null;
   points: AnimalPoint[];
@@ -205,7 +207,7 @@ export default function LastPositions() {
     if (searchQuery.trim()) {
       const norm = searchQuery.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       result = result.filter((a) => {
-        const fields = [a.individual, a.nickName || "", a.taxon || ""];
+        const fields = [a.individual, a.nickName || "", a.ornitelaName || "", a.taxon || ""];
         return fields.some((f) =>
           f.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(norm)
         );
@@ -380,7 +382,7 @@ export default function LastPositions() {
               if (animal.points.length === 0) return null;
               const lastPoint = animal.points[0];
               const color = getAgeColor(lastPoint.timestamp);
-              const displayName = animal.nickName || animal.individual;
+              const displayName = formatAnimalLabel({ localIdentifier: animal.individual, nickName: animal.nickName, ornitelaName: animal.ornitelaName });
 
               return (
                 <span key={animal.individual}>
@@ -518,7 +520,7 @@ export default function LastPositions() {
                         const lastPoint = animal.points[0];
                         if (!lastPoint) return null;
                         const color = getAgeColor(lastPoint.timestamp);
-                        const displayName = animal.nickName || animal.individual;
+                        const displayName = formatAnimalLabel({ localIdentifier: animal.individual, nickName: animal.nickName, ornitelaName: animal.ornitelaName });
 
                         return (
                           <TableRow key={animal.individual} data-testid={`row-animal-${animal.individual}`}>

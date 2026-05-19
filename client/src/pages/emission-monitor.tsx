@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
-import type { EmissionAlert } from "@shared/schema";
+import type { EmissionAlert, Individual } from "@shared/schema";
+import { formatAnimalLabelById } from "@/lib/animal-label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,13 @@ export default function EmissionMonitor() {
   const { data: emissionAlerts, isLoading: alertsLoading } = useQuery<EmissionAlert[]>({
     queryKey: ["/api/emission-alerts"],
   });
+
+  const { data: allIndividuals } = useQuery<Individual[]>({ queryKey: ["/api/individuals/all"] });
+  const individualMap = useMemo(() => {
+    const m = new Map<string, Individual>();
+    for (const ind of allIndividuals || []) if (ind.localIdentifier) m.set(ind.localIdentifier, ind);
+    return m;
+  }, [allIndividuals]);
 
   const createAlertMutation = useMutation({
     mutationFn: async () => {
@@ -210,7 +218,7 @@ export default function EmissionMonitor() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <WifiOff className="w-3.5 h-3.5 text-destructive shrink-0" />
-                          <span className="font-medium">{r.animalId}</span>
+                          <span className="font-medium">{formatAnimalLabelById(r.animalId, individualMap)}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{r.studyName}</TableCell>

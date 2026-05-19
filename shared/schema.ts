@@ -85,6 +85,7 @@ export const individuals = pgTable("individuals", {
   movebankId: bigint("movebank_id", { mode: "number" }).notNull(),
   localIdentifier: text("local_identifier"),
   nickName: text("nick_name"),
+  ornitelaName: text("ornitela_name"),
   taxonCanonicalName: text("taxon_canonical_name"),
   sex: text("sex"),
   animalLifeStage: text("animal_life_stage"),

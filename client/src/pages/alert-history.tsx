@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Study, DetectedEvent } from "@shared/schema";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { formatAnimalLabelById } from "@/lib/animal-label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -51,6 +52,12 @@ export default function AlertHistory() {
   const [page, setPage] = useState(0);
 
   const { data: studies } = useQuery<Study[]>({ queryKey: ["/api/studies"] });
+  const { data: allIndividuals } = useQuery<import("@shared/schema").Individual[]>({ queryKey: ["/api/individuals/all"] });
+  const individualMap = useMemo(() => {
+    const m = new Map<string, import("@shared/schema").Individual>();
+    for (const ind of allIndividuals || []) if (ind.localIdentifier) m.set(ind.localIdentifier, ind);
+    return m;
+  }, [allIndividuals]);
 
   const queryParams = new URLSearchParams();
   if (filters.studyId) queryParams.set("studyId", filters.studyId);
@@ -275,7 +282,7 @@ export default function AlertHistory() {
                               <span className="text-sm">{EVENT_LABELS[event.eventType as keyof typeof EVENT_LABELS] || event.eventType}</span>
                             </div>
                           </TableCell>
-                          <TableCell className="font-medium">{event.individualLocalId}</TableCell>
+                          <TableCell className="font-medium">{formatAnimalLabelById(event.individualLocalId, individualMap)}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">{studyMap.get(event.studyId) || event.studyId}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs" style={{

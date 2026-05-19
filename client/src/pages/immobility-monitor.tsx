@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Study } from "@shared/schema";
+import type { Study, Individual } from "@shared/schema";
+import { formatAnimalLabelById } from "@/lib/animal-label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -176,6 +177,17 @@ export default function ImmobilityMonitor() {
   const { data: studies, isLoading: studiesLoading } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
   });
+
+  const { data: studyIndividuals } = useQuery<Individual[]>({
+    queryKey: ["/api/studies", selectedStudyId, "individuals"],
+    enabled: !!selectedStudyId,
+  });
+
+  const individualMap = useMemo(() => {
+    const m = new Map<string, Individual>();
+    for (const ind of studyIndividuals || []) if (ind.localIdentifier) m.set(ind.localIdentifier, ind);
+    return m;
+  }, [studyIndividuals]);
 
   const analysisMutation = useMutation({
     mutationFn: async () => {

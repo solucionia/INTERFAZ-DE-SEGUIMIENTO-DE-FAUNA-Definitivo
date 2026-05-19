@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Bell, CheckCheck, ExternalLink } from "lucide-react";
@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { EVENT_LABELS, EVENT_COLORS, type DetectedEvent, type EventType } from "@shared/schema";
+import { EVENT_LABELS, EVENT_COLORS, type DetectedEvent, type EventType, type Individual } from "@shared/schema";
+import { formatAnimalLabelById } from "@/lib/animal-label";
 
 interface AlertHistoryResponse {
   events: DetectedEvent[];
@@ -48,8 +49,16 @@ export function NotificationBell() {
     staleTime: 0,
   });
 
+  const { data: allIndividuals } = useQuery<Individual[]>({ queryKey: ["/api/individuals/all"] });
+
   const events = data?.events ?? [];
   const unreadCount = data?.total ?? events.length;
+
+  const individualMap = useMemo(() => {
+    const m = new Map<string, Individual>();
+    for (const ind of allIndividuals || []) if (ind.localIdentifier) m.set(ind.localIdentifier, ind);
+    return m;
+  }, [allIndividuals]);
 
   const bellKey = ["/api/alerts/history", { readStatus: "false", resolvedStatus: "false", limit: 15 }] as const;
 
@@ -196,7 +205,7 @@ export function NotificationBell() {
                           )}
                         </div>
                         <p className="text-sm truncate" data-testid={`text-notification-animal-${event.id}`}>
-                          Animal <span className="font-mono">{event.individualLocalId}</span>
+                          Animal <span className="font-mono">{formatAnimalLabelById(event.individualLocalId, individualMap)}</span>
                         </p>
                         <p className="text-xs text-muted-foreground line-clamp-2">
                           {event.description}

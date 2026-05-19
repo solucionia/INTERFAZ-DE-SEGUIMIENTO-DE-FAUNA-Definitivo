@@ -131,6 +131,7 @@ export interface IStorage {
   createIndividualsByName(studyId: string, names: string[]): Promise<void>;
   createIndividualsWithMetadata(studyId: string, entries: { name: string; taxon?: string; sex?: string }[]): Promise<void>;
   upsertOrnitelaDeploymentsForIndividuals(studyId: string, imeis: string[]): Promise<{ deploymentsCreated: number; individualsMarkedSynced: number }>;
+  updateIndividualOrnitelaName(studyId: string, localIdentifier: string, ornitelaName: string): Promise<boolean>;
 
   getAllSpecies(): Promise<Species[]>;
   getSpeciesById(id: number): Promise<Species | undefined>;
@@ -280,6 +281,7 @@ export class DatabaseStorage implements IStorage {
           movebankId: individuals.movebankId,
           localIdentifier: individuals.localIdentifier,
           nickName: individuals.nickName,
+          ornitelaName: individuals.ornitelaName,
           taxonCanonicalName: individuals.taxonCanonicalName,
           sex: individuals.sex,
           animalLifeStage: individuals.animalLifeStage,
@@ -300,6 +302,7 @@ export class DatabaseStorage implements IStorage {
         movebankId: individuals.movebankId,
         localIdentifier: individuals.localIdentifier,
         nickName: individuals.nickName,
+        ornitelaName: individuals.ornitelaName,
         taxonCanonicalName: individuals.taxonCanonicalName,
         sex: individuals.sex,
         animalLifeStage: individuals.animalLifeStage,
@@ -1119,6 +1122,31 @@ export class DatabaseStorage implements IStorage {
         nextNegId--;
       }
     }
+  }
+
+  async updateIndividualOrnitelaName(
+    studyId: string,
+    localIdentifier: string,
+    ornitelaName: string
+  ): Promise<boolean> {
+    const trimmed = ornitelaName.trim();
+    if (!trimmed) return false;
+    // Filtro de placeholder: el sync de Ornitela usa `Device-XXXXXX` cuando no
+    // logra parsear el nombre real del panel HTML. No lo persistimos.
+    if (/^Device-[A-Za-z0-9]+$/.test(trimmed)) return false;
+
+    const [existing] = await db
+      .select({ id: individuals.id, ornitelaName: individuals.ornitelaName })
+      .from(individuals)
+      .where(and(eq(individuals.studyId, studyId), eq(individuals.localIdentifier, localIdentifier)))
+      .limit(1);
+    if (!existing) return false;
+    if (existing.ornitelaName === trimmed) return false;
+
+    await db.update(individuals)
+      .set({ ornitelaName: trimmed })
+      .where(eq(individuals.id, existing.id));
+    return true;
   }
 
   async upsertOrnitelaDeploymentsForIndividuals(
