@@ -252,7 +252,12 @@ export default function GeoAnalysis() {
         csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
       }
     } else if (resultData.analysisType === "distance") {
-      csv = "individual,date,distance_km\n";
+      csv = "individual,total_km,average_daily_km,net_displacement_km,linearity_index\n";
+      for (const ind of resultData.individuals || []) {
+        const lin = typeof ind.linearity_index === "number" ? ind.linearity_index : "";
+        csv += `${ind.individual},${ind.total_km},${ind.average_daily_km},${ind.net_displacement_km},${lin}\n`;
+      }
+      csv += "\nindividual,date,distance_km\n";
       for (const ind of resultData.individuals || []) {
         for (const d of ind.daily || []) {
           csv += `${ind.individual},${d.date},${d.distance_km}\n`;
@@ -1775,15 +1780,23 @@ function AnalysisResultTable({ data }: { data: any }) {
                   <TableHead>Animal</TableHead>
                   <TableHead>Distancia total (km)</TableHead>
                   <TableHead>Promedio diario (km)</TableHead>
+                  <TableHead>Distancia neta (inicio→fin) (km)</TableHead>
+                  <TableHead>Índice de linealidad</TableHead>
                   <TableHead>Dias</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {inds.map((item: any, idx: number) => (
-                  <TableRow key={idx}>
+                  <TableRow key={idx} data-testid={`row-distance-${item.individual}`}>
                     <TableCell className="font-medium">{item.individual}</TableCell>
-                    <TableCell>{item.total_km?.toFixed(3)}</TableCell>
+                    <TableCell data-testid={`text-total-km-${item.individual}`}>{item.total_km?.toFixed(3)}</TableCell>
                     <TableCell>{item.average_daily_km?.toFixed(3)}</TableCell>
+                    <TableCell data-testid={`text-net-displacement-${item.individual}`}>
+                      {typeof item.net_displacement_km === "number" ? item.net_displacement_km.toFixed(2) : "—"}
+                    </TableCell>
+                    <TableCell data-testid={`text-linearity-${item.individual}`}>
+                      {typeof item.linearity_index === "number" ? item.linearity_index.toFixed(3) : "—"}
+                    </TableCell>
                     <TableCell>{item.daily?.length || 0}</TableCell>
                   </TableRow>
                 ))}

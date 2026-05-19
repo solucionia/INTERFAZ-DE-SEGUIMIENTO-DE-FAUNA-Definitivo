@@ -2920,7 +2920,13 @@ export async function registerRoutes(
           csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
         }
       } else if (resultData?.analysisType === "distance") {
-        csv = "Animal,Fecha,Distancia_km\n";
+        csv = "Animal,Distancia_total_km,Promedio_diario_km,Distancia_neta_km,Indice_linealidad\n";
+        for (const ind of resultData.individuals || []) {
+          const lin = typeof ind.linearity_index === "number" ? ind.linearity_index : "";
+          const net = typeof ind.net_displacement_km === "number" ? ind.net_displacement_km : "";
+          csv += `${ind.individual},${ind.total_km},${ind.average_daily_km},${net},${lin}\n`;
+        }
+        csv += "\nAnimal,Fecha,Distancia_km\n";
         for (const ind of resultData.individuals || []) {
           for (const d of ind.daily || []) {
             csv += `${ind.individual},${d.date},${d.distance_km}\n`;

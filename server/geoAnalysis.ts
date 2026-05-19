@@ -25,6 +25,8 @@ interface DistanceResult {
     individual: string;
     total_km: number;
     average_daily_km: number;
+    net_displacement_km: number;
+    linearity_index: number | null;
     daily: { date: string; distance_km: number }[];
   }[];
 }
@@ -504,7 +506,14 @@ export function computeDistance(points: GpsPoint[]): DistanceResult {
   for (const id of Object.keys(groups)) {
     const pts = groups[id];
     if (pts.length < 2) {
-      individuals.push({ individual: id, total_km: 0, average_daily_km: 0, daily: [] });
+      individuals.push({
+        individual: id,
+        total_km: 0,
+        average_daily_km: 0,
+        net_displacement_km: 0,
+        linearity_index: null,
+        daily: [],
+      });
       continue;
     }
 
@@ -532,10 +541,22 @@ export function computeDistance(points: GpsPoint[]): DistanceResult {
 
     const avgDaily = daily.length > 0 ? totalKm / daily.length : 0;
 
+    const netDisplacementKm = turf.distance(
+      turf.point([pts[0].lng, pts[0].lat]),
+      turf.point([pts[pts.length - 1].lng, pts[pts.length - 1].lat]),
+      { units: "kilometers" }
+    );
+
+    const linearityIndex = totalKm > 0
+      ? Math.min(1, Math.round((netDisplacementKm / totalKm) * 1000) / 1000)
+      : null;
+
     individuals.push({
       individual: id,
       total_km: Math.round(totalKm * 1000) / 1000,
       average_daily_km: Math.round(avgDaily * 1000) / 1000,
+      net_displacement_km: Math.round(netDisplacementKm * 100) / 100,
+      linearity_index: linearityIndex,
       daily,
     });
   }
