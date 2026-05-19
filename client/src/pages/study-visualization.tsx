@@ -416,8 +416,11 @@ export default function StudyVisualization() {
     setActiveQuickRange(null);
   };
 
+  // Margen máximo (±30 min) para vincular un timestamp de acelerómetro con un punto GPS y viceversa.
+  const ACC_GPS_MATCH_WINDOW_MS = 30 * 60 * 1000;
+
   const findClosestGpsPoint = useCallback(
-    (timestamp: number, animalFilter?: string): GpsPoint | null => {
+    (timestamp: number, animalFilter?: string, maxDiffMs: number = ACC_GPS_MATCH_WINDOW_MS): GpsPoint | null => {
       let closest: GpsPoint | null = null;
       let minDiff = Infinity;
       const entries = animalFilter
@@ -429,14 +432,15 @@ export default function StudyVisualization() {
           if (diff < minDiff) { minDiff = diff; closest = p; }
         }
       }
+      if (closest && minDiff > maxDiffMs) return null;
       return closest;
     },
     [gpsData]
   );
 
-  const findClosestAccTimestamp = useCallback(
-    (timestamp: number, animalFilter?: string): number | null => {
-      let closest: number | null = null;
+  const findClosestAccPoint = useCallback(
+    (timestamp: number, animalFilter?: string, maxDiffMs: number = ACC_GPS_MATCH_WINDOW_MS): AccPoint | null => {
+      let closest: AccPoint | null = null;
       let minDiff = Infinity;
       const entries = animalFilter
         ? [[animalFilter, accData[animalFilter] || []] as const]
@@ -444,9 +448,10 @@ export default function StudyVisualization() {
       for (const [, points] of entries) {
         for (const p of points) {
           const diff = Math.abs(p.timestamp - timestamp);
-          if (diff < minDiff) { minDiff = diff; closest = p.timestamp; }
+          if (diff < minDiff) { minDiff = diff; closest = p; }
         }
       }
+      if (closest && minDiff > maxDiffMs) return null;
       return closest;
     },
     [accData]
@@ -460,20 +465,43 @@ export default function StudyVisualization() {
       const animal = payload.animal || activeAnimalFilter;
       setHighlightedTimestamp(ts);
       const gp = findClosestGpsPoint(ts, animal || undefined);
-      if (gp) { setHighlightedGpsPoint(gp); setMapCenter([gp.lat, gp.lng]); }
+      if (gp) {
+        setHighlightedGpsPoint(gp);
+        setMapCenter([gp.lat, gp.lng]);
+      } else {
+        setHighlightedGpsPoint(null);
+        toast({
+          description: "Sin posición GPS disponible en este momento (±30 min).",
+          duration: 2500,
+        });
+      }
     },
-    [findClosestGpsPoint, activeAnimalFilter]
+    [findClosestGpsPoint, activeAnimalFilter, toast]
   );
 
   const handleMapPointClick = useCallback(
     (gpsPoint: GpsPoint) => {
       setHighlightedGpsPoint(gpsPoint);
       setMapCenter([gpsPoint.lat, gpsPoint.lng]);
-      const accTs = findClosestAccTimestamp(gpsPoint.timestamp, gpsPoint.animal);
-      if (accTs !== null) setHighlightedTimestamp(accTs);
+      const accPt = findClosestAccPoint(gpsPoint.timestamp, gpsPoint.animal);
+      if (accPt) {
+        setHighlightedTimestamp(accPt.timestamp);
+      } else {
+        setHighlightedTimestamp(null);
+        toast({
+          description: "Sin datos de acelerómetro en este momento (±30 min).",
+          duration: 2500,
+        });
+      }
     },
-    [findClosestAccTimestamp]
+    [findClosestAccPoint, toast]
   );
+
+  // Valores ACC asociados al punto GPS resaltado (para mostrarlos en el popup del marcador).
+  const highlightedAccValues = useMemo(() => {
+    if (!highlightedGpsPoint) return null;
+    return findClosestAccPoint(highlightedGpsPoint.timestamp, highlightedGpsPoint.animal);
+  }, [highlightedGpsPoint, findClosestAccPoint]);
 
   const handleEventClick = useCallback(
     (event: DetectedEvent) => {
@@ -991,9 +1019,16 @@ export default function StudyVisualization() {
                           {dragging && zoomStart !== null && dragEnd !== null && (
                             <ReferenceArea x1={zoomStart} x2={dragEnd} strokeOpacity={0.3} fill="hsl(var(--primary))" fillOpacity={0.15} />
                           )}
-                          {highlightedTimestamp !== null && (() => {
-                            const match = chartData.find((d) => Math.abs(d.timestamp - highlightedTimestamp) < 500);
-                            return match ? <ReferenceDot x={match.timestamp} y={match.x} r={6} fill="#ef4444" stroke="white" strokeWidth={2} /> : null;
+                          {highlightedTimestamp !== null && chartData.length > 0 && (() => {
+                            // Snap al punto de chartData más cercano (el chart está downsampled,
+                            // así que una coincidencia exacta puede no existir tras un clic en el mapa).
+                            let nearest = chartData[0];
+                            let minDiff = Math.abs(nearest.timestamp - highlightedTimestamp);
+                            for (const d of chartData) {
+                              const diff = Math.abs(d.timestamp - highlightedTimestamp);
+                              if (diff < minDiff) { minDiff = diff; nearest = d; }
+                            }
+                            return <ReferenceDot x={nearest.timestamp} y={nearest.x} r={6} fill="#ef4444" stroke="white" strokeWidth={2} />;
                           })()}
                         </LineChart>
                       </ResponsiveContainer>
@@ -1059,11 +1094,31 @@ export default function StudyVisualization() {
                       {highlightedGpsPoint && (
                         <Marker position={[highlightedGpsPoint.lat, highlightedGpsPoint.lng]} icon={highlightIcon}>
                           <Popup>
-                            <div className="text-xs space-y-0.5">
+                            <div className="text-xs space-y-0.5" data-testid="popup-highlighted-gps">
                               <div className="font-bold" style={{ color: "#ef4444" }}>Punto seleccionado</div>
                               <div className="font-semibold">{highlightedGpsPoint.animal}</div>
                               <div>{format(new Date(highlightedGpsPoint.timestamp), "dd/MM/yyyy HH:mm:ss", { locale: es })}</div>
                               <div>Lat: {highlightedGpsPoint.lat.toFixed(6)}, Lng: {highlightedGpsPoint.lng.toFixed(6)}</div>
+                              {highlightedAccValues ? (
+                                <div className="mt-1 pt-1 border-t border-border">
+                                  <div className="font-medium text-[11px] text-muted-foreground mb-0.5">
+                                    Acelerómetro {Math.abs(highlightedAccValues.timestamp - highlightedGpsPoint.timestamp) > 60000 && (
+                                      <span className="text-[10px]">
+                                        (Δ {Math.round(Math.abs(highlightedAccValues.timestamp - highlightedGpsPoint.timestamp) / 60000)} min)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                    <div><span style={{ color: "#3B82F6" }}>X:</span> {highlightedAccValues.x.toFixed(0)}</div>
+                                    <div><span style={{ color: "#EF4444" }}>Y:</span> {highlightedAccValues.y.toFixed(0)}</div>
+                                    <div><span style={{ color: "#EAB308" }}>Z:</span> {highlightedAccValues.z.toFixed(0)}</div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-1 pt-1 border-t border-border text-[11px] text-muted-foreground italic">
+                                  Sin datos de acelerómetro en este momento (±30 min)
+                                </div>
+                              )}
                               <a href={googleMapsLink(highlightedGpsPoint.lat, highlightedGpsPoint.lng)} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Ver en Google Maps</a>
                             </div>
                           </Popup>
