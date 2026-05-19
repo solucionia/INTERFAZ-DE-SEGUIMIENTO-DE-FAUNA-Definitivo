@@ -86,13 +86,52 @@ const ANIMAL_COLORS = [
 
 const KERNEL_PCTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
 const MCP_PCTS = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+const KERNEL_PALETTE = ["#dc2626", "#ea580c", "#f59e0b", "#84cc16", "#10b981", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#ec4899"];
 
-function kernelColor(pct: number): string {
+function kernelColor(pct: number, sortedPcts?: number[]): string {
+  if (sortedPcts && sortedPcts.length > 0) {
+    const idx = sortedPcts.indexOf(pct);
+    if (idx >= 0) return KERNEL_PALETTE[idx % KERNEL_PALETTE.length];
+  }
   const t = pct / 95;
   const r = Math.round(220 - t * 140);
   const g = Math.round(40 + t * 80);
   const b = Math.round(40 + t * 40);
   return `rgb(${r},${g},${b})`;
+}
+
+function deriveKernelPcts(data: any): number[] {
+  if (!data) return [50, 95];
+  if (Array.isArray(data.kernelPercentages) && data.kernelPercentages.length > 0) {
+    return [...data.kernelPercentages].map(Number).sort((a, b) => a - b);
+  }
+  const perInd = data.perIndividual?.[0]?.kernelHrefAreas;
+  if (perInd) {
+    const k = Object.keys(perInd).map(Number).filter((n) => Number.isFinite(n));
+    if (k.length > 0) return k.sort((a, b) => a - b);
+  }
+  const a0 = data.areas?.[0];
+  if (a0) {
+    if (a0.areas && typeof a0.areas === "object") {
+      const k = Object.keys(a0.areas).map(Number).filter((n) => Number.isFinite(n));
+      if (k.length > 0) return k.sort((a, b) => a - b);
+    }
+    const legacy = Object.keys(a0)
+      .map((k) => /^area_(\d+)_km2$/.exec(k)?.[1])
+      .filter((m): m is string => !!m)
+      .map(Number);
+    if (legacy.length > 0) return legacy.sort((a, b) => a - b);
+  }
+  return [50, 95];
+}
+
+function getKernelAreaForPct(item: any, pct: number): number | undefined {
+  if (item?.areas && typeof item.areas === "object") {
+    const v = item.areas[String(pct)];
+    if (typeof v === "number") return v;
+  }
+  const legacy = item?.[`area_${pct}_km2`];
+  return typeof legacy === "number" ? legacy : undefined;
 }
 
 function FitBounds({ geojson }: { geojson: any }) {
@@ -130,6 +169,8 @@ export default function GeoAnalysis() {
   const [resultData, setResultData] = useState<any>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [mapMethod, setMapMethod] = useState<"href" | "lscv">("href");
+  const [kernelPercentages, setKernelPercentages] = useState<number[]>([50, 95]);
+  const [kernelPctInput, setKernelPctInput] = useState("");
   const [showKernelPcts, setShowKernelPcts] = useState<number[]>([50, 95]);
   const [showMcpPcts, setShowMcpPcts] = useState<number[]>([95, 100]);
   const [mapLayer, setMapLayer] = useState<"kernel" | "mcp">("kernel");
@@ -188,7 +229,10 @@ export default function GeoAnalysis() {
         body.params = { percent: parseInt(mcpPercent, 10) };
       }
       if (analysisType === "comprehensive") {
-        body.params = { bandwidthMethod };
+        body.params = { bandwidthMethod, kernelPercentages };
+      }
+      if (analysisType === "kernel") {
+        body.params = { kernelPercentages };
       }
 
       const res = await apiRequest("POST", `/api/studies/${studyId}/analysis`, body);
@@ -234,7 +278,42 @@ export default function GeoAnalysis() {
     const end = new Date(analysis.timestampEnd);
     setDateStart(format(start, "yyyy-MM-dd"));
     setDateEnd(format(end, "yyyy-MM-dd"));
+    const savedPcts = deriveKernelPcts(saved);
+    setKernelPercentages(savedPcts);
+    setShowKernelPcts(savedPcts);
     toast({ title: "Analisis cargado" });
+  };
+
+  useEffect(() => {
+    if (!resultData) return;
+    const pcts = deriveKernelPcts(resultData);
+    setShowKernelPcts(pcts);
+  }, [resultData?.id, (resultData as any)?.kernelPercentages?.join(",")]);
+
+  const addKernelPct = () => {
+    const v = parseInt(kernelPctInput, 10);
+    if (!Number.isFinite(v) || v < 1 || v > 99) {
+      toast({ title: "Valor inválido", description: "Introduce un entero entre 1 y 99", variant: "destructive" });
+      return;
+    }
+    if (kernelPercentages.includes(v)) {
+      setKernelPctInput("");
+      return;
+    }
+    if (kernelPercentages.length >= 10) {
+      toast({ title: "Máximo 10 percentiles", variant: "destructive" });
+      return;
+    }
+    setKernelPercentages([...kernelPercentages, v].sort((a, b) => a - b));
+    setKernelPctInput("");
+  };
+
+  const removeKernelPct = (pct: number) => {
+    if (kernelPercentages.length <= 1) {
+      toast({ title: "Mínimo 1 percentil", variant: "destructive" });
+      return;
+    }
+    setKernelPercentages(kernelPercentages.filter((p) => p !== pct));
   };
 
   const exportCsvLegacy = () => {
@@ -247,9 +326,15 @@ export default function GeoAnalysis() {
         csv += `${a.individual},${a.area_km2}\n`;
       }
     } else if (resultData.analysisType === "kernel") {
-      csv = "individual,area_95_km2,area_50_km2\n";
+      const pcts = deriveKernelPcts(resultData);
+      csv = `individual,${pcts.map((p) => `area_${p}_km2`).join(",")}\n`;
       for (const a of resultData.areas || []) {
-        csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
+        const row: (string | number)[] = [a.individual];
+        for (const p of pcts) {
+          const v = getKernelAreaForPct(a, p);
+          row.push(v != null ? v : "");
+        }
+        csv += row.join(",") + "\n";
       }
     } else if (resultData.analysisType === "distance") {
       csv = "individual,total_km,average_daily_km,net_displacement_km,linearity_index\n";
@@ -448,6 +533,7 @@ export default function GeoAnalysis() {
           format,
           mcpPercent: parseInt(mcpPercent) || 95,
           bandwidthMethod,
+          kernelPercentages,
         }),
       });
       if (!res.ok) {
@@ -723,6 +809,57 @@ export default function GeoAnalysis() {
               </div>
             )}
 
+            {(analysisType === "kernel" || analysisType === "comprehensive") && (
+              <div className="space-y-2">
+                <Label>Percentiles Kernel (%)</Label>
+                <div className="flex flex-wrap gap-1 mb-1" data-testid="taginput-kernel-percentages">
+                  {kernelPercentages.map((pct) => (
+                    <span
+                      key={pct}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-md border bg-primary/10 text-primary border-primary/30"
+                      style={{ borderColor: kernelColor(pct, kernelPercentages) }}
+                      data-testid={`tag-kernel-pct-${pct}`}
+                    >
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: kernelColor(pct, kernelPercentages) }} />
+                      {pct}%
+                      <button
+                        type="button"
+                        onClick={() => removeKernelPct(pct)}
+                        className="ml-0.5 hover:text-destructive"
+                        data-testid={`button-remove-kernel-pct-${pct}`}
+                        aria-label={`Eliminar ${pct}%`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={kernelPctInput}
+                    onChange={(e) => setKernelPctInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addKernelPct(); } }}
+                    placeholder="Añadir (1-99)"
+                    className="w-32"
+                    data-testid="input-kernel-percentage"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    onClick={addKernelPct}
+                    data-testid="button-add-kernel-pct"
+                  >
+                    Añadir
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Hasta 10 percentiles. Por defecto 50 y 95.</p>
+              </div>
+            )}
+
             {analysisType === "mcp" && (
               <div className="space-y-2">
                 <Label>Porcentaje MCP</Label>
@@ -865,13 +1002,39 @@ export default function GeoAnalysis() {
                           Mapa
                         </CardTitle>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="space-y-3">
+                        {resultData.analysisType === "kernel" && (
+                          <div className="flex flex-wrap gap-1" data-testid="kernel-only-pcts-toggle">
+                            {deriveKernelPcts(resultData).map((pct) => {
+                              const active = showKernelPcts.includes(pct);
+                              const c = kernelColor(pct, deriveKernelPcts(resultData));
+                              return (
+                                <button
+                                  key={pct}
+                                  onClick={() =>
+                                    setShowKernelPcts(
+                                      active ? showKernelPcts.filter((p) => p !== pct) : [...showKernelPcts, pct]
+                                    )
+                                  }
+                                  className={`text-xs px-2 py-0.5 rounded-md border transition-colors flex items-center gap-1 ${
+                                    active ? "bg-primary/10" : "text-muted-foreground"
+                                  }`}
+                                  style={{ borderColor: active ? c : undefined }}
+                                  data-testid={`toggle-kernel-only-${pct}`}
+                                >
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c }} />
+                                  {pct}%
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                         <div className="h-[400px] rounded-md overflow-hidden border" ref={mapContainerRef}>
                           <MapContainer
                             center={[0, 0]}
                             zoom={2}
                             style={{ height: "100%", width: "100%" }}
-                            key={JSON.stringify(resultData.geojson).slice(0, 100)}
+                            key={`${JSON.stringify(resultData.geojson).slice(0, 100)}-${showKernelPcts.join(",")}`}
                           >
                             <MapLayerControl />
                             <GoogleMapsClick />
@@ -883,10 +1046,13 @@ export default function GeoAnalysis() {
                                   return { color: "#3b82f6", weight: 2, opacity: 0.8, fillColor: "#3b82f6", fillOpacity: 0.3 };
                                 }
                                 if (props.type === "kernel") {
-                                  if (props.level === "50%") {
-                                    return { color: "#ef4444", weight: 2, opacity: 0.8, fillColor: "#ef4444", fillOpacity: 0.3 };
+                                  const kpcts = deriveKernelPcts(resultData);
+                                  const pct = props.percent || parseInt(String(props.level || "").replace("%", ""), 10) || kpcts[kpcts.length - 1];
+                                  if (!showKernelPcts.includes(pct)) {
+                                    return { color: "transparent", weight: 0, fillOpacity: 0, opacity: 0 };
                                   }
-                                  return { color: "#22c55e", weight: 2, opacity: 0.8, fillColor: "#22c55e", fillOpacity: 0.2 };
+                                  const c = kernelColor(pct, kpcts);
+                                  return { color: c, weight: 2, opacity: 0.8, fillColor: c, fillOpacity: 0.3 };
                                 }
                                 const idx = resultData.geojson.features.indexOf(feature) || 0;
                                 const color = ANIMAL_COLORS[idx % ANIMAL_COLORS.length];
@@ -1003,14 +1169,14 @@ function ComprehensiveResults({
                 {ind.individual}
               </h3>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <HrrefChart ind={ind} />
+                <HrrefChart ind={ind} pcts={deriveKernelPcts(data)} />
                 <McpChart ind={ind} />
               </div>
             </div>
           ))}
         </>
       ) : perInd.length === 1 ? (
-        <SingleAnimalMetrics ind={perInd[0]} bandwidthMethod={data.bandwidthMethod} />
+        <SingleAnimalMetrics ind={perInd[0]} bandwidthMethod={data.bandwidthMethod} kernelPcts={deriveKernelPcts(data)} />
       ) : null}
 
       {filteredGeojson && filteredGeojson.features?.length > 0 && (
@@ -1066,20 +1232,24 @@ function ComprehensiveResults({
 
             {mapLayer === "kernel" && (
               <div className="flex flex-wrap gap-1">
-                {KERNEL_PCTS.map((pct) => (
-                  <button
-                    key={pct}
-                    onClick={() => toggleKernelPct(pct)}
-                    className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
-                      showKernelPcts.includes(pct)
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border text-muted-foreground"
-                    }`}
-                    data-testid={`toggle-kernel-${pct}`}
-                  >
-                    {pct}%
-                  </button>
-                ))}
+                {deriveKernelPcts(data).map((pct) => {
+                  const active = showKernelPcts.includes(pct);
+                  const c = kernelColor(pct, deriveKernelPcts(data));
+                  return (
+                    <button
+                      key={pct}
+                      onClick={() => toggleKernelPct(pct)}
+                      className={`text-xs px-2 py-0.5 rounded-md border transition-colors flex items-center gap-1 ${
+                        active ? "bg-primary/10" : "text-muted-foreground"
+                      }`}
+                      style={{ borderColor: active ? c : undefined }}
+                      data-testid={`toggle-kernel-${pct}`}
+                    >
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c }} />
+                      {pct}%
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -1119,9 +1289,11 @@ function ComprehensiveResults({
                       return { color: "#f59e0b", weight: 1.5, opacity: 0.6, dashArray: "4 4", fillOpacity: 0 };
                     }
                     if (props.type === "kernel") {
-                      const pct = props.percent || 95;
-                      const color = kernelColor(pct);
-                      const fillOpacity = 0.15 + (1 - pct / 95) * 0.3;
+                      const pctsForColor = deriveKernelPcts(data);
+                      const maxPct = Math.max(...pctsForColor, 95);
+                      const pct = props.percent || maxPct;
+                      const color = kernelColor(pct, pctsForColor);
+                      const fillOpacity = 0.15 + (1 - pct / maxPct) * 0.3;
                       return { color, weight: 1.5, opacity: 0.7, fillColor: color, fillOpacity };
                     }
                     if (props.type === "mcp") {
@@ -1158,10 +1330,10 @@ function ComprehensiveResults({
                 Trayectoria
               </div>
               {mapLayer === "kernel" && [...showKernelPcts].sort((a, b) => a - b).map((pct) => (
-                <div key={pct} className="flex items-center gap-1.5">
+                <div key={pct} className="flex items-center gap-1.5" data-testid={`legend-kernel-${pct}`}>
                   <span
                     className="w-3 h-3 rounded-sm"
-                    style={{ backgroundColor: kernelColor(pct), opacity: 0.7 }}
+                    style={{ backgroundColor: kernelColor(pct, deriveKernelPcts(data)), opacity: 0.7 }}
                   />
                   Kernel {pct}%
                 </div>
@@ -1225,8 +1397,11 @@ function AreaTable({ areas, pcts, title }: { areas: Record<string, number> | nul
   );
 }
 
-function HrrefChart({ ind }: { ind: any }) {
-  const data = KERNEL_PCTS.map((pct) => ({
+function HrrefChart({ ind, pcts }: { ind: any; pcts?: number[] }) {
+  const usePcts = pcts && pcts.length > 0
+    ? pcts
+    : Object.keys(ind.kernelHrefAreas || {}).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  const data = usePcts.map((pct) => ({
     pct,
     area: ind.kernelHrefAreas?.[`${pct}`] != null ? ind.kernelHrefAreas[`${pct}`] * 1e6 : 0,
   })).filter((d) => d.area > 0);
@@ -1297,7 +1472,10 @@ function McpChart({ ind }: { ind: any }) {
   );
 }
 
-function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMethod: string }) {
+function SingleAnimalMetrics({ ind, bandwidthMethod, kernelPcts }: { ind: any; bandwidthMethod: string; kernelPcts?: number[] }) {
+  const effectiveKernelPcts = kernelPcts && kernelPcts.length > 0
+    ? kernelPcts
+    : Object.keys(ind.kernelHrefAreas || {}).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
   const hasBoth = bandwidthMethod === "both";
   const hasLscv = bandwidthMethod === "lscv" || hasBoth;
 
@@ -1378,11 +1556,11 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <AreaTable areas={ind.kernelHrefAreas} pcts={KERNEL_PCTS} title="HREF" />
+          <AreaTable areas={ind.kernelHrefAreas} pcts={effectiveKernelPcts} title="HREF" />
         </CardContent>
       </Card>
 
-      <HrrefChart ind={ind} />
+      <HrrefChart ind={ind} pcts={effectiveKernelPcts} />
 
       {hasLscv && (
         <Card>
@@ -1395,7 +1573,7 @@ function SingleAnimalMetrics({ ind, bandwidthMethod }: { ind: any; bandwidthMeth
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <AreaTable areas={ind.kernelLscvAreas || ind.kernelHrefAreas} pcts={KERNEL_PCTS} title="LSCV" />
+            <AreaTable areas={ind.kernelLscvAreas || ind.kernelHrefAreas} pcts={effectiveKernelPcts} title="LSCV" />
           </CardContent>
         </Card>
       )}
@@ -1443,7 +1621,8 @@ function ComparisonTable({ data }: { data: any }) {
     metrics.push({ label: "LSCV convergido", key: "lscvConverged", format: (ind: any) => ind.lscvConverged ? "Si" : "No" });
   }
 
-  for (const pct of KERNEL_PCTS) {
+  const dataKernelPcts = deriveKernelPcts(data);
+  for (const pct of dataKernelPcts) {
     metrics.push({
       label: `HR HREF ${pct}% (m²)`,
       key: `_hr_href_m2_${pct}`,
@@ -1460,7 +1639,7 @@ function ComparisonTable({ data }: { data: any }) {
   }
 
   if (hasBoth) {
-    for (const pct of KERNEL_PCTS) {
+    for (const pct of dataKernelPcts) {
       metrics.push({
         label: `HR LSCV ${pct}% (m²)`,
         key: `_hr_lscv_m2_${pct}`,
@@ -1574,10 +1753,15 @@ function MetricsPanel({ data }: { data: any }) {
 
   if (data.analysisType === "kernel") {
     const areas = data.areas || [];
-    const total95 = areas.reduce((s: number, a: any) => s + (a.area_95_km2 || 0), 0);
-    const total50 = areas.reduce((s: number, a: any) => s + (a.area_50_km2 || 0), 0);
+    const pcts = deriveKernelPcts(data);
+    const totals: Record<number, number> = {};
+    for (const p of pcts) {
+      totals[p] = areas.reduce((s: number, a: any) => s + (getKernelAreaForPct(a, p) || 0), 0);
+    }
+    const maxPct = pcts[pcts.length - 1];
+    const minPct = pcts[0];
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="metrics-kernel-summary">
         <Card>
           <CardContent className="py-4 px-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -1587,35 +1771,30 @@ function MetricsPanel({ data }: { data: any }) {
             <p className="text-xl font-bold" data-testid="text-metric-kernel-animals">{areas.length}</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
-              <span className="text-xs">Area 95%</span>
-            </div>
-            <p className="text-xl font-bold" data-testid="text-metric-area-95">{total95.toFixed(3)} km²</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-              <span className="text-xs">Area 50%</span>
-            </div>
-            <p className="text-xl font-bold" data-testid="text-metric-area-50">{total50.toFixed(3)} km²</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-4 px-4">
-            <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <Activity className="w-3.5 h-3.5" />
-              <span className="text-xs">Ratio 50/95</span>
-            </div>
-            <p className="text-xl font-bold" data-testid="text-metric-ratio">
-              {total95 > 0 ? ((total50 / total95) * 100).toFixed(1) : "0"}%
-            </p>
-          </CardContent>
-        </Card>
+        {pcts.map((p) => (
+          <Card key={p}>
+            <CardContent className="py-4 px-4">
+              <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: kernelColor(p, pcts) }} />
+                <span className="text-xs">Area {p}%</span>
+              </div>
+              <p className="text-xl font-bold" data-testid={`text-metric-area-${p}`}>{totals[p].toFixed(3)} km²</p>
+            </CardContent>
+          </Card>
+        ))}
+        {pcts.length >= 2 && totals[maxPct] > 0 && (
+          <Card>
+            <CardContent className="py-4 px-4">
+              <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                <Activity className="w-3.5 h-3.5" />
+                <span className="text-xs">Ratio {minPct}/{maxPct}</span>
+              </div>
+              <p className="text-xl font-bold" data-testid="text-metric-ratio">
+                {((totals[minPct] / totals[maxPct]) * 100).toFixed(1)}%
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     );
   }
@@ -1733,6 +1912,7 @@ function AnalysisResultTable({ data }: { data: any }) {
   if (data.analysisType === "kernel") {
     const areas = data.areas || [];
     if (areas.length === 0) return null;
+    const pcts = deriveKernelPcts(data);
     return (
       <Card>
         <CardHeader className="pb-2">
@@ -1744,16 +1924,28 @@ function AnalysisResultTable({ data }: { data: any }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Animal</TableHead>
-                  <TableHead>Area 95% (km²)</TableHead>
-                  <TableHead>Area 50% (km²)</TableHead>
+                  {pcts.map((p) => (
+                    <TableHead key={p}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: kernelColor(p, pcts) }} />
+                        Area {p}% (km²)
+                      </span>
+                    </TableHead>
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {areas.map((item: any, idx: number) => (
                   <TableRow key={idx}>
                     <TableCell className="font-medium">{item.individual}</TableCell>
-                    <TableCell>{item.area_95_km2?.toFixed(3)}</TableCell>
-                    <TableCell>{item.area_50_km2?.toFixed(3)}</TableCell>
+                    {pcts.map((p) => {
+                      const v = getKernelAreaForPct(item, p);
+                      return (
+                        <TableCell key={p} data-testid={`cell-kernel-${item.individual}-${p}`}>
+                          {v != null ? v.toFixed(3) : "—"}
+                        </TableCell>
+                      );
+                    })}
                   </TableRow>
                 ))}
               </TableBody>

@@ -47,7 +47,10 @@ function buildValoresCsv(resultData: any): string {
     "h_lscv",
   ];
 
-  for (const pct of KERNEL_PERCENTAGES) {
+  const headerKernelPcts: number[] = Array.isArray(resultData.kernelPercentages) && resultData.kernelPercentages.length > 0
+    ? [...resultData.kernelPercentages].sort((a: number, b: number) => a - b)
+    : KERNEL_PERCENTAGES;
+  for (const pct of headerKernelPcts) {
     headers.push(`hr_area${pct}`);
   }
 
@@ -56,6 +59,10 @@ function buildValoresCsv(resultData: any): string {
   }
 
   let csv = headers.join(",") + "\n";
+
+  const kernelPcts: number[] = Array.isArray(resultData.kernelPercentages) && resultData.kernelPercentages.length > 0
+    ? [...resultData.kernelPercentages].sort((a: number, b: number) => a - b)
+    : KERNEL_PERCENTAGES;
 
   for (const ind of resultData.perIndividual) {
     const row: (string | number)[] = [
@@ -76,7 +83,7 @@ function buildValoresCsv(resultData: any): string {
       ind.hLscv != null ? Math.round(ind.hLscv * 1000 * 1000) / 1000 : "",
     ];
 
-    for (const pct of KERNEL_PERCENTAGES) {
+    for (const pct of kernelPcts) {
       const km2 = ind.kernelHrefAreas?.[`${pct}`];
       row.push(km2 != null ? Math.round(km2 * 1e6 * 1000) / 1000 : "");
     }
@@ -719,12 +726,13 @@ export async function registerRoutes(
         format: z.enum(["csv", "kmz", "shp", "geojson"]),
         mcpPercent: z.number().optional(),
         bandwidthMethod: z.string().optional(),
+        kernelPercentages: z.array(z.number()).optional(),
       });
       const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
       }
-      const { individualIds, startDate, endDate, analysisType, format: fmt, mcpPercent, bandwidthMethod } = parsed.data;
+      const { individualIds, startDate, endDate, analysisType, format: fmt, mcpPercent, bandwidthMethod, kernelPercentages } = parsed.data;
       const study = await storage.getStudy(req.params.id);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
@@ -752,6 +760,7 @@ export async function registerRoutes(
       const analysisResult = runAnalysis(analysisType as any, gpsForAnalysis, {
         mcpPercent: mcpPercent || 95,
         bandwidthMethod: (bandwidthMethod as any) || "href",
+        kernelPercentages,
       });
 
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -763,7 +772,9 @@ export async function registerRoutes(
         let csv = "";
         if (analysisType === "comprehensive" && analysisResult.perIndividual) {
           csv = "Animal,Eccentricidad,Linealidad,h_HREF,h_LSCV";
-          const kernelPcts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+          const kernelPcts: number[] = Array.isArray((analysisResult as any).kernelPercentages) && (analysisResult as any).kernelPercentages.length > 0
+            ? [...(analysisResult as any).kernelPercentages].sort((a: number, b: number) => a - b)
+            : [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
           const mcpPcts = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
           for (const p of kernelPcts) csv += `,Kernel_HREF_${p}%_km2`;
           for (const p of kernelPcts) csv += `,Kernel_LSCV_${p}%_km2`;
@@ -777,13 +788,29 @@ export async function registerRoutes(
             csv += `,${ind.totalDistance?.toFixed(3) ?? ""},${ind.meanSpeed?.toFixed(4) ?? ""},${ind.numPoints ?? ""}\n`;
           }
         } else if (analysisResult.areas) {
-          const keys = Object.keys(analysisResult.areas[0] || {});
-          csv = keys.join(",") + "\n";
-          for (const row of analysisResult.areas) {
-            csv += keys.map(k => {
-              const v = (row as any)[k];
-              return typeof v === "string" ? `"${v}"` : (v ?? "");
-            }).join(",") + "\n";
+          const arr: any[] = analysisResult.areas as any[];
+          if (analysisType === "kernel") {
+            const pcts: number[] = Array.isArray((analysisResult as any).kernelPercentages) && (analysisResult as any).kernelPercentages.length > 0
+              ? [...(analysisResult as any).kernelPercentages].sort((a: number, b: number) => a - b)
+              : [50, 95];
+            csv = `Animal,${pcts.map((p) => `Area_${p}_km2`).join(",")}\n`;
+            for (const row of arr) {
+              const r: (string | number)[] = [`"${row.individual ?? ""}"`];
+              for (const p of pcts) {
+                const v = row.areas?.[String(p)] ?? row[`area_${p}_km2`];
+                r.push(typeof v === "number" ? v : "");
+              }
+              csv += r.join(",") + "\n";
+            }
+          } else {
+            const keys = Object.keys(arr[0] || {}).filter((k) => typeof (arr[0] as any)[k] !== "object" || (arr[0] as any)[k] === null);
+            csv = keys.join(",") + "\n";
+            for (const row of arr) {
+              csv += keys.map(k => {
+                const v = (row as any)[k];
+                return typeof v === "string" ? `"${v}"` : (v ?? "");
+              }).join(",") + "\n";
+            }
           }
         } else {
           csv = "analysis_type,result\n";
@@ -2950,9 +2977,14 @@ export async function registerRoutes(
           csv += `${a.individual},${a.area_km2}\n`;
         }
       } else if (resultData?.analysisType === "kernel") {
-        csv = "Animal,Area_95_km2,Area_50_km2\n";
+        const pcts: number[] = Array.isArray(resultData.kernelPercentages) && resultData.kernelPercentages.length > 0
+          ? [...resultData.kernelPercentages].sort((a: number, b: number) => a - b)
+          : [50, 95];
+        csv = `Animal,${pcts.map((p) => `Area_${p}_km2`).join(",")}\n`;
         for (const a of resultData.areas || []) {
-          csv += `${a.individual},${a.area_95_km2},${a.area_50_km2}\n`;
+          const row = [a.individual];
+          for (const p of pcts) row.push(a.areas?.[String(p)] ?? "");
+          csv += row.join(",") + "\n";
         }
       } else if (resultData?.analysisType === "distance") {
         csv = "Animal,Distancia_total_km,Promedio_diario_km,Distancia_neta_km,Indice_linealidad\n";
@@ -3000,9 +3032,12 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Solo disponible para analisis completo" });
       }
 
+      const hrrefPcts: number[] = Array.isArray(resultData.kernelPercentages) && resultData.kernelPercentages.length > 0
+        ? [...resultData.kernelPercentages].sort((a: number, b: number) => a - b)
+        : KERNEL_PERCENTAGES;
       let csv = "Animal,porcentaje,hr_area_m2,hr_area_km2\n";
       for (const ind of resultData.perIndividual) {
-        for (const pct of KERNEL_PERCENTAGES) {
+        for (const pct of hrrefPcts) {
           const km2 = ind.kernelHrefAreas?.[`${pct}`];
           if (km2 != null) {
             csv += `${ind.individual},${pct},${km2 * 1e6},${km2}\n`;

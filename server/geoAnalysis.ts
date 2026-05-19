@@ -15,7 +15,8 @@ interface McpResult {
 
 interface KernelResult {
   analysisType: "kernel";
-  areas: { individual: string; area_95_km2: number; area_50_km2: number }[];
+  kernelPercentages: number[];
+  areas: { individual: string; areas: Record<string, number> }[];
   geojson: GeoJSON.FeatureCollection;
 }
 
@@ -69,6 +70,7 @@ interface ComprehensiveResult {
   sampled: boolean;
   sampleSize: number;
   totalPoints: number;
+  kernelPercentages: number[];
   perIndividual: IndividualComprehensiveMetrics[];
   geojson: GeoJSON.FeatureCollection;
 }
@@ -76,7 +78,23 @@ interface ComprehensiveResult {
 export type AnalysisResult = McpResult | KernelResult | DistanceResult | SpeedResult | ComprehensiveResult;
 
 export const KERNEL_PERCENTAGES = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+export const DEFAULT_KERNEL_PERCENTAGES = [50, 95];
+export const MAX_KERNEL_PERCENTAGES = 10;
 export const MCP_PERCENTAGES = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+
+export function normalizeKernelPercentages(input: unknown): number[] {
+  if (!Array.isArray(input) || input.length === 0) return [...DEFAULT_KERNEL_PERCENTAGES];
+  const valid: number[] = [];
+  for (const v of input) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) continue;
+    const i = Math.round(n);
+    if (i >= 1 && i <= 99 && !valid.includes(i)) valid.push(i);
+  }
+  if (valid.length === 0) return [...DEFAULT_KERNEL_PERCENTAGES];
+  valid.sort((a, b) => a - b);
+  return valid.slice(0, MAX_KERNEL_PERCENTAGES);
+}
 const MAX_SAMPLE_SIZE = 10000;
 
 function groupByIndividual(points: GpsPoint[]): Record<string, GpsPoint[]> {
@@ -344,7 +362,8 @@ function computeKernelMultiPercent(
   pts: GpsPoint[],
   id: string,
   bandwidth: number,
-  method: string
+  method: string,
+  percentages: number[] = DEFAULT_KERNEL_PERCENTAGES,
 ): { areas: Record<string, number>; features: GeoJSON.Feature[] } {
   const areas: Record<string, number> = {};
   const features: GeoJSON.Feature[] = [];
@@ -426,19 +445,19 @@ function computeKernelMultiPercent(
   for (const item of indexed) {
     cumVolume += item.v;
     const cumPct = cumVolume / totalVolume;
-    for (const pct of KERNEL_PERCENTAGES) {
+    for (const pct of percentages) {
       if (thresholds[pct] === undefined && cumPct >= pct / 100) {
         thresholds[pct] = item.d;
       }
     }
   }
-  for (const pct of KERNEL_PERCENTAGES) {
+  for (const pct of percentages) {
     if (thresholds[pct] === undefined) {
       thresholds[pct] = 0;
     }
   }
 
-  for (const pct of KERNEL_PERCENTAGES) {
+  for (const pct of percentages) {
     const threshold = thresholds[pct];
     const cellsAbove = grid.features.filter((f: any) => (f.properties?.density ?? 0) >= threshold);
     const cellCountArea = cellsAbove.length * cellAreaKm2;
@@ -461,16 +480,16 @@ function computeKernelMultiPercent(
     }
   }
 
-  console.log(`KDE [${id}]: Completado en ${((Date.now() - t0) / 1000).toFixed(1)}s, ${Object.keys(areas).length} contornos generados`);
-  if (areas["95"] !== undefined) console.log(`KDE [${id}]: 95%=${areas["95"]} km², 50%=${areas["50"] || "N/A"} km²`);
+  console.log(`KDE [${id}]: Completado en ${((Date.now() - t0) / 1000).toFixed(1)}s, ${Object.keys(areas).length} contornos generados (${percentages.join(",")}%)`);
 
   return { areas, features };
 }
 
-export function computeKernel(points: GpsPoint[], params?: { bandwidth?: number }): KernelResult {
+export function computeKernel(points: GpsPoint[], params?: { bandwidth?: number; kernelPercentages?: number[] }): KernelResult {
   const groups = groupByIndividual(points);
   const features: GeoJSON.Feature[] = [];
-  const areas: { individual: string; area_95_km2: number; area_50_km2: number }[] = [];
+  const areas: { individual: string; areas: Record<string, number> }[] = [];
+  const kernelPercentages = normalizeKernelPercentages(params?.kernelPercentages);
 
   for (const id of Object.keys(groups)) {
     const rawPts = groups[id];
@@ -478,22 +497,15 @@ export function computeKernel(points: GpsPoint[], params?: { bandwidth?: number 
 
     const { sampled: pts } = samplePoints(rawPts, MAX_SAMPLE_SIZE);
     const bandwidth = params?.bandwidth ?? silvermanBandwidth(pts);
-    const result = computeKernelMultiPercent(pts, id, bandwidth, "href");
+    const result = computeKernelMultiPercent(pts, id, bandwidth, "href", kernelPercentages);
 
-    areas.push({
-      individual: id,
-      area_95_km2: result.areas["95"] || 0,
-      area_50_km2: result.areas["50"] || 0,
-    });
-
-    const f95 = result.features.find((f: any) => f.properties?.percent === 95);
-    const f50 = result.features.find((f: any) => f.properties?.percent === 50);
-    if (f95) features.push(f95);
-    if (f50) features.push(f50);
+    areas.push({ individual: id, areas: result.areas });
+    for (const f of result.features) features.push(f);
   }
 
   return {
     analysisType: "kernel",
+    kernelPercentages,
     areas,
     geojson: turf.featureCollection(features),
   };
@@ -730,9 +742,10 @@ function buildTrajectoryFeature(pts: GpsPoint[], id: string): GeoJSON.Feature | 
 
 export function computeComprehensive(
   points: GpsPoint[],
-  params?: { bandwidthMethod?: string }
+  params?: { bandwidthMethod?: string; kernelPercentages?: number[] }
 ): ComprehensiveResult {
   const bandwidthMethod = params?.bandwidthMethod || "href";
+  const kernelPercentages = normalizeKernelPercentages(params?.kernelPercentages);
   const groups = groupByIndividual(points);
   const allFeatures: GeoJSON.Feature[] = [];
   const perIndividual: IndividualComprehensiveMetrics[] = [];
@@ -767,7 +780,7 @@ export function computeComprehensive(
     if (trajectory) allFeatures.push(trajectory);
 
     if (bandwidthMethod === "href" || bandwidthMethod === "both") {
-      const kernelHref = computeKernelMultiPercent(pts, id, hHref, "href");
+      const kernelHref = computeKernelMultiPercent(pts, id, hHref, "href", kernelPercentages);
       for (const f of kernelHref.features) allFeatures.push(f);
 
       if (bandwidthMethod === "both") {
@@ -776,7 +789,7 @@ export function computeComprehensive(
         lscvConverged = lscvResult.converged;
 
         const effectiveH = lscvResult.converged ? lscvResult.h : hHref;
-        const kernelLscv = computeKernelMultiPercent(pts, id, effectiveH, "lscv");
+        const kernelLscv = computeKernelMultiPercent(pts, id, effectiveH, "lscv", kernelPercentages);
         kernelLscvAreas = kernelLscv.areas;
         for (const f of kernelLscv.features) allFeatures.push(f);
       }
@@ -811,7 +824,7 @@ export function computeComprehensive(
       lscvConverged = lscvResult.converged;
 
       const effectiveH = lscvResult.converged ? lscvResult.h : hHref;
-      const kernelResult = computeKernelMultiPercent(pts, id, effectiveH, "lscv");
+      const kernelResult = computeKernelMultiPercent(pts, id, effectiveH, "lscv", kernelPercentages);
       for (const f of kernelResult.features) allFeatures.push(f);
 
       const mcpResult = computeMCPMultiPercent(pts, id);
@@ -848,6 +861,7 @@ export function computeComprehensive(
     sampleSize: totalSampledAll,
     totalPoints: totalPointsAll,
     perIndividual,
+    kernelPercentages,
     geojson: turf.featureCollection(allFeatures),
   };
 }
