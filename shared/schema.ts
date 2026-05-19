@@ -400,3 +400,54 @@ export const processedSftpFiles = pgTable("processed_sftp_files", {
 });
 
 export type ProcessedSftpFile = typeof processedSftpFiles.$inferSelect;
+
+export const BEHAVIOR_TYPES = ["feeding", "resting", "incubating", "electrocution", "unknown", "other"] as const;
+export type BehaviorType = (typeof BEHAVIOR_TYPES)[number];
+
+export const BEHAVIOR_LABELS: Record<BehaviorType, string> = {
+  feeding: "Alimentación",
+  resting: "Descanso",
+  incubating: "Incubación",
+  electrocution: "Electrocución",
+  unknown: "Desconocido",
+  other: "Otro",
+};
+
+export const BEHAVIOR_COLORS: Record<BehaviorType, string> = {
+  feeding: "#22c55e",
+  resting: "#3b82f6",
+  incubating: "#f59e0b",
+  electrocution: "#b91c1c",
+  unknown: "#6b7280",
+  other: "#a855f7",
+};
+
+export const accelerometerLabels = pgTable("accelerometer_labels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  deviceId: text("device_id").notNull(),
+  startTimestamp: bigint("start_timestamp", { mode: "number" }).notNull(),
+  endTimestamp: bigint("end_timestamp", { mode: "number" }).notNull(),
+  behaviorType: text("behavior_type").notNull(),
+  confidence: integer("confidence").notNull().default(80),
+  notes: text("notes"),
+  createdBy: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertAccelerometerLabelSchema = createInsertSchema(accelerometerLabels).omit({
+  id: true,
+  createdAt: true,
+  createdBy: true,
+}).extend({
+  behaviorType: z.enum(BEHAVIOR_TYPES),
+  confidence: z.number().int().min(0).max(100),
+  startTimestamp: z.number().int().positive(),
+  endTimestamp: z.number().int().positive(),
+  notes: z.string().max(1000).optional().nullable(),
+}).refine((d) => d.endTimestamp > d.startTimestamp, {
+  message: "endTimestamp debe ser mayor que startTimestamp",
+  path: ["endTimestamp"],
+});
+
+export type InsertAccelerometerLabel = z.infer<typeof insertAccelerometerLabelSchema>;
+export type AccelerometerLabel = typeof accelerometerLabels.$inferSelect;

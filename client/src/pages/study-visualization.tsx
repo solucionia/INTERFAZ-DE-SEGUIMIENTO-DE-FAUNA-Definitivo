@@ -1,9 +1,19 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRoute, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Study, Individual, DetectedEvent, Project } from "@shared/schema";
-import { EVENT_LABELS, EVENT_COLORS } from "@shared/schema";
-import { apiRequest } from "@/lib/queryClient";
+import type { Study, Individual, DetectedEvent, Project, AccelerometerLabel, BehaviorType } from "@shared/schema";
+import { EVENT_LABELS, EVENT_COLORS, BEHAVIOR_TYPES, BEHAVIOR_LABELS, BEHAVIOR_COLORS } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
+import { Tag, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -231,6 +241,13 @@ export default function StudyVisualization() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEvents, setShowEvents] = useState(true);
   const [exporting, setExporting] = useState(false);
+
+  const [labelMode, setLabelMode] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const [pendingLabelRange, setPendingLabelRange] = useState<{ start: number; end: number } | null>(null);
+  const [labelBehavior, setLabelBehavior] = useState<BehaviorType>("feeding");
+  const [labelConfidence, setLabelConfidence] = useState<number>(80);
+  const [labelNotes, setLabelNotes] = useState("");
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -559,6 +576,66 @@ export default function StudyVisualization() {
 
     return downsample(data, MAX_CHART_POINTS);
   }, [accData, selectedAnimals, activeAnimalFilter, zoomStart, zoomEnd]);
+
+  const currentDeviceId = useMemo(() => {
+    return activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
+  }, [activeAnimalFilter, selectedAnimals]);
+
+  const labelsRange = useMemo(() => {
+    if (zoomStart !== null && zoomEnd !== null) {
+      return { start: Math.min(zoomStart, zoomEnd), end: Math.max(zoomStart, zoomEnd) };
+    }
+    if (chartData.length > 0) {
+      return { start: chartData[0].timestamp, end: chartData[chartData.length - 1].timestamp };
+    }
+    if (dateStart && dateEnd) {
+      return { start: new Date(dateStart).getTime(), end: new Date(dateEnd + "T23:59:59").getTime() };
+    }
+    return null;
+  }, [zoomStart, zoomEnd, chartData, dateStart, dateEnd]);
+
+  const { data: accLabels = [] } = useQuery<AccelerometerLabel[]>({
+    queryKey: ["/api/acc-labels", currentDeviceId, labelsRange?.start, labelsRange?.end],
+    queryFn: async () => {
+      if (!currentDeviceId || !labelsRange) return [];
+      const params = new URLSearchParams({
+        deviceId: currentDeviceId,
+        start: String(labelsRange.start),
+        end: String(labelsRange.end),
+      });
+      const res = await fetch(`/api/acc-labels?${params}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!currentDeviceId && !!labelsRange,
+  });
+
+  const createLabelMutation = useMutation({
+    mutationFn: async (payload: { deviceId: string; startTimestamp: number; endTimestamp: number; behaviorType: BehaviorType; confidence: number; notes: string | null }) => {
+      const res = await apiRequest("POST", "/api/acc-labels", payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/acc-labels"] });
+      toast({ title: "Etiqueta guardada" });
+      setPendingLabelRange(null);
+      setLabelNotes("");
+    },
+    onError: (e: any) => {
+      toast({ title: "Error al guardar etiqueta", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const deleteLabelMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/acc-labels/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/acc-labels"] });
+      toast({ title: "Etiqueta eliminada" });
+    },
+  });
 
   const chartEventBands = useMemo(() => {
     if (!showEvents || chartData.length === 0) return [];
@@ -963,6 +1040,24 @@ export default function StudyVisualization() {
                       )}
                     </h2>
                     <div className="flex items-center gap-1">
+                      {currentDeviceId && (
+                        <Button
+                          variant={labelMode ? "default" : "ghost"}
+                          size="sm"
+                          onClick={() => setLabelMode((v) => !v)}
+                          className="h-6 text-xs gap-1"
+                          data-testid="button-toggle-label-mode"
+                          title={labelMode ? "Salir del modo etiquetado" : "Arrastra sobre la grafica para etiquetar un tramo"}
+                        >
+                          <Tag className="w-3 h-3" />
+                          {labelMode ? "Etiquetando" : "Etiquetar"}
+                        </Button>
+                      )}
+                      {accLabels.length > 0 && (
+                        <Button variant="ghost" size="sm" onClick={() => setShowLabels(!showLabels)} className="h-6 text-xs" data-testid="button-toggle-labels">
+                          {showLabels ? "Ocultar etiquetas" : "Mostrar etiquetas"}
+                        </Button>
+                      )}
                       {detectedEvents.length > 0 && (
                         <Button variant="ghost" size="sm" onClick={() => setShowEvents(!showEvents)} className="h-6 text-xs" data-testid="button-toggle-events">
                           {showEvents ? "Ocultar eventos" : "Mostrar eventos"}
@@ -996,7 +1091,16 @@ export default function StudyVisualization() {
                             if (dragging && zoomStart !== null && dragEnd !== null) {
                               const left = Math.min(zoomStart, dragEnd);
                               const right = Math.max(zoomStart, dragEnd);
-                              if (right - left > 100) { setZoomStart(left); setZoomEnd(right); }
+                              if (right - left > 100) {
+                                if (labelMode && currentDeviceId) {
+                                  setPendingLabelRange({ start: left, end: right });
+                                  setZoomStart(null);
+                                  setZoomEnd(null);
+                                } else {
+                                  setZoomStart(left);
+                                  setZoomEnd(right);
+                                }
+                              }
                             }
                             setDragging(false);
                             setDragEnd(null);
@@ -1024,6 +1128,25 @@ export default function StudyVisualization() {
                               strokeOpacity={0}
                             />
                           ))}
+
+                          {showLabels && accLabels.map((lb) => {
+                            const chartMin = chartData[0]?.timestamp ?? 0;
+                            const chartMax = chartData[chartData.length - 1]?.timestamp ?? 0;
+                            if (lb.endTimestamp < chartMin || lb.startTimestamp > chartMax) return null;
+                            const color = BEHAVIOR_COLORS[lb.behaviorType as BehaviorType] || "#888";
+                            return (
+                              <ReferenceArea
+                                key={`lb-${lb.id}`}
+                                x1={Math.max(lb.startTimestamp, chartMin)}
+                                x2={Math.min(lb.endTimestamp, chartMax)}
+                                fill={color}
+                                fillOpacity={0.18}
+                                stroke={color}
+                                strokeOpacity={0.6}
+                                label={{ value: BEHAVIOR_LABELS[lb.behaviorType as BehaviorType] || lb.behaviorType, position: "insideTop", fontSize: 10, fill: color }}
+                              />
+                            );
+                          })}
 
                           {dragging && zoomStart !== null && dragEnd !== null && (
                             <ReferenceArea x1={zoomStart} x2={dragEnd} strokeOpacity={0.3} fill="hsl(var(--primary))" fillOpacity={0.15} />
@@ -1201,6 +1324,108 @@ export default function StudyVisualization() {
           )}
         </div>
       )}
+
+      <Dialog
+        open={pendingLabelRange !== null}
+        onOpenChange={(open) => { if (!open) setPendingLabelRange(null); }}
+      >
+        <DialogContent className="max-w-md" data-testid="dialog-label-acc">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Tag className="w-4 h-4" />
+              Etiquetar tramo
+            </DialogTitle>
+          </DialogHeader>
+          {pendingLabelRange && (
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground">
+                <div>Inicio: {formatTimestamp(pendingLabelRange.start)}</div>
+                <div>Fin: {formatTimestamp(pendingLabelRange.end)}</div>
+                <div>Duracion: {Math.round((pendingLabelRange.end - pendingLabelRange.start) / 1000)} s</div>
+                {currentDeviceId && <div>Dispositivo: {currentDeviceId}</div>}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Comportamiento</Label>
+                <Select value={labelBehavior} onValueChange={(v) => setLabelBehavior(v as BehaviorType)}>
+                  <SelectTrigger data-testid="select-label-behavior">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BEHAVIOR_TYPES.map((b) => (
+                      <SelectItem key={b} value={b}>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block w-3 h-3 rounded-sm" style={{ background: BEHAVIOR_COLORS[b] }} />
+                          {BEHAVIOR_LABELS[b]}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Confianza: {labelConfidence}%</Label>
+                <Slider
+                  value={[labelConfidence]}
+                  onValueChange={(v) => setLabelConfidence(v[0])}
+                  min={0}
+                  max={100}
+                  step={10}
+                  data-testid="slider-label-confidence"
+                />
+                <div className="flex gap-1 flex-wrap">
+                  {[70, 80, 90, 100].map((c) => (
+                    <Badge
+                      key={c}
+                      variant={labelConfidence === c ? "default" : "outline"}
+                      className="cursor-pointer text-xs"
+                      onClick={() => setLabelConfidence(c)}
+                      data-testid={`badge-confidence-${c}`}
+                    >
+                      {c}%
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Notas (opcional)</Label>
+                <Textarea
+                  value={labelNotes}
+                  onChange={(e) => setLabelNotes(e.target.value)}
+                  placeholder="Observaciones..."
+                  rows={3}
+                  data-testid="textarea-label-notes"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingLabelRange(null)} data-testid="button-cancel-label">
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!pendingLabelRange || !currentDeviceId) return;
+                createLabelMutation.mutate({
+                  deviceId: currentDeviceId,
+                  startTimestamp: pendingLabelRange.start,
+                  endTimestamp: pendingLabelRange.end,
+                  behaviorType: labelBehavior,
+                  confidence: labelConfidence,
+                  notes: labelNotes.trim() || null,
+                });
+              }}
+              disabled={createLabelMutation.isPending}
+              data-testid="button-save-label"
+            >
+              {createLabelMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+              Guardar etiqueta
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

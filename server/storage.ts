@@ -19,6 +19,7 @@ import {
   processedSftpFiles, type ProcessedSftpFile,
   appSettings,
   HDOP_QUALITY_THRESHOLD,
+  accelerometerLabels, type AccelerometerLabel, type InsertAccelerometerLabel,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -50,6 +51,12 @@ export interface IStorage {
   createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
   updateDeploymentStatus(id: string, data: { deployOff: string | null }): Promise<Deployment | undefined>;
   repairDeploymentsLocal(studyId: string): Promise<{ total: number; linked: number; repaired: number; unlinked: number }>;
+
+  getAccelerometerLabels(deviceId: string, startTs?: number, endTs?: number): Promise<AccelerometerLabel[]>;
+  createAccelerometerLabel(data: InsertAccelerometerLabel & { createdBy?: string | null }): Promise<AccelerometerLabel>;
+  deleteAccelerometerLabel(id: string): Promise<boolean>;
+  getAccelerometerLabel(id: string): Promise<AccelerometerLabel | undefined>;
+  findStudyIdForDeviceId(deviceId: string): Promise<string | null>;
 
   getAllSpeciesProfiles(): Promise<SpeciesProfile[]>;
   getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined>;
@@ -1308,6 +1315,44 @@ export class DatabaseStorage implements IStorage {
   async countProcessedSftpFiles(): Promise<number> {
     const [r] = await db.select({ n: count() }).from(processedSftpFiles);
     return Number(r?.n ?? 0);
+  }
+
+  async getAccelerometerLabels(deviceId: string, startTs?: number, endTs?: number): Promise<AccelerometerLabel[]> {
+    const conds = [eq(accelerometerLabels.deviceId, deviceId)];
+    if (typeof endTs === "number") conds.push(lte(accelerometerLabels.startTimestamp, endTs));
+    if (typeof startTs === "number") conds.push(gte(accelerometerLabels.endTimestamp, startTs));
+    return db.select().from(accelerometerLabels).where(and(...conds)).orderBy(accelerometerLabels.startTimestamp);
+  }
+
+  async createAccelerometerLabel(data: InsertAccelerometerLabel & { createdBy?: string | null }): Promise<AccelerometerLabel> {
+    const [row] = await db.insert(accelerometerLabels).values({
+      deviceId: data.deviceId,
+      startTimestamp: data.startTimestamp,
+      endTimestamp: data.endTimestamp,
+      behaviorType: data.behaviorType,
+      confidence: data.confidence,
+      notes: data.notes ?? null,
+      createdBy: data.createdBy ?? null,
+    }).returning();
+    return row;
+  }
+
+  async deleteAccelerometerLabel(id: string): Promise<boolean> {
+    const result = await db.delete(accelerometerLabels).where(eq(accelerometerLabels.id, id)).returning({ id: accelerometerLabels.id });
+    return result.length > 0;
+  }
+
+  async getAccelerometerLabel(id: string): Promise<AccelerometerLabel | undefined> {
+    const [row] = await db.select().from(accelerometerLabels).where(eq(accelerometerLabels.id, id)).limit(1);
+    return row;
+  }
+
+  async findStudyIdForDeviceId(deviceId: string): Promise<string | null> {
+    const [row] = await db.select({ studyId: individuals.studyId })
+      .from(individuals)
+      .where(eq(individuals.localIdentifier, deviceId))
+      .limit(1);
+    return row?.studyId ?? null;
   }
 
   async findOrnitelaStudyForDevice(deviceId: string): Promise<string | null> {

@@ -8,7 +8,7 @@ import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study, insertAccelerometerLabelSchema } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
@@ -1172,6 +1172,61 @@ export async function registerRoutes(
   app.get("/api/studies/:id/deployments", requireStudyAccess, async (req, res) => {
     const deployments = await storage.getDeployments(req.params.id);
     return res.json(deployments);
+  });
+
+  async function userHasDeviceAccess(userId: string, role: string, deviceId: string): Promise<boolean> {
+    if (role === "superuser") return true;
+    const studyId = await storage.findStudyIdForDeviceId(deviceId);
+    if (!studyId) return false;
+    const userStudyIds = (await storage.getStudiesForUser(userId)).map((s) => s.id);
+    return userStudyIds.includes(studyId);
+  }
+
+  function parseFiniteNumber(v: unknown): number | undefined {
+    if (v === undefined || v === null || v === "") return undefined;
+    const n = Number(Array.isArray(v) ? v[0] : v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  app.get("/api/acc-labels", requireAuth, async (req, res) => {
+    const deviceId = String(req.query.deviceId || "").trim();
+    if (!deviceId) return res.status(400).json({ message: "deviceId requerido" });
+    const user = req.user!;
+    if (!(await userHasDeviceAccess(user.id, user.role, deviceId))) {
+      return res.status(403).json({ message: "Sin acceso a este dispositivo" });
+    }
+    const startTs = parseFiniteNumber(req.query.start);
+    const endTs = parseFiniteNumber(req.query.end);
+    const rows = await storage.getAccelerometerLabels(deviceId, startTs, endTs);
+    return res.json(rows);
+  });
+
+  app.post("/api/acc-labels", checkRole("superuser", "user"), async (req, res) => {
+    try {
+      const parsed = insertAccelerometerLabelSchema.parse(req.body);
+      const user = req.user!;
+      if (!(await userHasDeviceAccess(user.id, user.role, parsed.deviceId))) {
+        return res.status(403).json({ message: "Sin acceso a este dispositivo" });
+      }
+      const created = await storage.createAccelerometerLabel({ ...parsed, createdBy: user.id });
+      return res.json(created);
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Datos invalidos" });
+    }
+  });
+
+  app.delete("/api/acc-labels/:id", checkRole("superuser", "user"), async (req, res) => {
+    const existing = await storage.getAccelerometerLabel(req.params.id);
+    if (!existing) return res.status(404).json({ message: "Etiqueta no encontrada" });
+    const user = req.user!;
+    if (user.role !== "superuser" && existing.createdBy !== user.id) {
+      if (!(await userHasDeviceAccess(user.id, user.role, existing.deviceId))) {
+        return res.status(403).json({ message: "Sin permiso para eliminar esta etiqueta" });
+      }
+    }
+    const ok = await storage.deleteAccelerometerLabel(req.params.id);
+    if (!ok) return res.status(404).json({ message: "Etiqueta no encontrada" });
+    return res.json({ success: true });
   });
 
   app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
