@@ -216,9 +216,23 @@ async function runEventDetection() {
           }
 
           if (accSamples.length > 0) {
-            const detected = detectEvents(accSamples, gpsSamples, thresholds, study.id, animal.localIdentifier);
+            const detected = detectEvents(accSamples, gpsSamples, thresholds, study.id, animal.localIdentifier, { ornitelaOnly: study.ornitelaEnabled === true });
+
+            const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
+            const sinceCreatedAt = Date.now() - DEDUPE_WINDOW_MS;
 
             for (const event of detected) {
+              // Dedupe 24h para alertas ACC reincidentes (low_activity, electrocution)
+              if (event.eventType === "low_activity" || event.eventType === "electrocution") {
+                const recent = await storage.findRecentUnresolvedDetectedEvent(study.id, event.individualLocalId, event.eventType, sinceCreatedAt);
+                if (recent) continue;
+                // Precedencia: si hay mortality abierta reciente, suprimir low_activity para no duplicar semánticamente
+                if (event.eventType === "low_activity") {
+                  const openMortality = await storage.findRecentUnresolvedDetectedEvent(study.id, event.individualLocalId, "mortality", sinceCreatedAt);
+                  if (openMortality) continue;
+                }
+              }
+
               const saved = await storage.createDetectedEvent(event);
               totalEvents++;
               studyEvents++;

@@ -145,6 +145,20 @@ export const eventThresholdsSchema = z.object({
     windowMinutes: z.number().default(60),
     minSignChanges: z.number().default(3),
   }),
+  lowActivity: z.object({
+    enabled: z.boolean().default(true),
+    criticalCombinedVariance: z.number().default(5),
+    warningCombinedVariance: z.number().default(30),
+    durationHours: z.number().min(2).default(2),
+    minSamples: z.number().default(10),
+  }),
+  electrocution: z.object({
+    enabled: z.boolean().default(true),
+    zStepThreshold: z.number().default(200),
+    sustainedVariance: z.number().default(5),
+    durationMinutes: z.number().min(30).default(30),
+    minSamples: z.number().default(5),
+  }),
 });
 
 export type EventThresholds = z.infer<typeof eventThresholdsSchema>;
@@ -155,6 +169,8 @@ export const DEFAULT_THRESHOLDS: EventThresholds = {
   fight: { enabled: true, zThreshold: -300, minOccurrences: 2, windowMinutes: 120 },
   feeding: { enabled: true, yThreshold: 150, minOccurrences: 2, windowMinutes: 20 },
   incubation: { enabled: true, yRangeLow: -200, yRangeHigh: 200, minStdDev: 30, windowMinutes: 60, minSignChanges: 3 },
+  lowActivity: { enabled: true, criticalCombinedVariance: 5, warningCombinedVariance: 30, durationHours: 2, minSamples: 10 },
+  electrocution: { enabled: true, zStepThreshold: 200, sustainedVariance: 5, durationMinutes: 30, minSamples: 5 },
 };
 
 export function normalizeThresholds(stored: any): EventThresholds {
@@ -172,6 +188,8 @@ export function normalizeThresholds(stored: any): EventThresholds {
         ? { minStdDev: stored.incubation.minVariance }
         : {}),
     },
+    lowActivity: { ...d.lowActivity, ...stored.lowActivity },
+    electrocution: { ...d.electrocution, ...stored.electrocution },
   };
 }
 
@@ -188,7 +206,7 @@ export const insertSpeciesProfileSchema = createInsertSchema(speciesProfiles).om
 export type InsertSpeciesProfile = z.infer<typeof insertSpeciesProfileSchema>;
 export type SpeciesProfile = typeof speciesProfiles.$inferSelect;
 
-export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission", "zone_deviation"] as const;
+export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission", "zone_deviation", "low_activity", "electrocution"] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
 export const EVENT_SEVERITY: Record<EventType, string> = {
@@ -199,6 +217,8 @@ export const EVENT_SEVERITY: Record<EventType, string> = {
   incubation: "info",
   no_transmission: "critical",
   zone_deviation: "warning",
+  low_activity: "warning",
+  electrocution: "critical",
 };
 
 export const EVENT_COLORS: Record<EventType, string> = {
@@ -209,6 +229,8 @@ export const EVENT_COLORS: Record<EventType, string> = {
   incubation: "#3b82f6",
   no_transmission: "#dc2626",
   zone_deviation: "#a855f7",
+  low_activity: "#eab308",
+  electrocution: "#b91c1c",
 };
 
 export const EVENT_LABELS: Record<EventType, string> = {
@@ -219,6 +241,8 @@ export const EVENT_LABELS: Record<EventType, string> = {
   incubation: "Incubación / Vuelo",
   no_transmission: "Sin transmisión",
   zone_deviation: "Desviación de zona",
+  low_activity: "Baja actividad ACC",
+  electrocution: "Posible electrocución",
 };
 
 export const detectedEvents = pgTable("detected_events", {

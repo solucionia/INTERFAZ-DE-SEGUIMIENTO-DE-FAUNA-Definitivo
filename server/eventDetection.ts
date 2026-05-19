@@ -284,15 +284,174 @@ function detectIncubation(
   return events;
 }
 
+function detectLowActivity(
+  samples: AccSample[],
+  gpsPoints: GpsPoint[],
+  thresholds: EventThresholds["lowActivity"],
+  studyId: string,
+  animalId: string
+): InsertDetectedEvent[] {
+  const events: InsertDetectedEvent[] = [];
+  const minSamples = Math.max(2, thresholds.minSamples ?? 10);
+  if (samples.length < minSamples) return events;
+
+  // Mínimo 2 horas sostenidas (forzado por el schema: durationHours.min(2))
+  const durationHours = Math.max(2, thresholds.durationHours);
+  const durationMs = durationHours * 3600 * 1000;
+  const critical = thresholds.criticalCombinedVariance;
+  const warning = thresholds.warningCombinedVariance;
+
+  let windowStart = 0;
+  for (let windowEnd = 0; windowEnd < samples.length; windowEnd++) {
+    while (samples[windowEnd].timestamp - samples[windowStart].timestamp > durationMs) {
+      windowStart++;
+    }
+    const windowDuration = samples[windowEnd].timestamp - samples[windowStart].timestamp;
+    if (windowDuration < durationMs * 0.9) continue;
+
+    const windowSamples = samples.slice(windowStart, windowEnd + 1);
+    if (windowSamples.length < minSamples) continue;
+
+    const xVar = variance(windowSamples.map((s) => s.x));
+    const yVar = variance(windowSamples.map((s) => s.y));
+    const zVar = variance(windowSamples.map((s) => s.z));
+    const combined = xVar + yVar + zVar;
+
+    let severity: string | null = null;
+    let descLabel = "";
+    if (combined < critical) {
+      severity = "critical";
+      descLabel = "actividad prácticamente nula (posible mortalidad)";
+    } else if (combined < warning) {
+      severity = "warning";
+      descLabel = "actividad muy reducida (posible animal herido)";
+    }
+
+    if (severity) {
+      const gp = findNearestGps(gpsPoints, samples[windowEnd].timestamp);
+      events.push({
+        studyId,
+        individualLocalId: animalId,
+        eventType: "low_activity" as EventType,
+        severity,
+        timestampStart: samples[windowStart].timestamp,
+        timestampEnd: samples[windowEnd].timestamp,
+        lat: gp?.lat ?? null,
+        lng: gp?.lng ?? null,
+        accValues: windowSamples.slice(0, 10).map((s) => ({ x: s.x, y: s.y, z: s.z })),
+        description: `Baja actividad ACC sostenida ${durationHours}h: ${descLabel}. Varianza combinada=${combined.toFixed(1)} (X:${xVar.toFixed(1)}, Y:${yVar.toFixed(1)}, Z:${zVar.toFixed(1)})`,
+        metadata: {
+          combined_variance: combined,
+          x_variance: xVar,
+          y_variance: yVar,
+          z_variance: zVar,
+          duration_hours: durationHours,
+          samples: windowSamples.length,
+        } as any,
+      });
+      windowStart = windowEnd + 1;
+    }
+  }
+  return events;
+}
+
+function detectElectrocution(
+  samples: AccSample[],
+  gpsPoints: GpsPoint[],
+  thresholds: EventThresholds["electrocution"],
+  studyId: string,
+  animalId: string
+): InsertDetectedEvent[] {
+  const events: InsertDetectedEvent[] = [];
+  const minSamples = Math.max(3, thresholds.minSamples ?? 5);
+  if (samples.length < minSamples + 1) return events;
+
+  // Mínimo 30 minutos sin variación tras un salto abrupto (forzado por schema)
+  const durationMinutes = Math.max(30, thresholds.durationMinutes);
+  const durationMs = durationMinutes * 60 * 1000;
+  const stepThreshold = thresholds.zStepThreshold;
+  const sustainedVar = thresholds.sustainedVariance;
+
+  // Para verificar que el cambio es "permanente", comparamos la media del eje Z
+  // antes y después del salto. Exigimos también estabilidad en X/Y para descartar
+  // golpes, aterrizajes o vuelo estacionario que también podrían sostener Z.
+  const preWindowSamples = Math.max(3, minSamples);
+
+  for (let i = 1; i < samples.length; i++) {
+    const dz = samples[i].z - samples[i - 1].z;
+    if (Math.abs(dz) < stepThreshold) continue;
+
+    // Necesitamos contexto previo para validar el "salto de nivel"
+    if (i < preWindowSamples) continue;
+    const preSlice = samples.slice(Math.max(0, i - preWindowSamples), i);
+    const preMeanZ = preSlice.reduce((s, v) => s + v.z, 0) / preSlice.length;
+
+    // A partir de i, recoger ventana >= durationMs
+    const windowStartTs = samples[i].timestamp;
+    const windowEndTarget = windowStartTs + durationMs;
+    let j = i;
+    while (j < samples.length && samples[j].timestamp <= windowEndTarget) j++;
+    const window = samples.slice(i, j);
+    const windowSpan = window.length > 0 ? window[window.length - 1].timestamp - window[0].timestamp : 0;
+    if (window.length < minSamples || windowSpan < durationMs * 0.9) continue;
+
+    const zVals = window.map((s) => s.z);
+    const zVar = variance(zVals);
+    if (zVar >= sustainedVar) continue;
+
+    // Confirmar nivel permanente: la media post tiene que estar a >= stepThreshold del nivel previo
+    const postMeanZ = zVals.reduce((s, v) => s + v, 0) / zVals.length;
+    if (Math.abs(postMeanZ - preMeanZ) < stepThreshold) continue;
+
+    // Estabilidad multieje: X e Y también deben permanecer prácticamente sin variación.
+    // Usamos un umbral relajado (2x sustainedVar) ya que pueden tener offset distinto.
+    const xVar = variance(window.map((s) => s.x));
+    const yVar = variance(window.map((s) => s.y));
+    if (xVar >= sustainedVar * 2 || yVar >= sustainedVar * 2) continue;
+
+    const gp = findNearestGps(gpsPoints, windowStartTs);
+    events.push({
+      studyId,
+      individualLocalId: animalId,
+      eventType: "electrocution" as EventType,
+      severity: EVENT_SEVERITY.electrocution,
+      timestampStart: windowStartTs,
+      timestampEnd: window[window.length - 1].timestamp,
+      lat: gp?.lat ?? null,
+      lng: gp?.lng ?? null,
+      accValues: window.slice(0, 10).map((s) => ({ x: s.x, y: s.y, z: s.z })),
+      description: `Posible electrocución: cambio permanente en eje Z (Δ=${dz.toFixed(1)}, media previa ${preMeanZ.toFixed(1)} → ${postMeanZ.toFixed(1)}) y ${durationMinutes} min sin variación (varZ=${zVar.toFixed(2)}, varX=${xVar.toFixed(2)}, varY=${yVar.toFixed(2)})`,
+      metadata: {
+        z_step: dz,
+        z_pre_mean: preMeanZ,
+        z_post_mean: postMeanZ,
+        z_variance_after: zVar,
+        x_variance_after: xVar,
+        y_variance_after: yVar,
+        duration_minutes: durationMinutes,
+        samples: window.length,
+      } as any,
+    });
+    // Saltar al final de la ventana detectada para no reportar duplicados solapados
+    i = i + window.length - 1;
+  }
+  return events;
+}
+
 export function detectEvents(
   accSamples: AccSample[],
   gpsSamples: GpsPoint[],
   thresholds: EventThresholds,
   studyId: string,
-  animalId: string
+  animalId: string,
+  options: { ornitelaOnly?: boolean } = {}
 ): InsertDetectedEvent[] {
+  // Dispositivos sin ACC: salida silenciosa sin alertas falsas
+  if (!accSamples || accSamples.length === 0) return [];
+
   const sorted = [...accSamples].sort((a, b) => a.timestamp - b.timestamp);
   const gpsSorted = [...gpsSamples].sort((a, b) => a.timestamp - b.timestamp);
+  const ornitelaOnly = options.ornitelaOnly === true;
 
   const allEvents: InsertDetectedEvent[] = [
     ...(thresholds.mortality.enabled !== false ? detectMortality(sorted, gpsSorted, thresholds.mortality, studyId, animalId) : []),
@@ -300,6 +459,9 @@ export function detectEvents(
     ...(thresholds.fight.enabled !== false ? detectFight(sorted, gpsSorted, thresholds.fight, studyId, animalId) : []),
     ...(thresholds.feeding.enabled !== false ? detectFeeding(sorted, gpsSorted, thresholds.feeding, studyId, animalId) : []),
     ...(thresholds.incubation.enabled !== false ? detectIncubation(sorted, gpsSorted, thresholds.incubation, studyId, animalId) : []),
+    // Alertas exclusivas de Ornitela
+    ...(ornitelaOnly && thresholds.lowActivity?.enabled !== false ? detectLowActivity(sorted, gpsSorted, thresholds.lowActivity, studyId, animalId) : []),
+    ...(ornitelaOnly && thresholds.electrocution?.enabled !== false ? detectElectrocution(sorted, gpsSorted, thresholds.electrocution, studyId, animalId) : []),
   ];
 
   return allEvents.sort((a, b) => a.timestampStart - b.timestampStart);
