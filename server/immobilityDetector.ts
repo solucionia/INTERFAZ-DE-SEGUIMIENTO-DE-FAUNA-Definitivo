@@ -1,7 +1,12 @@
 import { storage } from "./storage";
 import type { CachedGpsEvent } from "@shared/schema";
+import { HDOP_QUALITY_THRESHOLD } from "@shared/schema";
 import { log } from "./index";
 import * as turf from "@turf/turf";
+
+function filterHighQualityGps<T extends { hdop?: number | null }>(events: T[]): T[] {
+  return events.filter((e) => e.hdop == null || e.hdop <= HDOP_QUALITY_THRESHOLD);
+}
 
 export interface ImmobilityConfig {
   hoursToAnalyze: number;
@@ -424,7 +429,9 @@ export async function analyzeImmobility(
 
   const allGpsEvents: CachedGpsEvent[] = [];
   for (const animal of filteredIndividuals) {
-    const events = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, startTime, now);
+    const rawEvents = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, startTime, now);
+    // Excluir GPS de baja calidad (HDOP > 5) del análisis de inmovilidad/mortalidad.
+    const events = filterHighQualityGps(rawEvents);
     allGpsEvents.push(...events);
   }
 
@@ -629,7 +636,9 @@ export async function analyzeImmobility(
 
     for (const animal of filteredIndividuals) {
       try {
-        const histPts = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, zoneStart, now);
+        const histPtsRaw = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, zoneStart, now);
+        // Excluir GPS de baja calidad (HDOP > 5) del cálculo del radio dinámico y "última posición".
+        const histPts = filterHighQualityGps(histPtsRaw);
         if (histPts.length < 2) continue;
 
         const minTs = histPts.reduce((m, p) => Math.min(m, p.timestamp), Infinity);

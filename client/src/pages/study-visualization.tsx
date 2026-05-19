@@ -107,8 +107,11 @@ interface GpsPoint {
   lng: number;
   speed: number | null;
   heading: number | null;
+  hdop: number | null;
   animal: string;
 }
+
+const HDOP_QUALITY_THRESHOLD = 5;
 
 interface AccPoint {
   timestamp: number;
@@ -127,6 +130,7 @@ function parseGpsEvents(animalId: string, rows: Record<string, string>[]): GpsPo
       lng: parseFloat(r.location_long),
       speed: r.ground_speed ? parseFloat(r.ground_speed) : null,
       heading: r.heading ? parseFloat(r.heading) : null,
+      hdop: r.hdop ? parseFloat(r.hdop) : null,
       animal: animalId,
     }))
     .filter((p) => !isNaN(p.lat) && !isNaN(p.lng) && !isNaN(p.timestamp))
@@ -485,6 +489,7 @@ export default function StudyVisualization() {
           lng: event.lng,
           speed: null,
           heading: null,
+          hdop: null,
           animal: event.individualLocalId,
         });
       } else {
@@ -1023,9 +1028,13 @@ export default function StudyVisualization() {
                         return (
                           <span key={animalId}>
                             <Polyline positions={positions} pathOptions={{ color, weight: 2.5, opacity: 0.8 }} />
-                            {markersToShow.map((p, idx) => (
+                            {markersToShow.map((p, idx) => {
+                              const lowQuality = p.hdop != null && p.hdop > HDOP_QUALITY_THRESHOLD;
+                              return (
                               <CircleMarker key={`${animalId}-${idx}`} center={[p.lat, p.lng]} radius={3}
-                                pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 1 }}
+                                pathOptions={lowQuality
+                                  ? { color: "#9ca3af", fillColor: "#9ca3af", fillOpacity: 0.4, weight: 1, dashArray: "2,2" }
+                                  : { color, fillColor: color, fillOpacity: 0.7, weight: 1 }}
                                 eventHandlers={{ click: () => handleMapPointClick(p) }}>
                                 <Popup>
                                   <div className="text-xs space-y-0.5">
@@ -1033,11 +1042,17 @@ export default function StudyVisualization() {
                                     <div>{format(new Date(p.timestamp), "dd/MM/yyyy HH:mm:ss", { locale: es })}</div>
                                     <div>Lat: {p.lat.toFixed(6)}, Lng: {p.lng.toFixed(6)}</div>
                                     {p.speed !== null && <div>Velocidad: {p.speed.toFixed(2)} m/s</div>}
+                                    {p.hdop !== null && (
+                                      <div className={lowQuality ? "text-amber-600 font-semibold" : ""}>
+                                        HDOP: {p.hdop.toFixed(1)}{lowQuality && " (baja calidad)"}
+                                      </div>
+                                    )}
                                     <a href={googleMapsLink(p.lat, p.lng)} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Ver en Google Maps</a>
                                   </div>
                                 </Popup>
                               </CircleMarker>
-                            ))}
+                              );
+                            })}
                           </span>
                         );
                       })}

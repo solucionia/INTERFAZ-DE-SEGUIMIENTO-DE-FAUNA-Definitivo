@@ -109,6 +109,7 @@ export async function parseOrnitelaCsv(
   const accXCol = findCol(v1AccX, "acceleration_x", "accel_x", "x_acceleration");
   const accYCol = findCol(v1AccY, "acceleration_y", "accel_y", "y_acceleration");
   const accZCol = findCol(v1AccZ, "acceleration_z", "accel_z", "z_acceleration");
+  const hdopCol = findCol("hdop", "h_dop", "gps_hdop", "horizontal_dop");
 
   if (deviceIdCol === -1) {
     throw new Error("Formato Ornitela: columna obligatoria 'device_id' (o equivalente) no encontrada");
@@ -195,6 +196,7 @@ export async function parseOrnitelaCsv(
             groundSpeed: speedMs,
             heading: dirCol >= 0 ? safeFloat(vals[dirCol]) : null,
             heightAboveEllipsoid: altCol >= 0 ? safeFloat(vals[altCol]) : null,
+            hdop: hdopCol >= 0 ? safeFloat(vals[hdopCol]) : null,
           });
         }
       }

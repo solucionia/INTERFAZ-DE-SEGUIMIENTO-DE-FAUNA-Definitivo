@@ -18,6 +18,7 @@ import {
   type Project, type InsertProject,
   processedSftpFiles, type ProcessedSftpFile,
   appSettings,
+  HDOP_QUALITY_THRESHOLD,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -62,7 +63,7 @@ export interface IStorage {
   findRecentUnresolvedDetectedEvent(studyId: string, individualLocalId: string, eventType: string, sinceCreatedAtMs: number): Promise<DetectedEvent | undefined>;
   markDetectedEventsResolved(studyId: string, individualLocalId: string, eventTypes: string[]): Promise<number>;
   insertDetectedEventNoDedupe(event: InsertDetectedEvent): Promise<DetectedEvent>;
-  getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number } | undefined>;
+  getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined>;
 
   getAlertLog(eventId: string, email: string): Promise<boolean>;
   createAlertLog(eventId: string, email: string): Promise<void>;
@@ -585,16 +586,20 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number } | undefined> {
+  async getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined> {
+    // Excluir GPS de baja calidad (HDOP > 5) para que no se consideren "última posición válida".
+    // hdop=NULL (p. ej. Movebank) se acepta porque no hay información de calidad.
     const [row] = await db.select({
       timestamp: cachedGpsEvents.timestamp,
       latitude: cachedGpsEvents.latitude,
       longitude: cachedGpsEvents.longitude,
+      hdop: cachedGpsEvents.hdop,
     })
       .from(cachedGpsEvents)
       .where(and(
         eq(cachedGpsEvents.studyId, studyId),
         eq(cachedGpsEvents.individualLocalIdentifier, individualLocalId),
+        sql`(${cachedGpsEvents.hdop} IS NULL OR ${cachedGpsEvents.hdop} <= ${HDOP_QUALITY_THRESHOLD})`,
       ))
       .orderBy(desc(cachedGpsEvents.timestamp))
       .limit(1);

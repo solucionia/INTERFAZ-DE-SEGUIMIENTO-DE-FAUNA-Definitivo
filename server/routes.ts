@@ -1076,7 +1076,7 @@ export async function registerRoutes(
       ]));
 
       const { rows: gpsRows } = await pool.query(
-        `SELECT individual_local_identifier, timestamp, latitude, longitude, ground_speed, heading, height_above_ellipsoid
+        `SELECT individual_local_identifier, timestamp, latitude, longitude, ground_speed, heading, height_above_ellipsoid, hdop
          FROM (
            SELECT *, ROW_NUMBER() OVER (PARTITION BY individual_local_identifier ORDER BY timestamp DESC) AS rn
            FROM cached_gps_events
@@ -1098,6 +1098,7 @@ export async function registerRoutes(
           groundSpeed: r.ground_speed != null ? parseFloat(r.ground_speed) : null,
           heading: r.heading != null ? parseFloat(r.heading) : null,
           altitude: r.height_above_ellipsoid != null ? parseFloat(r.height_above_ellipsoid) : null,
+          hdop: r.hdop != null ? parseFloat(r.hdop) : null,
         });
       }
 
@@ -1255,6 +1256,7 @@ export async function registerRoutes(
         ground_speed: c.groundSpeed != null ? String(c.groundSpeed) : "",
         heading: c.heading != null ? String(c.heading) : "",
         height_above_ellipsoid: c.heightAboveEllipsoid != null ? String(c.heightAboveEllipsoid) : "",
+        hdop: c.hdop != null ? String(c.hdop) : "",
         individual_local_identifier: id,
       }));
 
@@ -1279,6 +1281,7 @@ export async function registerRoutes(
             groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
             heading: r.heading ? parseFloat(r.heading) : null,
             heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+            hdop: null,
           }))
           .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
 
@@ -2051,6 +2054,7 @@ export async function registerRoutes(
                 groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
                 heading: r.heading ? parseFloat(r.heading) : null,
                 heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+                hdop: null,
               }))
               .filter(p => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
             if (toCache.length > 0) await storage.insertCachedGpsEvents(toCache);
@@ -2666,6 +2670,7 @@ export async function registerRoutes(
                     groundSpeed: ev.ground_speed ? parseFloat(ev.ground_speed) : null,
                     heading: ev.heading ? parseFloat(ev.heading) : null,
                     heightAboveEllipsoid: ev.height_above_ellipsoid ? parseFloat(ev.height_above_ellipsoid) : null,
+                    hdop: null,
                   });
                 }
               }

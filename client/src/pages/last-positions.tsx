@@ -53,7 +53,10 @@ interface AnimalPoint {
   groundSpeed: number | null;
   heading: number | null;
   altitude: number | null;
+  hdop: number | null;
 }
+
+const HDOP_QUALITY_THRESHOLD = 5;
 
 interface AnimalData {
   individual: string;
@@ -390,7 +393,11 @@ export default function LastPositions() {
                   <CircleMarker
                     center={[lastPoint.latitude, lastPoint.longitude]}
                     radius={8}
-                    pathOptions={{ color, fillColor: color, fillOpacity: 0.9, weight: 2 }}
+                    pathOptions={
+                      lastPoint.hdop != null && lastPoint.hdop > HDOP_QUALITY_THRESHOLD
+                        ? { color: "#9ca3af", fillColor: "#9ca3af", fillOpacity: 0.5, weight: 2, dashArray: "3,3" }
+                        : { color, fillColor: color, fillOpacity: 0.9, weight: 2 }
+                    }
                     ref={(ref) => {
                       if (ref) markerRefs.current[animal.individual] = ref;
                     }}
@@ -409,6 +416,15 @@ export default function LastPositions() {
                           <p><span className="font-medium">Altitud:</span> {lastPoint.altitude.toFixed(0)} m</p>
                         )}
                         <p><span className="font-medium">Coordenadas:</span> {lastPoint.latitude.toFixed(5)}, {lastPoint.longitude.toFixed(5)}</p>
+                        {lastPoint.hdop != null && (
+                          <p>
+                            <span className="font-medium">HDOP:</span>{" "}
+                            <span className={lastPoint.hdop > HDOP_QUALITY_THRESHOLD ? "text-amber-600 dark:text-amber-400 font-semibold" : ""}>
+                              {lastPoint.hdop.toFixed(1)}
+                              {lastPoint.hdop > HDOP_QUALITY_THRESHOLD && " (baja calidad)"}
+                            </span>
+                          </p>
+                        )}
                         <div className="flex flex-col gap-1 mt-2">
                           <a
                             href={googleMapsLink(lastPoint.latitude, lastPoint.longitude)}

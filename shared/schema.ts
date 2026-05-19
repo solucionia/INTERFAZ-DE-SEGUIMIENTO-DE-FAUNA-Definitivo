@@ -356,9 +356,12 @@ export const cachedGpsEvents = pgTable("cached_gps_events", {
   groundSpeed: doublePrecision("ground_speed"),
   heading: doublePrecision("heading"),
   heightAboveEllipsoid: doublePrecision("height_above_ellipsoid"),
+  hdop: doublePrecision("hdop"),
 }, (table) => [
   uniqueIndex("cached_gps_unique").on(table.studyId, table.individualLocalIdentifier, table.timestamp),
 ]);
+
+export const HDOP_QUALITY_THRESHOLD = 5;
 
 export type CachedGpsEvent = typeof cachedGpsEvents.$inferSelect;
 

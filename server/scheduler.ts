@@ -153,6 +153,7 @@ async function runEventDetection() {
               groundSpeed: r.ground_speed ? parseFloat(r.ground_speed) : null,
               heading: r.heading ? parseFloat(r.heading) : null,
               heightAboveEllipsoid: r.height_above_ellipsoid ? parseFloat(r.height_above_ellipsoid) : null,
+              hdop: null,
             }))
             .filter((p) => !isNaN(p.timestamp) && !isNaN(p.latitude) && !isNaN(p.longitude));
           if (gpsToCache.length > 0) {
