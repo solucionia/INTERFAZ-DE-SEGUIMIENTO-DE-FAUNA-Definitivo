@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision, uniqueIndex, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, integer, bigint, timestamp, jsonb, doublePrecision, uniqueIndex, index, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -451,3 +451,42 @@ export const insertAccelerometerLabelSchema = createInsertSchema(accelerometerLa
 
 export type InsertAccelerometerLabel = z.infer<typeof insertAccelerometerLabelSchema>;
 export type AccelerometerLabel = typeof accelerometerLabels.$inferSelect;
+
+export const deviceDeployments = pgTable("device_deployments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  individualId: varchar("individual_id").notNull().references(() => individuals.id, { onDelete: "cascade" }),
+  deviceLocalIdentifier: text("device_local_identifier").notNull(),
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
+}, (table) => [
+  index("device_deployments_individual_idx").on(table.individualId),
+  index("device_deployments_device_idx").on(table.deviceLocalIdentifier),
+]);
+
+export const insertDeviceDeploymentSchema = createInsertSchema(deviceDeployments).omit({
+  id: true,
+  createdAt: true,
+  createdBy: true,
+}).extend({
+  deviceLocalIdentifier: z.string().min(1).max(200),
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export type InsertDeviceDeployment = z.infer<typeof insertDeviceDeploymentSchema>;
+export type DeviceDeployment = typeof deviceDeployments.$inferSelect;
+
+export const deviceTransferSchema = z.object({
+  fromIndividualId: z.string().min(1),
+  toIndividualId: z.string().min(1),
+  deviceLocalIdentifier: z.string().min(1).max(200),
+  transferDate: z.string().min(1),
+  notes: z.string().max(1000).optional().nullable(),
+}).refine((d) => d.fromIndividualId !== d.toIndividualId, {
+  message: "El animal de origen y destino deben ser distintos",
+  path: ["toIndividualId"],
+});
+
+export type DeviceTransferInput = z.infer<typeof deviceTransferSchema>;

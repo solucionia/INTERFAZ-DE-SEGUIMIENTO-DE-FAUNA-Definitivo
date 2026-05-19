@@ -20,6 +20,7 @@ import {
   appSettings,
   HDOP_QUALITY_THRESHOLD,
   accelerometerLabels, type AccelerometerLabel, type InsertAccelerometerLabel,
+  deviceDeployments, type DeviceDeployment, type InsertDeviceDeployment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -57,6 +58,19 @@ export interface IStorage {
   deleteAccelerometerLabel(id: string): Promise<boolean>;
   getAccelerometerLabel(id: string): Promise<AccelerometerLabel | undefined>;
   findStudyIdForDeviceId(deviceId: string): Promise<string | null>;
+
+  getDeviceDeploymentsForIndividual(individualId: string): Promise<DeviceDeployment[]>;
+  getDeviceDeploymentsForDevice(deviceLocalIdentifier: string): Promise<DeviceDeployment[]>;
+  createDeviceDeployment(data: InsertDeviceDeployment & { createdBy?: string | null }): Promise<DeviceDeployment>;
+  closeOpenDeviceDeployments(individualId: string, deviceLocalIdentifier: string, endDate: Date): Promise<number>;
+  transferDevice(input: {
+    fromIndividualId: string;
+    toIndividualId: string;
+    deviceLocalIdentifier: string;
+    transferDate: Date;
+    notes?: string | null;
+    createdBy?: string | null;
+  }): Promise<{ closed: DeviceDeployment | null; opened: DeviceDeployment }>;
 
   getAllSpeciesProfiles(): Promise<SpeciesProfile[]>;
   getSpeciesProfile(id: string): Promise<SpeciesProfile | undefined>;
@@ -1345,6 +1359,118 @@ export class DatabaseStorage implements IStorage {
   async getAccelerometerLabel(id: string): Promise<AccelerometerLabel | undefined> {
     const [row] = await db.select().from(accelerometerLabels).where(eq(accelerometerLabels.id, id)).limit(1);
     return row;
+  }
+
+  async getDeviceDeploymentsForIndividual(individualId: string): Promise<DeviceDeployment[]> {
+    return db.select().from(deviceDeployments)
+      .where(eq(deviceDeployments.individualId, individualId))
+      .orderBy(desc(deviceDeployments.startDate));
+  }
+
+  async getDeviceDeploymentsForDevice(deviceLocalIdentifier: string): Promise<DeviceDeployment[]> {
+    return db.select().from(deviceDeployments)
+      .where(eq(deviceDeployments.deviceLocalIdentifier, deviceLocalIdentifier))
+      .orderBy(desc(deviceDeployments.startDate));
+  }
+
+  async createDeviceDeployment(data: InsertDeviceDeployment & { createdBy?: string | null }): Promise<DeviceDeployment> {
+    const [row] = await db.insert(deviceDeployments).values({
+      individualId: data.individualId,
+      deviceLocalIdentifier: data.deviceLocalIdentifier,
+      startDate: data.startDate ?? null,
+      endDate: data.endDate ?? null,
+      notes: data.notes ?? null,
+      createdBy: data.createdBy ?? null,
+    }).returning();
+    return row;
+  }
+
+  async closeOpenDeviceDeployments(individualId: string, deviceLocalIdentifier: string, endDate: Date): Promise<number> {
+    const result = await db.update(deviceDeployments)
+      .set({ endDate })
+      .where(and(
+        eq(deviceDeployments.individualId, individualId),
+        eq(deviceDeployments.deviceLocalIdentifier, deviceLocalIdentifier),
+        sql`${deviceDeployments.endDate} IS NULL`,
+      ))
+      .returning({ id: deviceDeployments.id });
+    return result.length;
+  }
+
+  async transferDevice(input: {
+    fromIndividualId: string;
+    toIndividualId: string;
+    deviceLocalIdentifier: string;
+    transferDate: Date;
+    notes?: string | null;
+    createdBy?: string | null;
+  }): Promise<{ closed: DeviceDeployment | null; opened: DeviceDeployment }> {
+    return await db.transaction(async (tx) => {
+      const ids = [input.fromIndividualId, input.toIndividualId].sort();
+      const locked = await tx.select().from(individuals)
+        .where(inArray(individuals.id, ids))
+        .for("update");
+      const fromInd = locked.find((r) => r.id === input.fromIndividualId);
+      const toInd = locked.find((r) => r.id === input.toIndividualId);
+      if (!fromInd) throw new Error("Animal de origen no encontrado");
+      if (!toInd) throw new Error("Animal de destino no encontrado");
+      if (fromInd.studyId !== toInd.studyId) throw new Error("Ambos animales deben pertenecer al mismo estudio");
+      if (fromInd.localIdentifier !== input.deviceLocalIdentifier) {
+        throw new Error("El animal de origen no tiene asignado ese dispositivo");
+      }
+      if (toInd.localIdentifier !== null && toInd.localIdentifier !== undefined) {
+        throw new Error(`El animal de destino ya tiene asignado el dispositivo ${toInd.localIdentifier}`);
+      }
+
+      const openForDevice = await tx.select().from(deviceDeployments)
+        .where(and(
+          eq(deviceDeployments.deviceLocalIdentifier, input.deviceLocalIdentifier),
+          sql`${deviceDeployments.endDate} IS NULL`,
+        ))
+        .for("update");
+
+      const openFrom = openForDevice.find((d) => d.individualId === input.fromIndividualId) || null;
+      const otherOpen = openForDevice.filter((d) => d.individualId !== input.fromIndividualId);
+      if (otherOpen.length > 0) {
+        throw new Error("Existe ya un deployment abierto para este dispositivo en otro animal");
+      }
+      if (openFrom && openFrom.startDate && openFrom.startDate > input.transferDate) {
+        throw new Error("La fecha de transferencia es anterior al inicio del deployment actual");
+      }
+
+      let closed: DeviceDeployment | null = null;
+      if (openFrom) {
+        const [updated] = await tx.update(deviceDeployments)
+          .set({ endDate: input.transferDate })
+          .where(eq(deviceDeployments.id, openFrom.id))
+          .returning();
+        closed = updated;
+      } else {
+        const [created] = await tx.insert(deviceDeployments).values({
+          individualId: input.fromIndividualId,
+          deviceLocalIdentifier: input.deviceLocalIdentifier,
+          startDate: null,
+          endDate: input.transferDate,
+          notes: input.notes ?? null,
+          createdBy: input.createdBy ?? null,
+        }).returning();
+        closed = created;
+      }
+
+      const [opened] = await tx.insert(deviceDeployments).values({
+        individualId: input.toIndividualId,
+        deviceLocalIdentifier: input.deviceLocalIdentifier,
+        startDate: input.transferDate,
+        endDate: null,
+        notes: input.notes ?? null,
+        createdBy: input.createdBy ?? null,
+      }).returning();
+
+      await tx.update(individuals).set({ localIdentifier: null }).where(eq(individuals.id, input.fromIndividualId));
+      await tx.update(individuals).set({ localIdentifier: input.deviceLocalIdentifier }).where(eq(individuals.id, input.toIndividualId));
+
+      return { closed, opened };
+    });
   }
 
   async findStudyIdForDeviceId(deviceId: string): Promise<string | null> {

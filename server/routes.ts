@@ -8,7 +8,7 @@ import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study, insertAccelerometerLabelSchema } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study, insertAccelerometerLabelSchema, deviceTransferSchema } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
@@ -1212,6 +1212,41 @@ export async function registerRoutes(
       return res.json(created);
     } catch (e: any) {
       return res.status(400).json({ message: e?.message || "Datos invalidos" });
+    }
+  });
+
+  app.get("/api/individuals/:id/device-deployments", requireAuth, async (req, res) => {
+    const ind = await storage.getIndividualById(req.params.id);
+    if (!ind) return res.status(404).json({ message: "Animal no encontrado" });
+    const user = req.user!;
+    if (user.role !== "superuser") {
+      const userStudyIds = (await storage.getStudiesForUser(user.id)).map((s) => s.id);
+      if (!userStudyIds.includes(ind.studyId)) {
+        return res.status(403).json({ message: "Sin acceso a este animal" });
+      }
+    }
+    const rows = await storage.getDeviceDeploymentsForIndividual(req.params.id);
+    return res.json(rows);
+  });
+
+  app.post("/api/device-transfers", checkRole("superuser"), async (req, res) => {
+    try {
+      const parsed = deviceTransferSchema.parse(req.body);
+      const transferDate = new Date(parsed.transferDate);
+      if (Number.isNaN(transferDate.getTime())) {
+        return res.status(400).json({ message: "Fecha de transferencia inválida" });
+      }
+      const result = await storage.transferDevice({
+        fromIndividualId: parsed.fromIndividualId,
+        toIndividualId: parsed.toIndividualId,
+        deviceLocalIdentifier: parsed.deviceLocalIdentifier,
+        transferDate,
+        notes: parsed.notes ?? null,
+        createdBy: req.user!.id,
+      });
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Datos inválidos" });
     }
   });
 

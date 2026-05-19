@@ -20,7 +20,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -51,6 +52,11 @@ export default function StudyDetail() {
   const [searchQuery, setSearchQuery] = useState("");
   const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [editingIndividual, setEditingIndividual] = useState<Individual | null>(null);
+  const [transferringIndividual, setTransferringIndividual] = useState<Individual | null>(null);
+  const [transferToId, setTransferToId] = useState<string>("");
+  const [transferDate, setTransferDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
+  const [transferNotes, setTransferNotes] = useState<string>("");
+  const [transferring, setTransferring] = useState(false);
   const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "", projectId: "" as string, historyNumber: "" });
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
@@ -1012,14 +1018,32 @@ export default function StudyDetail() {
                         </TableCell>
                         {canEditIndividuals && (
                           <TableCell>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => openEditDialog(ind)}
-                              data-testid={`button-edit-individual-${ind.movebankId}`}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => openEditDialog(ind)}
+                                data-testid={`button-edit-individual-${ind.movebankId}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                              {isSuperuser && ind.localIdentifier && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Transferir dispositivo a otro animal"
+                                  onClick={() => {
+                                    setTransferringIndividual(ind);
+                                    setTransferToId("");
+                                    setTransferDate(new Date().toISOString().slice(0, 16));
+                                    setTransferNotes("");
+                                  }}
+                                  data-testid={`button-transfer-device-${ind.movebankId}`}
+                                >
+                                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>
@@ -1171,6 +1195,112 @@ export default function StudyDetail() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={!!transferringIndividual}
+        onOpenChange={(open) => { if (!open) setTransferringIndividual(null); }}
+      >
+        <DialogContent data-testid="dialog-transfer-device">
+          <DialogHeader>
+            <DialogTitle>Transferir dispositivo</DialogTitle>
+          </DialogHeader>
+          {transferringIndividual && (
+            <div className="space-y-4">
+              <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                <div>
+                  <span className="text-muted-foreground">Dispositivo:</span>{" "}
+                  <span className="font-mono font-medium">{transferringIndividual.localIdentifier}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Animal origen:</span>{" "}
+                  <span className="font-medium">
+                    {transferringIndividual.nickName || transferringIndividual.ornitelaName || `ID-${transferringIndividual.movebankId}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label>Animal destino</Label>
+                <Select value={transferToId} onValueChange={setTransferToId}>
+                  <SelectTrigger data-testid="select-transfer-target">
+                    <SelectValue placeholder="Selecciona un animal del mismo estudio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(individuals || [])
+                      .filter((i) => i.id !== transferringIndividual.id && !i.localIdentifier)
+                      .map((i) => (
+                        <SelectItem key={i.id} value={i.id} data-testid={`option-transfer-target-${i.movebankId}`}>
+                          {i.nickName || i.ornitelaName || `ID-${i.movebankId}`}
+                          {i.taxonCanonicalName ? ` — ${i.taxonCanonicalName}` : ""}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Solo se listan animales del estudio sin dispositivo asignado.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <Label>Fecha y hora de la transferencia</Label>
+                <Input
+                  type="datetime-local"
+                  value={transferDate}
+                  onChange={(e) => setTransferDate(e.target.value)}
+                  data-testid="input-transfer-date"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Los datos GPS/ACC anteriores a esta fecha se atribuirán al animal de origen, y los posteriores al de destino.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <Label>Notas (opcional)</Label>
+                <Textarea
+                  rows={2}
+                  value={transferNotes}
+                  onChange={(e) => setTransferNotes(e.target.value)}
+                  placeholder="Motivo del cambio, observaciones..."
+                  data-testid="input-transfer-notes"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferringIndividual(null)} data-testid="button-cancel-transfer">
+              Cancelar
+            </Button>
+            <Button
+              disabled={!transferringIndividual || !transferToId || !transferDate || transferring}
+              onClick={async () => {
+                if (!transferringIndividual) return;
+                setTransferring(true);
+                try {
+                  await apiRequest("POST", "/api/device-transfers", {
+                    fromIndividualId: transferringIndividual.id,
+                    toIndividualId: transferToId,
+                    deviceLocalIdentifier: transferringIndividual.localIdentifier,
+                    transferDate: new Date(transferDate).toISOString(),
+                    notes: transferNotes || null,
+                  });
+                  toast({ title: "Dispositivo transferido", description: "Se actualizaron los animales y el historial del dispositivo." });
+                  queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
+                  setTransferringIndividual(null);
+                } catch (e: any) {
+                  toast({ title: "No se pudo transferir", description: e?.message || "Error inesperado", variant: "destructive" });
+                } finally {
+                  setTransferring(false);
+                }
+              }}
+              data-testid="button-confirm-transfer"
+            >
+              {transferring ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Transferir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!editingIndividual} onOpenChange={(open) => !open && setEditingIndividual(null)}>
         <DialogContent>
