@@ -2385,6 +2385,32 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/admin/settings/movebank-auto-sync", checkRole("superuser", "user", "observer"), async (_req, res) => {
+    try {
+      const { getMovebankAutoSyncEnabled, DEFAULT_MOVEBANK_AUTO_SYNC_ENABLED } = await import("./scheduler");
+      const enabled = await getMovebankAutoSyncEnabled();
+      return res.json({ enabled, default: DEFAULT_MOVEBANK_AUTO_SYNC_ENABLED });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.put("/api/admin/settings/movebank-auto-sync", checkRole("superuser"), async (req, res) => {
+    try {
+      const { MOVEBANK_AUTO_SYNC_KEY } = await import("./scheduler");
+      const { z } = await import("zod");
+      const schema = z.object({ enabled: z.boolean() });
+      const parsed = schema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
+      }
+      await storage.setSetting(MOVEBANK_AUTO_SYNC_KEY, parsed.data.enabled ? "true" : "false");
+      return res.json({ enabled: parsed.data.enabled });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.put("/api/admin/settings/no-transmission-threshold-days", checkRole("superuser"), async (req, res) => {
     try {
       const { NO_TRANSMISSION_THRESHOLD_DAYS_KEY, NO_TRANSMISSION_THRESHOLD_DAYS_OPTIONS } = await import("./immobilityDetector");

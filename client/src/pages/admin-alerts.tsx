@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bell, Info } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Bell, Info, Cloud } from "lucide-react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 
 interface ThresholdSetting {
@@ -14,7 +15,13 @@ interface ThresholdSetting {
   default: number;
 }
 
+interface MovebankAutoSync {
+  enabled: boolean;
+  default: boolean;
+}
+
 const QUERY_KEY = ["/api/admin/settings/no-transmission-threshold-days"] as const;
+const MOVEBANK_QUERY_KEY = ["/api/admin/settings/movebank-auto-sync"] as const;
 
 export default function AdminAlerts() {
   const { toast } = useToast();
@@ -40,6 +47,29 @@ export default function AdminAlerts() {
     },
   });
 
+  const { data: movebankData, isLoading: movebankLoading } = useQuery<MovebankAutoSync>({
+    queryKey: MOVEBANK_QUERY_KEY,
+  });
+
+  const movebankMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await apiRequest("PUT", "/api/admin/settings/movebank-auto-sync", { enabled });
+      return res.json();
+    },
+    onSuccess: (resp: { enabled: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: MOVEBANK_QUERY_KEY });
+      toast({
+        title: resp.enabled ? "Sync automático activado" : "Sync automático desactivado",
+        description: resp.enabled
+          ? "El sistema descargará datos de Movebank periódicamente."
+          : "Movebank solo se consultará cuando inicies un sync manual.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const breadcrumbs = [{ label: "Administración" }, { label: "Alertas" }];
 
   return (
@@ -53,6 +83,43 @@ export default function AdminAlerts() {
           <p className="text-sm text-muted-foreground">Ajustes globales del sistema de alertas</p>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Cloud className="w-4 h-4" />
+            Sincronización automática con Movebank
+          </CardTitle>
+          <CardDescription>
+            Cuando está activado, el sistema descarga periódicamente nuevos GPS/ACC de Movebank
+            en segundo plano según el cron configurado. Cuando está desactivado, Movebank solo
+            se consulta cuando alguien pulsa "Sincronizar datos GPS" en un estudio o ejecuta el
+            sync manual. Recomendado: <strong>desactivado</strong> para ahorrar peticiones del
+            límite diario (100/día).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {movebankLoading || !movebankData ? (
+            <Skeleton className="h-10 w-48" />
+          ) : (
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={movebankData.enabled}
+                onCheckedChange={(v) => movebankMutation.mutate(v)}
+                disabled={movebankMutation.isPending}
+                data-testid="switch-movebank-auto-sync"
+              />
+              <span className="text-sm" data-testid="text-movebank-auto-sync-state">
+                {movebankMutation.isPending
+                  ? "Guardando..."
+                  : movebankData.enabled
+                    ? "Sync automático ACTIVADO"
+                    : "Sync automático DESACTIVADO (solo manual)"}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

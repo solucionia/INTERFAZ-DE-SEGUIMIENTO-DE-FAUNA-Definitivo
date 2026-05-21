@@ -15,6 +15,20 @@ const CRON_INTERVAL = process.env.CRON_INTERVAL || "0 */6 * * *";
 const SCHEDULER_MAX_BACKFILL_DAYS = 30;
 const MIN_GAP_MS = 60 * 1000;
 
+export const MOVEBANK_AUTO_SYNC_KEY = "movebank_auto_sync_enabled";
+export const DEFAULT_MOVEBANK_AUTO_SYNC_ENABLED = false;
+
+export async function getMovebankAutoSyncEnabled(): Promise<boolean> {
+  try {
+    const raw = await storage.getSetting(MOVEBANK_AUTO_SYNC_KEY);
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+  } catch (e: any) {
+    log(`Scheduler: error leyendo setting ${MOVEBANK_AUTO_SYNC_KEY}: ${e.message}`, "cron");
+  }
+  return DEFAULT_MOVEBANK_AUTO_SYNC_ENABLED;
+}
+
 async function computeBackfillRange(
   studyId: string,
   individualLocalId: string,
@@ -47,8 +61,14 @@ async function runEventDetection() {
   let syncGpsAttempts = 0;
   let syncGpsZeroAnimals = 0;
 
+  const autoSyncEnabled = await getMovebankAutoSyncEnabled();
+  if (!autoSyncEnabled) {
+    log("Cron: Sync automático Movebank DESACTIVADO — saltando descarga de GPS/ACC", "cron");
+    await storage.createCronLog("movebank_sync", "skipped", "auto sync disabled by setting");
+  }
+
   try {
-    const blockCheck = movebankRateLimiter.isBlocked();
+    const blockCheck = autoSyncEnabled ? movebankRateLimiter.isBlocked() : { blocked: false, reason: "" };
     if (blockCheck.blocked) {
       log(`Cron: Movebank bloqueado — ${blockCheck.reason}. Saltando detección de eventos.`, "cron");
       await storage.createCronLog("event_detection", "skipped", blockCheck.reason);
@@ -62,6 +82,11 @@ async function runEventDetection() {
 
     const studiesWithNewData = new Set<string>();
     studyLoop: for (const { study, activeIndividuals } of studiesWithAnimals) {
+      if (!autoSyncEnabled) {
+        // Sin descarga de Movebank: solo ejecutar detección de eventos sobre datos cacheados más abajo
+        // Saltamos todo el bloque de fetch
+        continue;
+      }
       const studyBlockCheck = movebankRateLimiter.isBlocked();
       if (studyBlockCheck.blocked) {
         log(`Cron: Movebank bloqueado durante ejecución — saltando estudios restantes`, "cron");
@@ -302,6 +327,11 @@ async function runEmissionCheck() {
   log("Cron: Verificando alertas de emision...", "cron");
 
   try {
+    const autoSyncEnabled = await getMovebankAutoSyncEnabled();
+    if (!autoSyncEnabled) {
+      log("Cron: Sync automático Movebank DESACTIVADO — saltando verificación de emisión", "cron");
+      return;
+    }
     const blockCheck = movebankRateLimiter.isBlocked();
     if (blockCheck.blocked) {
       log(`Cron: Movebank bloqueado — ${blockCheck.reason}. Saltando verificación de emisión.`, "cron");
