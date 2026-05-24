@@ -563,7 +563,7 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(detectedEvents.studyId, event.studyId),
         eq(detectedEvents.individualLocalId, event.individualLocalId),
-        eq(detectedEvents.eventType, event.eventType),
+        eq(detectedEvents.eventType, event.eventType as any),
         eq(detectedEvents.timestampStart, event.timestampStart),
       ))
       .limit(1);
@@ -760,7 +760,7 @@ export class DatabaseStorage implements IStorage {
   }): Promise<{ events: DetectedEvent[]; total: number }> {
     const conditions: any[] = [];
     if (filters?.studyId) conditions.push(eq(detectedEvents.studyId, filters.studyId));
-    if (filters?.eventType) conditions.push(eq(detectedEvents.eventType, filters.eventType));
+    if (filters?.eventType) conditions.push(eq(detectedEvents.eventType, filters.eventType as any));
     if (filters?.individualLocalId) conditions.push(eq(detectedEvents.individualLocalId, filters.individualLocalId));
     if (filters?.readStatus !== undefined) conditions.push(eq(detectedEvents.readStatus, filters.readStatus));
     if (filters?.resolvedStatus !== undefined) conditions.push(eq(detectedEvents.resolvedStatus, filters.resolvedStatus));

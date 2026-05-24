@@ -1282,7 +1282,7 @@ export default function StudyVisualization() {
                       <Card
                         key={ev.id}
                         className={`cursor-pointer transition-colors ${isSelected ? "ring-2" : ""}`}
-                        style={isSelected ? { borderColor: color, ringColor: color } : {}}
+                        style={isSelected ? ({ borderColor: color, "--tw-ring-color": color } as React.CSSProperties) : {}}
                         onClick={() => handleEventClick(ev)}
                         data-testid={`card-event-${ev.id}`}
                       >

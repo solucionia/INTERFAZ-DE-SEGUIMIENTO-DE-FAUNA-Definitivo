@@ -507,7 +507,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/export-kml", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudy(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.query;
@@ -555,12 +555,12 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
       }
       const { individualIds, startDate, endDate, format: fmt } = parsed.data;
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudy(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const allPoints: { individual: string; timestamp: number; lat: number; lng: number; speed: number | null; heading: number | null; altitude: number | null }[] = [];
       for (const animalId of individualIds) {
-        const events = await storage.getCachedGpsEvents(req.params.id, animalId, startDate, endDate);
+        const events = await storage.getCachedGpsEvents(req.params.id as string, animalId, startDate, endDate);
         for (const e of events) {
           allPoints.push({
             individual: e.individualLocalIdentifier,
@@ -733,13 +733,13 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
       }
       const { individualIds, startDate, endDate, analysisType, format: fmt, mcpPercent, bandwidthMethod, kernelPercentages } = parsed.data;
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudy(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { runAnalysis } = await import("./geoAnalysis");
       const allPoints: { lat: number; lng: number; timestamp: number; individual: string; speed: number | null; altitude: number | null }[] = [];
       for (const animalId of individualIds) {
-        const events = await storage.getCachedGpsEvents(req.params.id, animalId, startDate, endDate);
+        const events = await storage.getCachedGpsEvents(req.params.id as string, animalId, startDate, endDate);
         for (const e of events) {
           allPoints.push({
             individual: e.individualLocalIdentifier,
@@ -770,7 +770,7 @@ export async function registerRoutes(
 
       if (fmt === "csv") {
         let csv = "";
-        if (analysisType === "comprehensive" && analysisResult.perIndividual) {
+        if (analysisType === "comprehensive" && (analysisResult as any).perIndividual) {
           csv = "Animal,Eccentricidad,Linealidad,h_HREF,h_LSCV";
           const kernelPcts: number[] = Array.isArray((analysisResult as any).kernelPercentages) && (analysisResult as any).kernelPercentages.length > 0
             ? [...(analysisResult as any).kernelPercentages].sort((a: number, b: number) => a - b)
@@ -780,15 +780,15 @@ export async function registerRoutes(
           for (const p of kernelPcts) csv += `,Kernel_LSCV_${p}%_km2`;
           for (const p of mcpPcts) csv += `,MPC_${p}%_km2`;
           csv += ",Distancia_total_km,Velocidad_media_ms,Puntos\n";
-          for (const ind of analysisResult.perIndividual) {
+          for (const ind of (analysisResult as any).perIndividual) {
             csv += `"${ind.individual}",${ind.eccentricity?.toFixed(4) ?? ""},${ind.linearity?.toFixed(4) ?? ""},${ind.hHref?.toFixed(2) ?? ""},${ind.hLscv?.toFixed(2) ?? ""}`;
             for (const p of kernelPcts) csv += `,${ind.kernelHrefAreas?.[String(p)]?.toFixed(6) ?? ""}`;
             for (const p of kernelPcts) csv += `,${ind.kernelLscvAreas?.[String(p)]?.toFixed(6) ?? ""}`;
             for (const p of mcpPcts) csv += `,${ind.mcpAreas?.[String(p)]?.toFixed(6) ?? ""}`;
             csv += `,${ind.totalDistance?.toFixed(3) ?? ""},${ind.meanSpeed?.toFixed(4) ?? ""},${ind.numPoints ?? ""}\n`;
           }
-        } else if (analysisResult.areas) {
-          const arr: any[] = analysisResult.areas as any[];
+        } else if ((analysisResult as any).areas) {
+          const arr: any[] = (analysisResult as any).areas as any[];
           if (analysisType === "kernel") {
             const pcts: number[] = Array.isArray((analysisResult as any).kernelPercentages) && (analysisResult as any).kernelPercentages.length > 0
               ? [...(analysisResult as any).kernelPercentages].sort((a: number, b: number) => a - b)
@@ -824,8 +824,8 @@ export async function registerRoutes(
       const polygonFeatures: any[] = [];
       const pointFeatures: any[] = [];
 
-      if (analysisResult.geojson?.features) {
-        for (const f of analysisResult.geojson.features) {
+      if ((analysisResult as any).geojson?.features) {
+        for (const f of (analysisResult as any).geojson.features) {
           const geomType = f.geometry?.type;
           if (geomType === "Polygon" || geomType === "MultiPolygon") {
             polygonFeatures.push({
@@ -842,8 +842,8 @@ export async function registerRoutes(
         }
       }
 
-      if (analysisResult.perIndividual) {
-        for (const ind of analysisResult.perIndividual) {
+      if ((analysisResult as any).perIndividual) {
+        for (const ind of (analysisResult as any).perIndividual) {
           if (ind.geojson?.features) {
             for (const f of ind.geojson.features) {
               const geomType = f.geometry?.type;
@@ -1022,7 +1022,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/studies/:id", requireStudyAccess, async (req, res) => {
-    const study = await storage.getStudy(req.params.id);
+    const study = await storage.getStudy(req.params.id as string);
     if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
     return res.json(maskStudyCredentials(study));
   });
@@ -1093,7 +1093,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/last-positions", requireStudyAccess, async (req, res) => {
     try {
-      const studyId = req.params.id;
+      const studyId = req.params.id as string;
       const points = Math.min(Math.max(parseInt(req.query.points as string) || 5, 1), 50);
 
       const individuals = await storage.getIndividuals(studyId);
@@ -1134,7 +1134,7 @@ export async function registerRoutes(
       let globalLastUpdate: number | null = null;
 
       const identifiersWithData = new Set<string>();
-      for (const [id, pts] of grouped) {
+      for (const [id, pts] of Array.from(grouped)) {
         identifiersWithData.add(id);
         withData++;
         const lastTs = pts[0].timestamp;
@@ -1168,7 +1168,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/studies/:id/individuals", requireStudyAccess, async (req, res) => {
-    const individuals = await storage.getIndividuals(req.params.id);
+    const individuals = await storage.getIndividuals(req.params.id as string);
     return res.json(individuals);
   });
 
@@ -1197,7 +1197,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/studies/:id/deployments", requireStudyAccess, async (req, res) => {
-    const deployments = await storage.getDeployments(req.params.id);
+    const deployments = await storage.getDeployments(req.params.id as string);
     return res.json(deployments);
   });
 
@@ -1331,7 +1331,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "individualMovebankId y deployOn son requeridos" });
       }
       const dep = await storage.createDeploymentForIndividual({
-        studyId: req.params.id,
+        studyId: req.params.id as string,
         movebankId: Math.floor(Date.now() + Math.random() * 10000),
         individualId: individualMovebankId,
         deployOn,
@@ -1345,7 +1345,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/events", movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, sensor_type, timestamp_start, timestamp_end, force } = req.query;
@@ -1746,14 +1746,14 @@ export async function registerRoutes(
     const { timestamp_start, timestamp_end } = req.query;
     const tsStart = timestamp_start ? parseInt(timestamp_start as string, 10) : undefined;
     const tsEnd = timestamp_end ? parseInt(timestamp_end as string, 10) : undefined;
-    const events = await storage.getDetectedEvents(req.params.id, tsStart, tsEnd);
+    const events = await storage.getDetectedEvents(req.params.id as string, tsStart, tsEnd);
     return res.json(events);
   });
 
   // Detect events (trigger analysis)
   app.post("/api/studies/:id/detect-events", checkRole("superuser", "user"), movebankLimiter, requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: individualIds, timestamp_start, timestamp_end } = req.body;
@@ -1992,7 +1992,7 @@ export async function registerRoutes(
       }
 
       log(`Sync iniciado para estudio: ${req.params.id}`, "movebank");
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       if (!hasMovebankCredentials(study)) {
@@ -2297,7 +2297,7 @@ export async function registerRoutes(
   app.post("/api/studies/:id/repair-deployments-local", requireSuperuser, requireStudyAccess, async (req, res) => {
     try {
       log(`Repair-deployments-local iniciado para estudio: ${req.params.id}`, "movebank");
-      const result = await storage.repairDeploymentsLocal(req.params.id);
+      const result = await storage.repairDeploymentsLocal(req.params.id as string);
       log(`Repair-local completado: total=${result.total}, linked=${result.linked}, repaired=${result.repaired}, unlinked=${result.unlinked}`, "movebank");
       return res.json(result);
     } catch (e: any) {
@@ -2314,7 +2314,7 @@ export async function registerRoutes(
       }
 
       log(`Repair-deployments iniciado para estudio: ${req.params.id}`, "movebank");
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       if (!hasMovebankCredentials(study)) {
@@ -2448,7 +2448,7 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Parámetros inválidos", errors: parsed.error.flatten() });
       }
-      const result = await analyzeImmobility(req.params.id, parsed.data);
+      const result = await analyzeImmobility(req.params.id as string, parsed.data);
       return res.json(result);
     } catch (e: any) {
       log(`Immobility analysis error: ${e.message}`, "analysis");
@@ -2461,7 +2461,7 @@ export async function registerRoutes(
       const tsEnd = Date.now();
       const tsStart = tsEnd - 30 * 24 * 60 * 60 * 1000;
       const { events } = await storage.getAllDetectedEvents({
-        studyId: req.params.id,
+        studyId: req.params.id as string,
         eventType: "mortality",
         timestampStart: tsStart,
         timestampEnd: tsEnd,
@@ -2501,7 +2501,7 @@ export async function registerRoutes(
 
   app.get("/api/studies/:id/ornitela-status", requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudy(req.params.id);
+      const study = await storage.getStudy(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
       return res.json({
         ornitelaEnabled: study.ornitelaEnabled,
@@ -2750,7 +2750,7 @@ export async function registerRoutes(
   // Geospatial Analysis
   app.post("/api/studies/:id/analysis", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { analysisType, individuals: animalIds, timestampStart, timestampEnd, params } = req.body;
@@ -2887,7 +2887,7 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/export-valores", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
-      const study = await storage.getStudyDecrypted(req.params.id);
+      const study = await storage.getStudyDecrypted(req.params.id as string);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
       const { individuals: animalIds, timestampStart, timestampEnd } = req.body;
@@ -2969,7 +2969,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/studies/:id/analyses", requireStudyAccess, async (req, res) => {
-    const analyses = await storage.getSavedAnalyses(req.params.id, req.user!.id);
+    const analyses = await storage.getSavedAnalyses(req.params.id as string, req.user!.id);
     return res.json(analyses);
   });
 
@@ -3147,7 +3147,7 @@ export async function registerRoutes(
 
   app.post("/api/studies/:id/import-csv", checkRole("superuser", "user"), requireStudyAccess, upload.single("file"), async (req, res) => {
     try {
-      const studyId = req.params.id;
+      const studyId = req.params.id as string;
       const study = await storage.getStudy(studyId);
       if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
 
@@ -3271,6 +3271,7 @@ export async function registerRoutes(
               groundSpeed: velocidadCol >= 0 ? safeFloat(vals[velocidadCol]) : null,
               heading: cursoCol >= 0 ? safeFloat(vals[cursoCol]) : null,
               heightAboveEllipsoid: altitudCol >= 0 ? safeFloat(vals[altitudCol]) : null,
+              hdop: null,
             });
 
             if (batch.length >= batchSize) {
@@ -3379,6 +3380,7 @@ export async function registerRoutes(
               groundSpeed: speedCol >= 0 ? safeFloat(vals[speedCol]) : null,
               heading: headingCol >= 0 ? safeFloat(vals[headingCol]) : null,
               heightAboveEllipsoid: heightCol >= 0 ? safeFloat(vals[heightCol]) : null,
+              hdop: null,
             });
 
             if (batch.length >= batchSize) {
