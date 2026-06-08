@@ -442,6 +442,37 @@ export default function GeoAnalysis() {
     }
   };
 
+  const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
+    return html2canvas(el, {
+      backgroundColor,
+      scale: 2,
+      useCORS: true,
+      onclone: (_doc, clonedEl) => {
+        const panes = clonedEl.querySelectorAll<HTMLElement>(
+          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow"
+        );
+        panes.forEach((p) => {
+          const t = p.style.transform;
+          if (!t) return;
+          if (t.includes("translate3d")) {
+            p.style.transform = t.replace(
+              /translate3d\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*[^)]+?\)/g,
+              "translate($1, $2)"
+            );
+          } else if (t.includes("matrix3d")) {
+            const m = t.match(/matrix3d\(([^)]+)\)/);
+            if (m) {
+              const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+              if (v.length === 16) {
+                p.style.transform = `translate(${v[12]}px, ${v[13]}px)`;
+              }
+            }
+          }
+        });
+      },
+    });
+  };
+
   const exportChartPng = async () => {
     const el = chartContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay gráfica visible para exportar", variant: "destructive" }); return; }
@@ -459,7 +490,7 @@ export default function GeoAnalysis() {
     const el = mapContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay mapa visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await html2canvas(el, { backgroundColor: null, scale: 2, useCORS: true });
+      const canvas = await captureMap(el, null);
       const link = document.createElement("a");
       link.download = `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -499,7 +530,7 @@ export default function GeoAnalysis() {
       const mapEl = mapContainerRef.current;
       if (mapEl) {
         if (yOffset + 60 > pageH) { pdf.addPage(); yOffset = margin; }
-        const mapCanvas = await html2canvas(mapEl, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
+        const mapCanvas = await captureMap(mapEl, "#ffffff");
         const mapImg = mapCanvas.toDataURL("image/png");
         const aspect = mapCanvas.width / mapCanvas.height;
         const imgW = pageW - margin * 2;
