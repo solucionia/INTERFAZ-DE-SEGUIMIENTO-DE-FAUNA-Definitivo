@@ -1,0 +1,1 @@
+- [Immobility-monitor deep links](immobility-monitor-deeplinks.md) — per-row action links must use the analyzed study id, not the mutable selector.

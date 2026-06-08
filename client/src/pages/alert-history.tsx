@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import {
   AlertTriangle, Check, CheckCheck, Eye, EyeOff, ChevronLeft, ChevronRight,
-  Skull, Zap, Utensils, Bird, Filter,
+  Skull, Zap, Utensils, Bird, Filter, Activity, ExternalLink,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -297,6 +297,19 @@ export default function AlertHistory() {
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
+                              {event.individualLocalId && (
+                                <a
+                                  href={`/study/${event.studyId}/visualize?animal=${encodeURIComponent(event.individualLocalId)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                  title="Ver acelerómetro del animal en una pestaña nueva"
+                                  data-testid={`link-acc-alert-${event.id}`}
+                                >
+                                  <Activity className="w-4 h-4" />
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
                               {!event.readStatus && (
                                 <Button variant="ghost" size="icon" onClick={() => markReadMutation.mutate(event.id)} data-testid={`button-mark-read-${event.id}`}>
                                   <Eye className="w-4 h-4" />

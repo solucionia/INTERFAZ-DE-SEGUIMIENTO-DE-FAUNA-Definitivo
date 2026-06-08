@@ -432,6 +432,28 @@ export default function StudyVisualization() {
     }
   }, [dateStart, dateEnd]);
 
+  // Apertura directa desde alertas/inmovilidad: ?animal=<localId> preselecciona el
+  // animal, fija un rango de 7 días y carga sus datos automáticamente.
+  const didInitFromUrl = useRef(false);
+  useEffect(() => {
+    if (didInitFromUrl.current) return;
+    if (!individuals || individuals.length === 0) return;
+    didInitFromUrl.current = true;
+    const animal = new URLSearchParams(window.location.search).get("animal");
+    if (!animal) return;
+    if (!individuals.some((i) => i.localIdentifier === animal)) return;
+    const now = new Date();
+    const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    setSelectedAnimals([animal]);
+    setActiveAnimalFilter(animal);
+    setDateStart(fmt(start));
+    setDateEnd(fmt(now));
+    setActiveQuickRange("7d");
+    pendingAutoLoad.current = true;
+  }, [individuals]);
+
   const handleDateStartChange = (val: string) => {
     setDateStart(val);
     setActiveQuickRange(null);
@@ -1028,7 +1050,7 @@ export default function StudyVisualization() {
           <div className="flex-1 min-w-0">
             <div className="flex flex-col">
               <div>
-                <div className="flex flex-col p-3" style={{ height: "400px" }}>
+                <div className="flex flex-col p-3" style={{ height: "640px" }}>
                   <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Activity className="w-4 h-4" />

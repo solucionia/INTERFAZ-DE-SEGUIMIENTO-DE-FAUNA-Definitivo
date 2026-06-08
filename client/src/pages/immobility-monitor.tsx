@@ -168,6 +168,7 @@ export default function ImmobilityMonitor() {
   const { canAnalyze } = usePermissions();
   const [selectedStudyId, setSelectedStudyId] = useState<string>("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [analyzedStudyId, setAnalyzedStudyId] = useState<string>("");
   const [showActiveAnimals, setShowActiveAnimals] = useState(false);
 
   const [hoursToAnalyze, setHoursToAnalyze] = useState(96);
@@ -204,6 +205,7 @@ export default function ImmobilityMonitor() {
     },
     onSuccess: (data: AnalysisResult) => {
       setResult(data);
+      setAnalyzedStudyId(selectedStudyId);
       toast({
         title: "Análisis completado",
         description: `${data.summary.immobile} inmóviles, ${data.summary.noTransmission} sin transmisión de ${data.summary.totalAnimals} animales`,
@@ -292,7 +294,7 @@ export default function ImmobilityMonitor() {
               {studiesLoading ? (
                 <Skeleton className="h-9 w-full" />
               ) : (
-                <Select value={selectedStudyId} onValueChange={setSelectedStudyId} data-testid="select-study">
+                <Select value={selectedStudyId} onValueChange={(v) => { setSelectedStudyId(v); setResult(null); setAnalyzedStudyId(""); }} data-testid="select-study">
                   <SelectTrigger data-testid="select-study-trigger">
                     <SelectValue placeholder="Seleccionar estudio..." />
                   </SelectTrigger>
@@ -537,17 +539,30 @@ export default function ImmobilityMonitor() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <a
-                              href={a.googleMapsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
-                              data-testid={`link-maps-immobility-${i}`}
-                            >
-                              <MapPin className="w-3 h-3" />
-                              Google Maps
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
+                            <div className="flex flex-col gap-1">
+                              <a
+                                href={a.googleMapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                data-testid={`link-maps-immobility-${i}`}
+                              >
+                                <MapPin className="w-3 h-3" />
+                                Google Maps
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                              <a
+                                href={`/study/${analyzedStudyId}/visualize?animal=${encodeURIComponent(a.individual)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                data-testid={`link-acc-immobility-${i}`}
+                              >
+                                <Activity className="w-3 h-3" />
+                                Acelerómetro
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -599,20 +614,33 @@ export default function ImmobilityMonitor() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {a.googleMapsUrl ? (
+                            <div className="flex flex-col gap-1">
+                              {a.googleMapsUrl ? (
+                                <a
+                                  href={a.googleMapsUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                  Google Maps
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">Sin ubicación</span>
+                              )}
                               <a
-                                href={a.googleMapsUrl}
+                                href={`/study/${analyzedStudyId}/visualize?animal=${encodeURIComponent(a.individual)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                data-testid={`link-acc-no-transmission-${i}`}
                               >
-                                <MapPin className="w-3 h-3" />
-                                Google Maps
+                                <Activity className="w-3 h-3" />
+                                Acelerómetro
                                 <ExternalLink className="w-3 h-3" />
                               </a>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Sin ubicación</span>
-                            )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -670,17 +698,30 @@ export default function ImmobilityMonitor() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <a
-                              href={a.googleMapsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
-                              data-testid={`link-maps-zone-${i}`}
-                            >
-                              <MapPin className="w-3 h-3" />
-                              Google Maps
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
+                            <div className="flex flex-col gap-1">
+                              <a
+                                href={a.googleMapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                data-testid={`link-maps-zone-${i}`}
+                              >
+                                <MapPin className="w-3 h-3" />
+                                Google Maps
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                              <a
+                                href={`/study/${analyzedStudyId}/visualize?animal=${encodeURIComponent(a.individual)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                data-testid={`link-acc-zone-${i}`}
+                              >
+                                <Activity className="w-3 h-3" />
+                                Acelerómetro
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
