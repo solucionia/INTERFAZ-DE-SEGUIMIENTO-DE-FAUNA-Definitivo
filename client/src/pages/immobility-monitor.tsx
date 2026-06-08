@@ -68,6 +68,8 @@ interface ImmobilityAlert {
   googleMapsUrl: string;
   status: string;
   severity: string;
+  method: "acc" | "gps";
+  accVariance: number | null;
 }
 
 interface NoTransmissionAlert {
@@ -500,6 +502,7 @@ export default function ImmobilityMonitor() {
                       <TableRow>
                         <TableHead>Animal</TableHead>
                         <TableHead>Especie</TableHead>
+                        <TableHead>Método</TableHead>
                         <TableHead>Horas inmóvil</TableHead>
                         <TableHead>Registros</TableHead>
                         <TableHead>Vel. prom</TableHead>
@@ -513,6 +516,14 @@ export default function ImmobilityMonitor() {
                         <TableRow key={i} data-testid={`row-immobility-${i}`}>
                           <TableCell className="font-medium">{a.individual}</TableCell>
                           <TableCell className="text-xs">{a.species}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs" data-testid={`badge-method-${i}`}>
+                              {a.method === "acc" ? "ACC" : "GPS"}
+                            </Badge>
+                            {a.method === "acc" && a.accVariance != null && (
+                              <span className="text-xs text-muted-foreground ml-1">var {a.accVariance}</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <span className="font-bold text-red-500">{a.hoursImmobile}h</span>
                             <span className="text-xs text-muted-foreground ml-1">({a.daysImmobile}d)</span>

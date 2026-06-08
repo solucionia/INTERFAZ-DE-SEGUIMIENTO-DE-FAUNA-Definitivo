@@ -2443,6 +2443,9 @@ export async function registerRoutes(
         noTransmissionThresholdHours: z.coerce.number().min(1).max(720).optional(),
         speedThreshold: z.coerce.number().min(0).max(100).optional(),
         positionChangeThreshold: z.coerce.number().min(0).max(1).optional(),
+        accVarianceThreshold: z.coerce.number().min(0).max(10000).optional(),
+        accMinSamples: z.coerce.number().min(2).max(100000).optional(),
+        immobilityRadiusMeters: z.coerce.number().min(1).max(100000).optional(),
       }).passthrough();
       const parsed = configSchema.safeParse(req.body || {});
       if (!parsed.success) {

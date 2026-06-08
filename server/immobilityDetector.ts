@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import type { CachedGpsEvent } from "@shared/schema";
+import type { CachedGpsEvent, CachedAccEvent } from "@shared/schema";
 import { HDOP_QUALITY_THRESHOLD } from "@shared/schema";
 import { log } from "./index";
 import * as turf from "@turf/turf";
@@ -14,6 +14,17 @@ export interface ImmobilityConfig {
   noTransmissionThresholdHours: number;
   speedThreshold: number;
   positionChangeThreshold: number;
+  // Criterio PRINCIPAL (acelerómetro): un animal está muerto cuando la varianza
+  // combinada del ACC (x+y+z) se mantiene por debajo de este umbral durante
+  // `immobilityThresholdHours` horas. Un animal vivo (incluso incubando) genera
+  // varianza ACC por encima de este umbral, evitando falsos positivos.
+  accVarianceThreshold: number;
+  // Mínimo de muestras ACC en la ventana para considerar el criterio ACC fiable.
+  accMinSamples: number;
+  // Criterio SECUNDARIO/respaldo (GPS, solo cuando no hay datos ACC): el animal
+  // se considera inmóvil si el 90% de los puntos del período caen dentro de este
+  // radio (metros) respecto al centro mediano, ignorando outliers puntuales.
+  immobilityRadiusMeters: number;
 }
 
 export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
@@ -22,6 +33,9 @@ export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
   noTransmissionThresholdHours: 7 * 24,
   speedThreshold: 0.5,
   positionChangeThreshold: 0.0001,
+  accVarianceThreshold: 5,
+  accMinSamples: 10,
+  immobilityRadiusMeters: 50,
 };
 
 export const NO_TRANSMISSION_THRESHOLD_DAYS_KEY = "no_transmission_threshold_days";
@@ -41,22 +55,6 @@ export async function getNoTransmissionThresholdDays(): Promise<number> {
   return DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS;
 }
 
-interface PreparedPoint {
-  individual: string;
-  timestamp: number;
-  latitude: number;
-  longitude: number;
-  groundSpeed: number | null;
-  timeDiffHours: number | null;
-  distance: number | null;
-  speedCalculated: number | null;
-}
-
-interface AnalyzedPoint extends PreparedPoint {
-  isImmobile: boolean;
-  immobilityGroupId: number | null;
-}
-
 export interface ImmobilityAlert {
   individual: string;
   species: string;
@@ -72,6 +70,8 @@ export interface ImmobilityAlert {
   googleMapsUrl: string;
   status: string;
   severity: string;
+  method: "acc" | "gps";
+  accVariance: number | null;
 }
 
 export interface NoTransmissionAlert {
@@ -150,130 +150,186 @@ export interface ImmobilityAnalysisResult {
   resolvedCount: number;
 }
 
-const METERS_PER_DEGREE = 111320;
-
-function prepareData(gpsEvents: CachedGpsEvent[], config: ImmobilityConfig): PreparedPoint[] {
-  const byAnimal = new Map<string, CachedGpsEvent[]>();
-  for (const evt of gpsEvents) {
-    const key = evt.individualLocalIdentifier;
-    if (!byAnimal.has(key)) byAnimal.set(key, []);
-    byAnimal.get(key)!.push(evt);
-  }
-
-  const prepared: PreparedPoint[] = [];
-  byAnimal.forEach((events, individual) => {
-    const sorted = events.sort((a: CachedGpsEvent, b: CachedGpsEvent) => a.timestamp - b.timestamp);
-    for (let i = 0; i < sorted.length; i++) {
-      const curr = sorted[i];
-      let timeDiffHours: number | null = null;
-      let distance: number | null = null;
-      let speedCalculated: number | null = null;
-
-      if (i > 0) {
-        const prev = sorted[i - 1];
-        timeDiffHours = (curr.timestamp - prev.timestamp) / (1000 * 60 * 60);
-        const dLat = curr.latitude - prev.latitude;
-        const dLon = curr.longitude - prev.longitude;
-        distance = Math.sqrt(dLat * dLat + dLon * dLon);
-
-        if ((!curr.groundSpeed || curr.groundSpeed === 0) && timeDiffHours > 0) {
-          speedCalculated = (distance * METERS_PER_DEGREE) / (timeDiffHours * 3600);
-        }
-      }
-
-      prepared.push({
-        individual,
-        timestamp: curr.timestamp,
-        latitude: curr.latitude,
-        longitude: curr.longitude,
-        groundSpeed: curr.groundSpeed,
-        timeDiffHours,
-        distance,
-        speedCalculated,
-      });
-    }
-  });
-
-  return prepared;
+function variance(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+  return nums.reduce((a, b) => a + (b - mean) * (b - mean), 0) / nums.length;
 }
 
-function detectImmobility(preparedData: PreparedPoint[], config: ImmobilityConfig): AnalyzedPoint[] {
-  let groupCounter = 0;
-  let currentGroup: number | null = null;
-  let prevIndividual: string | null = null;
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const s = [...nums].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
 
-  return preparedData.map((point) => {
-    const speed = point.groundSpeed ?? point.speedCalculated ?? 0;
-    const dist = point.distance ?? 0;
-    const isImmobile = speed < config.speedThreshold && dist < config.positionChangeThreshold;
+// Mayor hueco temporal entre muestras consecutivas (ms). Sirve para rechazar
+// datos dispersos/bimodales (p.ej. muestras solo al inicio y al final de la
+// ventana) que pasarían un chequeo de cobertura basado solo en first→last.
+function maxGap(timestampsSorted: number[]): number {
+  let max = 0;
+  for (let i = 1; i < timestampsSorted.length; i++) {
+    const g = timestampsSorted[i] - timestampsSorted[i - 1];
+    if (g > max) max = g;
+  }
+  return max;
+}
 
-    if (point.individual !== prevIndividual) {
-      currentGroup = null;
-      prevIndividual = point.individual;
-    }
+// Fracción máxima de la ventana que puede ocupar un único hueco sin muestras.
+const MAX_GAP_FRACTION = 0.5;
 
-    if (isImmobile) {
-      if (currentGroup === null) {
-        groupCounter++;
-        currentGroup = groupCounter;
-      }
-    } else {
-      currentGroup = null;
-    }
+/**
+ * Criterio PRINCIPAL de mortalidad: acelerómetro.
+ * Toma la ventana de las últimas `immobilityThresholdHours` horas (hasta `now`).
+ * Si la varianza combinada (x+y+z) se mantiene por debajo de `accVarianceThreshold`
+ * durante toda la ventana → el animal está inmóvil (muerto). Si supera el umbral
+ * → el animal está vivo (incluida la incubación, que genera actividad ACC clara).
+ * Devuelve `null` cuando no hay datos ACC suficientes para decidir (→ se usa el
+ * respaldo GPS).
+ */
+function detectAccMortality(
+  acc: CachedAccEvent[],
+  cfg: ImmobilityConfig,
+  now: number,
+): { status: "dead" | "alive"; durationHours: number; combinedVariance: number; samples: number; startTs: number; endTs: number } | null {
+  if (acc.length < cfg.accMinSamples) return null;
+  const durationMs = cfg.immobilityThresholdHours * 60 * 60 * 1000;
+  const windowStart = now - durationMs;
+  const w = acc.filter((e) => e.timestamp >= windowStart).sort((a, b) => a.timestamp - b.timestamp);
+  if (w.length < cfg.accMinSamples) return null;
+  const span = w[w.length - 1].timestamp - w[0].timestamp;
+  // Cobertura: el rango debe abarcar ~90% de la ventana Y sin huecos grandes
+  // (evita concluir sobre datos dispersos/bimodales concentrados en los extremos).
+  if (span < durationMs * 0.9) return null;
+  if (maxGap(w.map((e) => e.timestamp)) > durationMs * MAX_GAP_FRACTION) return null;
 
+  const combined =
+    variance(w.map((e) => e.xAcceleration)) +
+    variance(w.map((e) => e.yAcceleration)) +
+    variance(w.map((e) => e.zAcceleration));
+
+  return {
+    status: combined < cfg.accVarianceThreshold ? "dead" : "alive",
+    durationHours: Math.round((span / (60 * 60 * 1000)) * 10) / 10,
+    combinedVariance: Math.round(combined * 10) / 10,
+    samples: w.length,
+    startTs: w[0].timestamp,
+    endTs: w[w.length - 1].timestamp,
+  };
+}
+
+/**
+ * Criterio SECUNDARIO/respaldo de inmovilidad: GPS por radio.
+ * Solo se usa cuando no hay ACC concluyente. Toma la ventana de las últimas
+ * `immobilityThresholdHours` horas y calcula un centro mediano (robusto frente a
+ * outliers). Si el percentil 90 de las distancias al centro cae dentro de
+ * `immobilityRadiusMeters`, el animal se considera inmóvil — ignorando hasta un
+ * 10% de puntos atípicos que se alejen de la nube principal.
+ */
+function detectGpsRadiusMortality(
+  gps: CachedGpsEvent[],
+  cfg: ImmobilityConfig,
+  now: number,
+): { durationHours: number; samples: number; startTs: number; endTs: number; lastLat: number; lastLon: number; avgSpeed: number; maxSpeed: number; radiusM: number } | null {
+  if (gps.length < 3) return null;
+  const durationMs = cfg.immobilityThresholdHours * 60 * 60 * 1000;
+  const windowStart = now - durationMs;
+  const w = gps.filter((e) => e.timestamp >= windowStart).sort((a, b) => a.timestamp - b.timestamp);
+  if (w.length < 3) return null;
+  const span = w[w.length - 1].timestamp - w[0].timestamp;
+  if (span < durationMs * 0.9) return null;
+  if (maxGap(w.map((e) => e.timestamp)) > durationMs * MAX_GAP_FRACTION) return null;
+
+  const medLat = median(w.map((p) => p.latitude));
+  const medLon = median(w.map((p) => p.longitude));
+  const center = turf.point([medLon, medLat]);
+  const dists = w
+    .map((p) => turf.distance(center, turf.point([p.longitude, p.latitude]), { units: "kilometers" }) * 1000)
+    .sort((a, b) => a - b);
+  const p90 = dists[Math.floor(0.9 * (dists.length - 1))];
+  if (p90 > cfg.immobilityRadiusMeters) return null;
+
+  const last = w[w.length - 1];
+  const speeds = w.map((p) => p.groundSpeed ?? 0);
+  const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+  return {
+    durationHours: Math.round((span / (60 * 60 * 1000)) * 10) / 10,
+    samples: w.length,
+    startTs: w[0].timestamp,
+    endTs: last.timestamp,
+    lastLat: last.latitude,
+    lastLon: last.longitude,
+    avgSpeed: Math.round(avgSpeed * 1000) / 1000,
+    maxSpeed: Math.round(Math.max(...speeds) * 1000) / 1000,
+    radiusM: Math.round(p90 * 10) / 10,
+  };
+}
+
+/**
+ * Construye la alerta de mortalidad/inmovilidad para un animal.
+ * 1) ACC primero: si concluye "vivo" → no se genera alerta (ni se usa GPS),
+ *    lo que evita falsos positivos de animales quietos pero con actividad ACC
+ *    (incubación). Si concluye "muerto" → alerta crítica por ACC.
+ * 2) Si el ACC no es concluyente (sin datos suficientes) → respaldo GPS por radio.
+ */
+function buildMortalityAlert(
+  id: string,
+  species: string,
+  acc: CachedAccEvent[],
+  gps: CachedGpsEvent[],
+  cfg: ImmobilityConfig,
+  now: number,
+): ImmobilityAlert | null {
+  const accRes = detectAccMortality(acc, cfg, now);
+  if (accRes) {
+    if (accRes.status === "alive") return null;
+    const lastGps = gps.length ? gps.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null;
+    const lat = lastGps?.latitude ?? 0;
+    const lon = lastGps?.longitude ?? 0;
     return {
-      ...point,
-      isImmobile,
-      immobilityGroupId: isImmobile ? currentGroup : null,
+      individual: id,
+      species,
+      alertStart: accRes.startTs,
+      alertEnd: accRes.endTs,
+      hoursImmobile: accRes.durationHours,
+      daysImmobile: Math.round((accRes.durationHours / 24) * 10) / 10,
+      numRecords: accRes.samples,
+      lastLat: lat,
+      lastLon: lon,
+      avgSpeed: 0,
+      maxSpeed: 0,
+      googleMapsUrl: `https://www.google.com/maps?q=${lat},${lon}`,
+      status: "INMÓVIL (ACC)",
+      severity: "critical",
+      method: "acc",
+      accVariance: accRes.combinedVariance,
     };
-  });
-}
-
-function identifyMortalityEvents(
-  analyzedData: AnalyzedPoint[],
-  config: ImmobilityConfig,
-  speciesMap: Map<string, string>
-): ImmobilityAlert[] {
-  const groups = new Map<number, AnalyzedPoint[]>();
-  for (const point of analyzedData) {
-    if (point.immobilityGroupId != null) {
-      if (!groups.has(point.immobilityGroupId)) groups.set(point.immobilityGroupId, []);
-      groups.get(point.immobilityGroupId)!.push(point);
-    }
   }
 
-  const alerts: ImmobilityAlert[] = [];
-  groups.forEach((points) => {
-    if (points.length < 2) return;
-    const first = points[0];
-    const last = points[points.length - 1];
-    const durationHours = (last.timestamp - first.timestamp) / (1000 * 60 * 60);
+  // Sin ACC concluyente → respaldo GPS por radio (50 m por defecto).
+  const gpsRes = detectGpsRadiusMortality(gps, cfg, now);
+  if (gpsRes) {
+    return {
+      individual: id,
+      species,
+      alertStart: gpsRes.startTs,
+      alertEnd: gpsRes.endTs,
+      hoursImmobile: gpsRes.durationHours,
+      daysImmobile: Math.round((gpsRes.durationHours / 24) * 10) / 10,
+      numRecords: gpsRes.samples,
+      lastLat: gpsRes.lastLat,
+      lastLon: gpsRes.lastLon,
+      avgSpeed: gpsRes.avgSpeed,
+      maxSpeed: gpsRes.maxSpeed,
+      googleMapsUrl: `https://www.google.com/maps?q=${gpsRes.lastLat},${gpsRes.lastLon}`,
+      status: "INMÓVIL (GPS)",
+      severity: gpsRes.durationHours > 48 ? "critical" : "warning",
+      method: "gps",
+      accVariance: null,
+    };
+  }
 
-    if (durationHours >= config.immobilityThresholdHours) {
-      const speeds = points.map((p: AnalyzedPoint) => p.groundSpeed ?? p.speedCalculated ?? 0);
-      const avgSpeed = speeds.reduce((a: number, b: number) => a + b, 0) / speeds.length;
-      const maxSpeed = Math.max(...speeds);
-
-      alerts.push({
-        individual: first.individual,
-        species: speciesMap.get(first.individual) || "Desconocida",
-        alertStart: first.timestamp,
-        alertEnd: last.timestamp,
-        hoursImmobile: Math.round(durationHours * 10) / 10,
-        daysImmobile: Math.round((durationHours / 24) * 10) / 10,
-        numRecords: points.length,
-        lastLat: last.latitude,
-        lastLon: last.longitude,
-        avgSpeed: Math.round(avgSpeed * 1000) / 1000,
-        maxSpeed: Math.round(maxSpeed * 1000) / 1000,
-        googleMapsUrl: `https://www.google.com/maps?q=${last.latitude},${last.longitude}`,
-        status: "INMÓVIL",
-        severity: durationHours > 48 ? "critical" : "warning",
-      });
-    }
-  });
-
-  return alerts;
+  return null;
 }
 
 function checkTransmissionStatus(
@@ -382,7 +438,10 @@ export async function analyzeImmobility(
   }
   const persist = options.persist !== false;
   const now = Date.now();
-  const startTime = now - cfg.hoursToAnalyze * 60 * 60 * 1000;
+  // Cargar al menos la ventana de inmovilidad para que el criterio ACC/GPS pueda
+  // evaluarse aunque el caller pida un hoursToAnalyze menor que immobilityThresholdHours.
+  const loadWindowHours = Math.max(cfg.hoursToAnalyze, cfg.immobilityThresholdHours);
+  const startTime = now - loadWindowHours * 60 * 60 * 1000;
 
   log(`Immobility: Analizando estudio ${studyId} (${cfg.hoursToAnalyze}h, umbral ${cfg.immobilityThresholdHours}h, persist=${persist})`, "analysis");
 
@@ -428,19 +487,29 @@ export async function analyzeImmobility(
   }
 
   const allGpsEvents: CachedGpsEvent[] = [];
+  const gpsByAnimal = new Map<string, CachedGpsEvent[]>();
+  const accByAnimal = new Map<string, CachedAccEvent[]>();
   for (const animal of filteredIndividuals) {
     const rawEvents = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, startTime, now);
     // Excluir GPS de baja calidad (HDOP > 5) del análisis de inmovilidad/mortalidad.
     const events = filterHighQualityGps(rawEvents);
     allGpsEvents.push(...events);
+    gpsByAnimal.set(animal.localIdentifier, events);
+    const accEvents = await storage.getCachedAccEvents(studyId, animal.localIdentifier, startTime, now);
+    accByAnimal.set(animal.localIdentifier, accEvents);
   }
 
-  log(`Immobility: ${allGpsEvents.length} GPS events para ${filteredIndividuals.length} animales`, "analysis");
+  const totalAcc = Array.from(accByAnimal.values()).reduce((s, a) => s + a.length, 0);
+  log(`Immobility: ${allGpsEvents.length} GPS / ${totalAcc} ACC events para ${filteredIndividuals.length} animales`, "analysis");
 
-  const prepared = prepareData(allGpsEvents, cfg);
-  prepared.sort((a, b) => a.individual.localeCompare(b.individual) || a.timestamp - b.timestamp);
-  const analyzed = detectImmobility(prepared, cfg);
-  const immobilityAlerts = identifyMortalityEvents(analyzed, cfg, speciesMap);
+  // Detección de mortalidad/inmovilidad: ACC primario, GPS por radio (50 m) de respaldo.
+  const immobilityAlerts: ImmobilityAlert[] = [];
+  for (const animal of filteredIndividuals) {
+    const id = animal.localIdentifier;
+    const species = speciesMap.get(id) || "Desconocida";
+    const alert = buildMortalityAlert(id, species, accByAnimal.get(id) ?? [], gpsByAnimal.get(id) ?? [], cfg, now);
+    if (alert) immobilityAlerts.push(alert);
+  }
 
   // Estado de transmisión basado en histórico COMPLETO, no solo en la ventana analizada.
   // Así detectamos animales que llevan mucho tiempo silenciados (>>96h) cuya última GPS
@@ -503,8 +572,8 @@ export async function analyzeImmobility(
     }
   }
 
-  const immobilePoints = analyzed.filter(p => p.isImmobile).length;
-  const groupIds = new Set(analyzed.filter(p => p.immobilityGroupId != null).map(p => p.immobilityGroupId));
+  const immobilePoints = immobilityAlerts.reduce((s, a) => s + a.numRecords, 0);
+  const immobilityGroups = immobilityAlerts.length;
 
   const newCriticalAlerts: NewCriticalAlert[] = [];
   let resolvedCount = 0;
@@ -529,7 +598,15 @@ export async function analyzeImmobility(
           timestampEnd: alert.alertEnd,
           lat: alert.lastLat,
           lng: alert.lastLon,
-          description: `Inmovilidad detectada: ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} registros. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
+          description: alert.method === "acc"
+            ? `Mortalidad detectada por acelerómetro: ${alert.hoursImmobile}h (${alert.daysImmobile} días) sin variación significativa, ${alert.numRecords} muestras ACC. Varianza combinada=${alert.accVariance} (umbral=${cfg.accVarianceThreshold})`
+            : `Inmovilidad detectada por GPS (radio ${cfg.immobilityRadiusMeters}m): ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} posiciones. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
+          metadata: {
+            method: alert.method,
+            acc_combined_variance: alert.accVariance,
+            duration_hours: alert.hoursImmobile,
+            samples: alert.numRecords,
+          } as any,
           readStatus: false,
           resolvedStatus: false,
           accValues: null,
@@ -792,7 +869,7 @@ export async function analyzeImmobility(
     stats: {
       totalGpsPoints: allGpsEvents.length,
       immobilePoints,
-      immobilityGroups: groupIds.size,
+      immobilityGroups,
     },
     newCriticalAlerts,
     resolvedCount,
