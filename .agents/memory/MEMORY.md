@@ -1,1 +1,2 @@
 - [Immobility-monitor deep links](immobility-monitor-deeplinks.md) — per-row action links must use the analyzed study id, not the mutable selector.
+- [WildTrack empty visualization](wildtrack-empty-viz.md) — "no veo datos" is usually data recency (dormant Ornitela devices + recent range), not a code bug; verify with SQL/tsx before editing.

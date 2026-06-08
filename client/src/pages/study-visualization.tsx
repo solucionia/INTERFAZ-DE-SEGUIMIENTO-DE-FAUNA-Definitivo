@@ -1204,6 +1204,17 @@ export default function StudyVisualization() {
                     )}
                   </h2>
                   <div className="flex-1 min-h-0 rounded-md overflow-hidden border" ref={mapContainerRef}>
+                    {totalGpsPoints === 0 ? (
+                      <div className="h-full flex items-center justify-center p-4" data-testid="empty-gps-map">
+                        <div className="text-center space-y-2 max-w-sm">
+                          <MapPin className="w-10 h-10 mx-auto text-muted-foreground/30" />
+                          <p className="text-sm font-medium text-foreground">No hay datos GPS en este rango</p>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedAnimals.length > 1 ? "Los animales seleccionados no han" : "Este animal no ha"} transmitido posiciones en las fechas elegidas. Prueba con un rango de fechas más amplio (por ejemplo 30d o 90d).
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
                     <MapContainer center={mapCenter || [0, 0]} zoom={12} style={{ height: "100%", width: "100%" }} scrollWheelZoom={true}>
                       <MapLayerControl />
                       <GoogleMapsClick />
@@ -1279,6 +1290,7 @@ export default function StudyVisualization() {
                         </Marker>
                       )}
                     </MapContainer>
+                    )}
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1 text-center">Clic en el mapa para abrir en Google Maps</p>
                 </div>
