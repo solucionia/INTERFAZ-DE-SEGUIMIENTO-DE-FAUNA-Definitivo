@@ -13,6 +13,7 @@ import AuthPage from "@/pages/auth-page";
 import Dashboard from "@/pages/dashboard";
 import StudyDetail from "@/pages/study-detail";
 import StudyVisualization from "@/pages/study-visualization";
+import StudyFullscreen from "@/pages/study-fullscreen";
 import AdminStudies from "@/pages/admin-studies";
 import AdminUsers from "@/pages/admin-users";
 import AdminSpeciesProfiles from "@/pages/admin-species-profiles";
@@ -104,7 +105,18 @@ function AppLayout() {
   };
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <Switch>
+      <Route path="/study/:id/fullscreen" component={StudyFullscreen} />
+      <Route>
+        <FullLayout style={style as React.CSSProperties} />
+      </Route>
+    </Switch>
+  );
+}
+
+function FullLayout({ style }: { style: React.CSSProperties }) {
+  return (
+    <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">

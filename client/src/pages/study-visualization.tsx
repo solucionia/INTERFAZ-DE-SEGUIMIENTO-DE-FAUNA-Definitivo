@@ -60,6 +60,7 @@ import {
   Database,
   FileCode,
   Table2,
+  Maximize2,
 } from "lucide-react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -917,6 +918,21 @@ export default function StudyVisualization() {
             {loading && !forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Cargar datos
           </Button>
+          {currentDeviceId && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!studyId || !currentDeviceId || !dateStart || !dateEnd) return;
+                const p = new URLSearchParams({ animal: currentDeviceId, start: dateStart, end: dateEnd });
+                window.open(`/study/${studyId}/fullscreen?${p.toString()}`, "_blank");
+              }}
+              data-testid="button-fullscreen"
+              title="Abrir mapa + acelerómetro a pantalla completa en una nueva pestaña"
+            >
+              <Maximize2 className="w-4 h-4 mr-2" />
+              Pantalla completa
+            </Button>
+          )}
           {dataLoaded && !isObserver && (
             <Button
               variant="outline"
