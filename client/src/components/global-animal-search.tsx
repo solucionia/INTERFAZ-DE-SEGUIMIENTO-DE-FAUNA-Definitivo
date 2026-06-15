@@ -47,7 +47,12 @@ export function GlobalAnimalSearch() {
 
   const handleSelect = (ind: GlobalIndividual) => {
     setOpen(false);
-    setLocation(`/study/${ind.studyId}/visualize`);
+    const animal = ind.localIdentifier;
+    setLocation(
+      animal
+        ? `/study/${ind.studyId}/visualize?animal=${encodeURIComponent(animal)}`
+        : `/study/${ind.studyId}/visualize`
+    );
   };
 
   const studyGroups = useMemo(() => {

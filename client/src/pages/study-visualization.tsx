@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { useRoute, Link } from "wouter";
+import { useRoute, useSearch, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Study, Individual, DetectedEvent, Project, AccelerometerLabel, BehaviorType } from "@shared/schema";
 import { EVENT_LABELS, EVENT_COLORS, BEHAVIOR_TYPES, BEHAVIOR_LABELS, BEHAVIOR_COLORS } from "@shared/schema";
@@ -211,6 +211,7 @@ function severityBadge(severity: string) {
 export default function StudyVisualization() {
   const [, params] = useRoute("/study/:id/visualize");
   const studyId = params?.id;
+  const search = useSearch();
   const { toast } = useToast();
   const { canExport, canDetectEvents, isObserver } = usePermissions();
 
@@ -432,16 +433,18 @@ export default function StudyVisualization() {
     }
   }, [dateStart, dateEnd]);
 
-  // Apertura directa desde alertas/inmovilidad: ?animal=<localId> preselecciona el
-  // animal, fija un rango de 7 días y carga sus datos automáticamente.
-  const didInitFromUrl = useRef(false);
+  // Apertura directa desde alertas/inmovilidad/buscador global: ?animal=<localId>
+  // preselecciona el animal, fija un rango de 7 días y carga sus datos
+  // automáticamente. Reacciona a cambios del parámetro para que seleccionar otro
+  // animal funcione aunque la página ya esté montada.
+  const lastAppliedAnimal = useRef<string | null>(null);
   useEffect(() => {
-    if (didInitFromUrl.current) return;
     if (!individuals || individuals.length === 0) return;
-    didInitFromUrl.current = true;
-    const animal = new URLSearchParams(window.location.search).get("animal");
+    const animal = new URLSearchParams(search).get("animal");
     if (!animal) return;
+    if (animal === lastAppliedAnimal.current) return;
     if (!individuals.some((i) => i.localIdentifier === animal)) return;
+    lastAppliedAnimal.current = animal;
     const now = new Date();
     const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const fmt = (d: Date) =>
@@ -452,7 +455,7 @@ export default function StudyVisualization() {
     setDateEnd(fmt(now));
     setActiveQuickRange("7d");
     pendingAutoLoad.current = true;
-  }, [individuals]);
+  }, [individuals, search]);
 
   const handleDateStartChange = (val: string) => {
     setDateStart(val);
