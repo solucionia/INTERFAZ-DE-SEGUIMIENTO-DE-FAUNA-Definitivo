@@ -25,6 +25,14 @@ export interface ImmobilityConfig {
   // se considera inmóvil si el 90% de los puntos del período caen dentro de este
   // radio (metros) respecto al centro mediano, ignorando outliers puntuales.
   immobilityRadiusMeters: number;
+  // Criterios activables/desactivables individualmente (ambos true por defecto):
+  // - enableImmobility: si es false, NO se evalúa inmovilidad/mortalidad ni se
+  //   generan/persisten alertas `mortality`.
+  // - enableNoTransmission: si es false, NO se evalúa "sin transmisión" ni se
+  //   generan/persisten alertas `no_transmission` (evita falsos positivos de
+  //   emisores inactivos cuando solo se quiere analizar inmovilidad).
+  enableImmobility: boolean;
+  enableNoTransmission: boolean;
 }
 
 export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
@@ -36,6 +44,8 @@ export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
   accVarianceThreshold: 5,
   accMinSamples: 10,
   immobilityRadiusMeters: 50,
+  enableImmobility: true,
+  enableNoTransmission: true,
 };
 
 export const NO_TRANSMISSION_THRESHOLD_DAYS_KEY = "no_transmission_threshold_days";
@@ -503,12 +513,15 @@ export async function analyzeImmobility(
   log(`Immobility: ${allGpsEvents.length} GPS / ${totalAcc} ACC events para ${filteredIndividuals.length} animales`, "analysis");
 
   // Detección de mortalidad/inmovilidad: ACC primario, GPS por radio (50 m) de respaldo.
+  // Solo se evalúa si el criterio de inmovilidad está activo.
   const immobilityAlerts: ImmobilityAlert[] = [];
-  for (const animal of filteredIndividuals) {
-    const id = animal.localIdentifier;
-    const species = speciesMap.get(id) || "Desconocida";
-    const alert = buildMortalityAlert(id, species, accByAnimal.get(id) ?? [], gpsByAnimal.get(id) ?? [], cfg, now);
-    if (alert) immobilityAlerts.push(alert);
+  if (cfg.enableImmobility) {
+    for (const animal of filteredIndividuals) {
+      const id = animal.localIdentifier;
+      const species = speciesMap.get(id) || "Desconocida";
+      const alert = buildMortalityAlert(id, species, accByAnimal.get(id) ?? [], gpsByAnimal.get(id) ?? [], cfg, now);
+      if (alert) immobilityAlerts.push(alert);
+    }
   }
 
   // Estado de transmisión basado en histórico COMPLETO, no solo en la ventana analizada.
@@ -530,7 +543,10 @@ export async function analyzeImmobility(
     const hoursSince = (now - lastEvt.timestamp) / (1000 * 60 * 60);
     const species = speciesMap.get(animal.localIdentifier) || "Desconocida";
 
-    if (hoursSince >= cfg.noTransmissionThresholdHours) {
+    // Si el criterio "sin transmisión" está desactivado, se ignora por completo:
+    // el umbral NO clasifica animales (no se generan alertas y NO se excluyen de
+    // `active`), de modo que el análisis se centra solo en inmovilidad.
+    if (cfg.enableNoTransmission && hoursSince >= cfg.noTransmissionThresholdHours) {
       // Animal sin transmisión reciente:
       // - Solo generamos alerta no_transmission para estudios Ornitela.
       // - En cualquier caso, NO entra en `active` → no auto-resuelve mortality/no_transmission
@@ -687,13 +703,20 @@ export async function analyzeImmobility(
       }
     }
 
-    // 3) Resolución: animales que vuelven a transmitir → marcar abiertas como resueltas
-    for (const a of active) {
-      try {
-        const n = await storage.markDetectedEventsResolved(studyId, a.individual, ["mortality", "no_transmission"]);
-        resolvedCount += n;
-      } catch (e: any) {
-        log(`Immobility: Error resolviendo eventos para ${a.individual}: ${e.message}`, "analysis");
+    // 3) Resolución: animales que vuelven a transmitir → marcar abiertas como resueltas.
+    //    Solo se resuelven los tipos cuyo criterio esté activo (un criterio
+    //    desactivado se ignora por completo, no toca sus eventos existentes).
+    const typesToResolve: ("mortality" | "no_transmission")[] = [];
+    if (cfg.enableImmobility) typesToResolve.push("mortality");
+    if (cfg.enableNoTransmission) typesToResolve.push("no_transmission");
+    if (typesToResolve.length > 0) {
+      for (const a of active) {
+        try {
+          const n = await storage.markDetectedEventsResolved(studyId, a.individual, typesToResolve);
+          resolvedCount += n;
+        } catch (e: any) {
+          log(`Immobility: Error resolviendo eventos para ${a.individual}: ${e.message}`, "analysis");
+        }
       }
     }
   }

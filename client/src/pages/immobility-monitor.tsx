@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -126,6 +127,8 @@ interface AnalysisResult {
       noTransmissionThresholdHours: number;
       speedThreshold: number;
       positionChangeThreshold: number;
+      enableImmobility?: boolean;
+      enableNoTransmission?: boolean;
     };
     zoneDeviation?: number;
   };
@@ -174,6 +177,8 @@ export default function ImmobilityMonitor() {
   const [hoursToAnalyze, setHoursToAnalyze] = useState(96);
   const [immobilityThreshold, setImmobilityThreshold] = useState(24);
   const [noTransmissionThreshold, setNoTransmissionThreshold] = useState(48);
+  const [enableImmobility, setEnableImmobility] = useState(true);
+  const [enableNoTransmission, setEnableNoTransmission] = useState(true);
   const [speedThreshold, setSpeedThreshold] = useState(0.5);
   const [positionThreshold, setPositionThreshold] = useState(0.0001);
 
@@ -200,15 +205,20 @@ export default function ImmobilityMonitor() {
         noTransmissionThresholdHours: noTransmissionThreshold,
         speedThreshold,
         positionChangeThreshold: positionThreshold,
+        enableImmobility,
+        enableNoTransmission,
       });
       return res.json();
     },
     onSuccess: (data: AnalysisResult) => {
       setResult(data);
       setAnalyzedStudyId(selectedStudyId);
+      const parts: string[] = [];
+      if (data.summary.config.enableImmobility !== false) parts.push(`${data.summary.immobile} inmóviles`);
+      if (data.summary.config.enableNoTransmission !== false) parts.push(`${data.summary.noTransmission} sin transmisión`);
       toast({
         title: "Análisis completado",
-        description: `${data.summary.immobile} inmóviles, ${data.summary.noTransmission} sin transmisión de ${data.summary.totalAnimals} animales`,
+        description: `${parts.join(", ")}${parts.length ? " de " : ""}${data.summary.totalAnimals} animales`,
       });
     },
     onError: (err: Error) => {
@@ -322,27 +332,55 @@ export default function ImmobilityMonitor() {
             </div>
 
             <div className="space-y-2">
-              <Label>Umbral de inmovilidad: {immobilityThreshold}h</Label>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-immobility"
+                  checked={enableImmobility}
+                  onCheckedChange={(v) => setEnableImmobility(v === true)}
+                  data-testid="checkbox-enable-immobility"
+                />
+                <Label htmlFor="enable-immobility" className={enableImmobility ? "" : "text-muted-foreground"}>
+                  Umbral de inmovilidad: {immobilityThreshold}h
+                </Label>
+              </div>
               <Slider
                 value={[immobilityThreshold]}
                 onValueChange={([v]) => setImmobilityThreshold(v)}
                 min={6}
                 max={168}
                 step={6}
+                disabled={!enableImmobility}
                 data-testid="slider-immobility"
               />
+              {!enableImmobility && (
+                <p className="text-xs text-muted-foreground">Criterio desactivado: no se generarán alertas de inmovilidad/mortalidad.</p>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label>Umbral sin transmisión: {noTransmissionThreshold}h</Label>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-no-transmission"
+                  checked={enableNoTransmission}
+                  onCheckedChange={(v) => setEnableNoTransmission(v === true)}
+                  data-testid="checkbox-enable-no-transmission"
+                />
+                <Label htmlFor="enable-no-transmission" className={enableNoTransmission ? "" : "text-muted-foreground"}>
+                  Umbral sin transmisión: {noTransmissionThreshold}h
+                </Label>
+              </div>
               <Slider
                 value={[noTransmissionThreshold]}
                 onValueChange={([v]) => setNoTransmissionThreshold(v)}
                 min={12}
                 max={240}
                 step={12}
+                disabled={!enableNoTransmission}
                 data-testid="slider-no-transmission"
               />
+              {!enableNoTransmission && (
+                <p className="text-xs text-muted-foreground">Criterio desactivado: emisores inactivos no aparecerán como falsos positivos.</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -410,20 +448,24 @@ export default function ImmobilityMonitor() {
                     <p className="text-xs text-muted-foreground">Transmitiendo</p>
                   </CardContent>
                 </Card>
-                <Card>
-                  <CardContent className="p-3 text-center">
-                    <WifiOff className="w-5 h-5 mx-auto mb-1 text-orange-500" />
-                    <p className="text-2xl font-bold text-orange-500" data-testid="text-no-transmission">{result.summary.noTransmission}</p>
-                    <p className="text-xs text-muted-foreground">Sin transmisión</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-3 text-center">
-                    <Skull className="w-5 h-5 mx-auto mb-1 text-red-500" />
-                    <p className="text-2xl font-bold text-red-500" data-testid="text-immobile">{result.summary.immobile}</p>
-                    <p className="text-xs text-muted-foreground">Inmóviles</p>
-                  </CardContent>
-                </Card>
+                {result.summary.config.enableNoTransmission !== false && (
+                  <Card>
+                    <CardContent className="p-3 text-center">
+                      <WifiOff className="w-5 h-5 mx-auto mb-1 text-orange-500" />
+                      <p className="text-2xl font-bold text-orange-500" data-testid="text-no-transmission">{result.summary.noTransmission}</p>
+                      <p className="text-xs text-muted-foreground">Sin transmisión</p>
+                    </CardContent>
+                  </Card>
+                )}
+                {result.summary.config.enableImmobility !== false && (
+                  <Card>
+                    <CardContent className="p-3 text-center">
+                      <Skull className="w-5 h-5 mx-auto mb-1 text-red-500" />
+                      <p className="text-2xl font-bold text-red-500" data-testid="text-immobile">{result.summary.immobile}</p>
+                      <p className="text-xs text-muted-foreground">Inmóviles</p>
+                    </CardContent>
+                  </Card>
+                )}
                 <Card>
                   <CardContent className="p-3 text-center">
                     <ShieldAlert className="w-5 h-5 mx-auto mb-1 text-red-600" />
