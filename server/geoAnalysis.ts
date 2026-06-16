@@ -358,6 +358,133 @@ function computeLSCVBandwidth(points: GpsPoint[], href: number): { h: number; co
 
 const MAX_GRID_SIDE = 80;
 
+type GridPt = [number, number];
+
+// Interpolación lineal de la posición de cruce del umbral entre dos valores de celda.
+function lerpCrossing(va: number, vb: number, threshold: number): number {
+  const d = vb - va;
+  if (d === 0) return 0.5;
+  const t = (threshold - va) / d;
+  return t < 0 ? 0 : t > 1 ? 1 : t;
+}
+
+// Marching squares sobre una rejilla regular de densidad (row-major, ancho W, alto H).
+// Devuelve los anillos cerrados de la isolínea para `threshold`, en coordenadas de
+// rejilla. La rejilla debe venir con un borde "exterior" (valor < umbral) para que
+// todos los contornos cierren dentro del dominio. Equivalente al trazado de
+// getverticeshr() de adehabitatHR: sigue la forma real de la densidad, no su
+// envolvente convexa.
+function marchingSquaresRings(values: number[], W: number, H: number, threshold: number): GridPt[][] {
+  const at = (r: number, c: number) => values[r * W + c];
+  const key = (p: GridPt) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+  const segs: [GridPt, GridPt][] = [];
+
+  for (let r = 0; r < H - 1; r++) {
+    for (let c = 0; c < W - 1; c++) {
+      const tl = at(r, c);
+      const tr = at(r, c + 1);
+      const br = at(r + 1, c + 1);
+      const bl = at(r + 1, c);
+
+      let code = 0;
+      if (tl >= threshold) code |= 8;
+      if (tr >= threshold) code |= 4;
+      if (br >= threshold) code |= 2;
+      if (bl >= threshold) code |= 1;
+      if (code === 0 || code === 15) continue;
+
+      const T = (): GridPt => [c + lerpCrossing(tl, tr, threshold), r];
+      const R = (): GridPt => [c + 1, r + lerpCrossing(tr, br, threshold)];
+      const B = (): GridPt => [c + lerpCrossing(bl, br, threshold), r + 1];
+      const L = (): GridPt => [c, r + lerpCrossing(tl, bl, threshold)];
+      const seg = (a: GridPt, b: GridPt) => segs.push([a, b]);
+
+      switch (code) {
+        case 1: seg(L(), B()); break;
+        case 2: seg(B(), R()); break;
+        case 3: seg(L(), R()); break;
+        case 4: seg(T(), R()); break;
+        case 5: {
+          const center = (tl + tr + br + bl) / 4;
+          if (center >= threshold) { seg(T(), L()); seg(B(), R()); }
+          else { seg(T(), R()); seg(L(), B()); }
+          break;
+        }
+        case 6: seg(T(), B()); break;
+        case 7: seg(L(), T()); break;
+        case 8: seg(T(), L()); break;
+        case 9: seg(T(), B()); break;
+        case 10: {
+          const center = (tl + tr + br + bl) / 4;
+          if (center >= threshold) { seg(T(), R()); seg(L(), B()); }
+          else { seg(T(), L()); seg(B(), R()); }
+          break;
+        }
+        case 11: seg(T(), R()); break;
+        case 12: seg(L(), R()); break;
+        case 13: seg(R(), B()); break;
+        case 14: seg(L(), B()); break;
+      }
+    }
+  }
+
+  // Coser los segmentos en anillos cerrados conectando extremos compartidos.
+  const adj = new Map<string, { pt: GridPt; segId: number }[]>();
+  segs.forEach((s, i) => {
+    const ka = key(s[0]);
+    const kb = key(s[1]);
+    if (!adj.has(ka)) adj.set(ka, []);
+    if (!adj.has(kb)) adj.set(kb, []);
+    adj.get(ka)!.push({ pt: s[1], segId: i });
+    adj.get(kb)!.push({ pt: s[0], segId: i });
+  });
+
+  const used = new Array(segs.length).fill(false);
+  const rings: GridPt[][] = [];
+
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    const start = segs[i][0];
+    let current = segs[i][1];
+    used[i] = true;
+    const ring: GridPt[] = [start, current];
+    let guard = 0;
+    while (key(current) !== key(start) && guard++ <= segs.length) {
+      const nbrs = adj.get(key(current)) || [];
+      let nextSeg = -1;
+      let nextPt: GridPt | null = null;
+      for (const nb of nbrs) {
+        if (!used[nb.segId]) { nextSeg = nb.segId; nextPt = nb.pt; break; }
+      }
+      if (nextSeg === -1 || !nextPt) break;
+      used[nextSeg] = true;
+      current = nextPt;
+      ring.push(current);
+    }
+    if (ring.length >= 4 && key(ring[0]) === key(ring[ring.length - 1])) {
+      rings.push(ring);
+    }
+  }
+
+  return rings;
+}
+
+// Test punto-en-polígono (ray casting) en espacio de rejilla, para anidar agujeros.
+function pointInGridRing(pt: GridPt, ring: GridPt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    if (((yi > pt[1]) !== (yj > pt[1])) &&
+        (pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 function computeKernelMultiPercent(
   pts: GpsPoint[],
   id: string,
@@ -457,26 +584,128 @@ function computeKernelMultiPercent(
     }
   }
 
+  // Reconstruir la rejilla regular (lattice lng/lat) a partir de los puntos de
+  // densidad ya calculados, para poder extraer isolíneas con marching squares.
+  const fkey = (v: number) => v.toFixed(8);
+  const xMap = new Map<string, number>();
+  const yMap = new Map<string, number>();
+  for (const f of grid.features as any[]) {
+    const lng = f.geometry.coordinates[0];
+    const lat = f.geometry.coordinates[1];
+    xMap.set(fkey(lng), lng);
+    yMap.set(fkey(lat), lat);
+  }
+  const xs = Array.from(xMap.values()).sort((a, b) => a - b);
+  const ys = Array.from(yMap.values()).sort((a, b) => a - b);
+  const gnx = xs.length;
+  const gny = ys.length;
+
+  let structured: { W: number; H: number; padded: number[]; toGeo: (p: GridPt) => [number, number] } | null = null;
+  if (gnx >= 2 && gny >= 2) {
+    const xIdx = new Map(xs.map((v, i) => [fkey(v), i]));
+    const yIdx = new Map(ys.map((v, i) => [fkey(v), i]));
+    const dens2d = new Array(gnx * gny).fill(0);
+    grid.features.forEach((f: any, k: number) => {
+      const ci = xIdx.get(fkey(f.geometry.coordinates[0]));
+      const ri = yIdx.get(fkey(f.geometry.coordinates[1]));
+      if (ci !== undefined && ri !== undefined) dens2d[ri * gnx + ci] = densities[k];
+    });
+    // Borde exterior con valor < cualquier densidad (densidades >= 0) para que
+    // todos los contornos cierren dentro del dominio.
+    const W = gnx + 2;
+    const H = gny + 2;
+    const padded = new Array(W * H).fill(-1);
+    for (let r = 0; r < gny; r++) {
+      for (let c = 0; c < gnx; c++) {
+        padded[(r + 1) * W + (c + 1)] = dens2d[r * gnx + c];
+      }
+    }
+    const dxDeg = (xs[gnx - 1] - xs[0]) / (gnx - 1);
+    const dyDeg = (ys[gny - 1] - ys[0]) / (gny - 1);
+    const toGeo = (p: GridPt): [number, number] => [
+      xs[0] + (p[0] - 1) * dxDeg,
+      ys[0] + (p[1] - 1) * dyDeg,
+    ];
+    structured = { W, H, padded, toGeo };
+  }
+
+  const closeRing = (r: [number, number][]): [number, number][] => {
+    const a = r[0];
+    const b = r[r.length - 1];
+    if (a[0] !== b[0] || a[1] !== b[1]) r.push([a[0], a[1]]);
+    return r;
+  };
+
   for (const pct of percentages) {
     const threshold = thresholds[pct];
     const cellsAbove = grid.features.filter((f: any) => (f.properties?.density ?? 0) >= threshold);
-    const cellCountArea = cellsAbove.length * cellAreaKm2;
 
-    if (cellsAbove.length >= 3) {
+    let polygonFeature: GeoJSON.Feature | null = null;
+    let areaKm2: number | null = null;
+
+    // 1) Contorno real de densidad (isolínea) vía marching squares.
+    if (structured && threshold > 0) {
+      const rings = marchingSquaresRings(structured.padded, structured.W, structured.H, threshold);
+      if (rings.length > 0) {
+        const geoRings = rings.map((r) => closeRing(r.map(structured!.toGeo)));
+        // Profundidad de anidamiento: par = anillo exterior, impar = agujero.
+        const depth = rings.map((r, ri) => {
+          let d = 0;
+          const tp = r[0];
+          for (let si = 0; si < rings.length; si++) {
+            if (si !== ri && pointInGridRing(tp, rings[si])) d++;
+          }
+          return d;
+        });
+        const polygons: [number, number][][][] = [];
+        rings.forEach((_, oi) => {
+          if (depth[oi] % 2 !== 0) return; // sólo anillos exteriores
+          const coords: [number, number][][] = [geoRings[oi]];
+          rings.forEach((_, hi) => {
+            if (depth[hi] === depth[oi] + 1 && pointInGridRing(rings[hi][0], rings[oi])) {
+              coords.push(geoRings[hi]);
+            }
+          });
+          polygons.push(coords);
+        });
+
+        try {
+          if (polygons.length === 1) polygonFeature = turf.polygon(polygons[0]);
+          else if (polygons.length > 1) polygonFeature = turf.multiPolygon(polygons);
+        } catch {
+          polygonFeature = null;
+        }
+
+        if (polygonFeature) {
+          const a = turf.area(polygonFeature) / 1e6;
+          if (Number.isFinite(a) && a > 0) areaKm2 = a;
+          else polygonFeature = null;
+        }
+      }
+    }
+
+    // 2) Fallback: envolvente convexa si la isolínea falla o queda vacía.
+    if (!polygonFeature && cellsAbove.length >= 3) {
       const hull = turf.convex(turf.featureCollection(cellsAbove));
       if (hull) {
-        areas[`${pct}`] = Math.round(cellCountArea * 1000) / 1000;
-
-        hull.properties = {
-          id,
-          level: `${pct}%`,
-          percent: pct,
-          area_km2: Math.round(cellCountArea * 1000) / 1000,
-          type: "kernel",
-          method,
-        };
-        features.push(hull);
+        polygonFeature = hull;
+        const a = turf.area(hull) / 1e6;
+        areaKm2 = Number.isFinite(a) && a > 0 ? a : cellsAbove.length * cellAreaKm2;
       }
+    }
+
+    if (polygonFeature && areaKm2 !== null) {
+      const rounded = Math.round(areaKm2 * 1000) / 1000;
+      areas[`${pct}`] = rounded;
+      polygonFeature.properties = {
+        id,
+        level: `${pct}%`,
+        percent: pct,
+        area_km2: rounded,
+        type: "kernel",
+        method,
+      };
+      features.push(polygonFeature);
     }
   }
 
