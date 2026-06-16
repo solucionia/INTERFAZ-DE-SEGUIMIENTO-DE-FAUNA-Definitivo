@@ -824,21 +824,32 @@ export async function registerRoutes(
       const polygonFeatures: any[] = [];
       const pointFeatures: any[] = [];
 
+      // Para análisis "kernel" y "comprehensive" exportamos SOLO los contornos KDE
+      // (home range con los percentiles configurados por el usuario). El análisis
+      // comprehensive también genera polígonos MCP (intervalos fijos 20–100%) como
+      // subproducto tabular; esos NO deben acabar en el GeoJSON/KMZ/SHP, que deben
+      // contener el equivalente a las capas home_range_<pct> de QGIS. Solo cuando el
+      // usuario pide explícitamente "mcp" exportamos los polígonos MCP.
+      const keepPolygon = (f: any): boolean => {
+        const geomType = f.geometry?.type;
+        if (geomType !== "Polygon" && geomType !== "MultiPolygon") return false;
+        if (analysisType !== "mcp" && f.properties?.type === "mcp") return false;
+        return true;
+      };
+
       if ((analysisResult as any).geojson?.features) {
         for (const f of (analysisResult as any).geojson.features) {
-          const geomType = f.geometry?.type;
-          if (geomType === "Polygon" || geomType === "MultiPolygon") {
-            polygonFeatures.push({
-              ...f,
-              properties: {
-                ...f.properties,
-                analysis_type: analysisType,
-                study_name: study.name,
-                date_start: dateStartStr,
-                date_end: dateEndStr,
-              },
-            });
-          }
+          if (!keepPolygon(f)) continue;
+          polygonFeatures.push({
+            ...f,
+            properties: {
+              ...f.properties,
+              analysis_type: analysisType,
+              study_name: study.name,
+              date_start: dateStartStr,
+              date_end: dateEndStr,
+            },
+          });
         }
       }
 
@@ -846,19 +857,17 @@ export async function registerRoutes(
         for (const ind of (analysisResult as any).perIndividual) {
           if (ind.geojson?.features) {
             for (const f of ind.geojson.features) {
-              const geomType = f.geometry?.type;
-              if (geomType === "Polygon" || geomType === "MultiPolygon") {
-                polygonFeatures.push({
-                  ...f,
-                  properties: {
-                    ...f.properties,
-                    analysis_type: analysisType,
-                    study_name: study.name,
-                    date_start: dateStartStr,
-                    date_end: dateEndStr,
-                  },
-                });
-              }
+              if (!keepPolygon(f)) continue;
+              polygonFeatures.push({
+                ...f,
+                properties: {
+                  ...f.properties,
+                  analysis_type: analysisType,
+                  study_name: study.name,
+                  date_start: dateStartStr,
+                  date_end: dateEndStr,
+                },
+              });
             }
           }
         }
