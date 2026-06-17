@@ -966,45 +966,94 @@ export async function registerRoutes(
 
       if (fmt === "shp") {
         const JSZip = (await import("jszip")).default;
-        const zip = new JSZip();
-        const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]`;
+        // Usamos el escritor de bajo nivel de shp-write directamente; el wrapper
+        // geojson.polygon() de la librería descarta agujeros/MultiPolygon y mezcla
+        // todos los rasgos en un único registro, por lo que no sirve aquí.
+        // @ts-ignore - shp-write no incluye tipos
+        const shpModule: any = await import("shp-write");
+        const shpwriteWrite: (rows: any[], type: string, geometries: any[], cb: (err: any, files: any) => void) => void =
+          shpModule.default?.write ?? shpModule.write;
+        if (typeof shpwriteWrite !== "function") {
+          return res.status(500).json({ message: "No se pudo cargar el generador de shapefiles (shp-write)." });
+        }
 
-        const polygonGeoJson = { type: "FeatureCollection", features: polygonFeatures.map(f => ({
-          ...f,
-          properties: {
-            name: f.properties?.id || f.properties?.individual || "",
-            type: f.properties?.type || analysisType,
-            percent: String(f.properties?.percent || f.properties?.level || ""),
-            area_km2: f.properties?.area_km2 ?? 0,
+        // EPSG:4326 / WGS84 (WKT ESRI). El .cpg declara ISO-8859-1 porque la
+        // librería dbf escribe los caracteres como bytes Latin-1 (charCodeAt).
+        const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]`;
+        const cpgContent = "ISO-8859-1";
+
+        // Orientación de anillos según el estándar shapefile: exterior en sentido
+        // horario (área < 0), agujeros en sentido antihorario (área > 0).
+        const ringSignedArea = (ring: number[][]): number => {
+          let a = 0;
+          for (let i = 0; i < ring.length - 1; i++) {
+            a += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+          }
+          return a / 2;
+        };
+        const orientPolygon = (rings: number[][][]): number[][][] =>
+          rings.map((ring, idx) => {
+            const a = ringSignedArea(ring);
+            if (idx === 0) return a > 0 ? [...ring].reverse() : ring; // exterior -> CW
+            return a < 0 ? [...ring].reverse() : ring;                // agujero -> CCW
+          });
+        const orientedCoords = (f: any): any =>
+          f.geometry?.type === "MultiPolygon"
+            ? f.geometry.coordinates.map(orientPolygon)
+            : orientPolygon(f.geometry.coordinates);
+
+        const featPct = (f: any): number => {
+          const raw = f.properties?.percent ?? f.properties?.level;
+          return typeof raw === "number" ? raw : parseFloat(String(raw));
+        };
+
+        // Agrupar los polígonos por percentil -> un shapefile independiente por grupo.
+        const groups = new Map<number, any[]>();
+        for (const f of polygonFeatures) {
+          const pct = featPct(f);
+          if (!Number.isFinite(pct)) continue;
+          if (!groups.has(pct)) groups.set(pct, []);
+          groups.get(pct)!.push(f);
+        }
+
+        if (groups.size === 0) {
+          return res.status(400).json({
+            message: "No hay polígonos de home range para exportar en SHP. Usa GeoJSON o KMZ para este análisis.",
+          });
+        }
+
+        const buildShp = (rows: any[], geometries: any[]) =>
+          new Promise<{ shp: ArrayBuffer; shx: ArrayBuffer; dbf: ArrayBuffer }>((resolve, reject) => {
+            shpwriteWrite(rows, "POLYGON", geometries, (err, files) => {
+              if (err) return reject(err);
+              resolve({ shp: files.shp.buffer, shx: files.shx.buffer, dbf: files.dbf.buffer });
+            });
+          });
+
+        const zip = new JSZip();
+        const sortedPcts = Array.from(groups.keys()).sort((a, b) => a - b);
+        for (const pct of sortedPcts) {
+          const feats = groups.get(pct)!;
+          const geometries = feats.map(orientedCoords);
+          const rows = feats.map((f) => ({
+            name: String(f.properties?.id ?? f.properties?.individual ?? ""),
+            type: String(f.properties?.type ?? analysisType),
+            percent: pct,
+            area_km2: Number(f.properties?.area_km2 ?? 0),
             analysis: analysisType,
             study: study.name || "",
             start: dateStartStr,
             end: dateEndStr,
-          },
-        })) };
-        zip.file("polygons.geojson", JSON.stringify(polygonGeoJson, null, 2));
-        zip.file("polygons.prj", prjContent);
+          }));
 
-        const pointGeoJson = { type: "FeatureCollection", features: pointFeatures.map(f => ({
-          ...f,
-          properties: {
-            name: f.properties?.individual || "",
-            timestamp: f.properties?.timestamp || 0,
-            datetime: f.properties?.datetime || "",
-            latitude: f.geometry?.coordinates?.[1] || 0,
-            longitude: f.geometry?.coordinates?.[0] || 0,
-            speed: f.properties?.speed ?? 0,
-            altitude: f.properties?.altitude ?? 0,
-          },
-        })) };
-        zip.file("gps_points.geojson", JSON.stringify(pointGeoJson, null, 2));
-        zip.file("gps_points.prj", prjContent);
-
-        let csvContent = "individual,timestamp,datetime,latitude,longitude,speed,altitude\n";
-        for (const p of allPoints) {
-          csvContent += `"${p.individual}",${p.timestamp},"${new Date(p.timestamp).toISOString()}",${p.lat},${p.lng},${p.speed ?? 0},${p.altitude ?? 0}\n`;
+          const files = await buildShp(rows, geometries);
+          const base = `percent_${pct}`;
+          zip.file(`${base}.shp`, files.shp, { binary: true });
+          zip.file(`${base}.shx`, files.shx, { binary: true });
+          zip.file(`${base}.dbf`, files.dbf, { binary: true });
+          zip.file(`${base}.prj`, prjContent);
+          zip.file(`${base}.cpg`, cpgContent);
         }
-        zip.file("gps_points.csv", csvContent);
 
         const shpBuf = await zip.generateAsync({ type: "nodebuffer" });
         res.setHeader("Content-Type", "application/zip");
