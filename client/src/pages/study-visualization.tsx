@@ -692,6 +692,53 @@ export default function StudyVisualization() {
   const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
   const todayStr = format(new Date(), "yyyy-MM-dd");
 
+  // Captura un mapa Leaflet con html2canvas corrigiendo el desplazamiento de las
+  // capas vectoriales SVG (KDE/MCP/trayectorias): html2canvas ignora el transform
+  // CSS propio del <svg> al rasterizarlo (pero respeta su viewBox), por lo que las
+  // capas se desplazaban hacia el oeste. Movemos el offset al layout (left/top).
+  const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
+    const parseTranslate = (t: string): { tx: number; ty: number } | null => {
+      if (!t || t === "none") return null;
+      let m: RegExpMatchArray | null;
+      if ((m = t.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/matrix3d\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 16) return { tx: v[12], ty: v[13] };
+      }
+      if ((m = t.match(/matrix\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 6) return { tx: v[4], ty: v[5] };
+      }
+      return null;
+    };
+
+    return html2canvas(el, {
+      backgroundColor,
+      useCORS: true,
+      onclone: (_doc, clonedEl) => {
+        const panes = clonedEl.querySelectorAll<HTMLElement>(
+          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
+        );
+        panes.forEach((p) => {
+          const parsed = parseTranslate(p.style.transform);
+          if (!parsed) return;
+          if (p.tagName.toLowerCase() === "svg") {
+            p.style.transform = "none";
+            p.style.left = `${parsed.tx}px`;
+            p.style.top = `${parsed.ty}px`;
+          } else {
+            p.style.transform = `translate(${parsed.tx}px, ${parsed.ty}px)`;
+          }
+        });
+      },
+    });
+  };
+
   const exportChartPng = async () => {
     if (!chartContainerRef.current) return;
     setExporting(true);
@@ -715,7 +762,7 @@ export default function StudyVisualization() {
     if (!mapContainerRef.current) return;
     setExporting(true);
     try {
-      const canvas = await html2canvas(mapContainerRef.current, { backgroundColor: null, useCORS: true });
+      const canvas = await captureMap(mapContainerRef.current, null);
       const link = document.createElement("a");
       const studyName = sanitizeFilename(study?.name || "estudio");
       link.download = `mapa_${studyName}_${todayStr}.png`;
@@ -771,7 +818,7 @@ export default function StudyVisualization() {
       }
 
       if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
-        const mapCanvas = await html2canvas(mapContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+        const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
         const mapImg = mapCanvas.toDataURL("image/png");
         const mapAspect = mapCanvas.width / mapCanvas.height;
         const remainH = pageH - cursorY - margin - 10;
