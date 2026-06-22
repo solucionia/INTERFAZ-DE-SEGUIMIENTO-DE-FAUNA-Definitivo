@@ -232,7 +232,7 @@ export default function AdminStudies() {
             Gestionar estudios
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Crea, edita y asigna estudios de Movebank
+            Crea, edita y asigna estudios
           </p>
         </div>
         <Button onClick={openCreate} data-testid="button-create-study">
@@ -513,6 +513,7 @@ export default function AdminStudies() {
                             {...field}
                           />
                         </FormControl>
+                        {editStudy && <FormDescription>Dejar vacío para mantener la credencial actual</FormDescription>}
                         <FormMessage />
                       </FormItem>
                     )}
