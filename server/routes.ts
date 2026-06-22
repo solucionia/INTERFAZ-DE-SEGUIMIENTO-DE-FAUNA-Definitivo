@@ -705,6 +705,19 @@ export async function registerRoutes(
         kml += `<Style id="point-style"><IconStyle><scale>0.5</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/ylw-circle.png</href></Icon></IconStyle></Style>\n`;
         kml += `<Style id="line-style"><LineStyle><color>ff0000ff</color><width>2</width></LineStyle></Style>\n`;
 
+        const individuals = await storage.getIndividuals(req.params.id as string);
+        const indByLocalId = new Map<string, typeof individuals[number]>();
+        for (const ind of individuals) {
+          if (ind.localIdentifier) indByLocalId.set(ind.localIdentifier, ind);
+        }
+        const animalLabelFor = (localId: string): string => {
+          const ind = indByLocalId.get(localId);
+          const name = ((ind?.ornitelaName ?? ind?.nickName) ?? "").trim();
+          const id = (ind?.localIdentifier ?? localId ?? "").trim() || localId;
+          if (name && id) return `${name} (${id})`;
+          return id || name || localId;
+        };
+
         const byAnimal: Record<string, typeof allPoints> = {};
         for (const p of allPoints) {
           if (!byAnimal[p.individual]) byAnimal[p.individual] = [];
@@ -712,19 +725,21 @@ export async function registerRoutes(
         }
 
         for (const [animal, pts] of Object.entries(byAnimal)) {
-          const safeAnimal = esc(animal);
-          kml += `<Folder>\n<name>${safeAnimal}</name>\n`;
+          const animalLbl = esc(animalLabelFor(animal));
+          kml += `<Folder>\n<name>${animalLbl}</name>\n`;
           for (const p of pts) {
-            const dt = new Date(p.timestamp).toISOString();
-            kml += `<Placemark>\n<name>${safeAnimal}</name>\n<styleUrl>#point-style</styleUrl>\n`;
-            kml += `<description>${esc(`Fecha: ${dt}\nVelocidad: ${p.speed ?? "N/A"} m/s\nAltitud: ${p.altitude ?? "N/A"} m`)}</description>\n`;
-            kml += `<TimeStamp><when>${dt}</when></TimeStamp>\n`;
+            const validTs = Number.isFinite(p.timestamp) && !Number.isNaN(new Date(p.timestamp).getTime());
+            const dt = validTs ? new Date(p.timestamp).toISOString() : "";
+            const pointName = validTs ? esc(dt.slice(0, 19).replace("T", " ")) : "";
+            kml += `<Placemark>\n<name>${pointName}</name>\n<styleUrl>#point-style</styleUrl>\n`;
+            kml += `<description>${esc(`Fecha: ${dt || "N/A"}\nVelocidad: ${p.speed ?? "N/A"} m/s\nAltitud: ${p.altitude ?? "N/A"} m`)}</description>\n`;
+            if (validTs) kml += `<TimeStamp><when>${dt}</when></TimeStamp>\n`;
             kml += `<Point><coordinates>${p.lng},${p.lat},${p.altitude ?? 0}</coordinates></Point>\n`;
             kml += `</Placemark>\n`;
           }
           if (pts.length >= 2) {
             const coords = pts.map((p) => `${p.lng},${p.lat},${p.altitude ?? 0}`).join("\n");
-            kml += `<Placemark>\n<name>Trayectoria ${safeAnimal}</name>\n<styleUrl>#line-style</styleUrl>\n`;
+            kml += `<Placemark>\n<name>Trayectoria ${animalLbl}</name>\n<styleUrl>#line-style</styleUrl>\n`;
             kml += `<LineString>\n<tessellate>1</tessellate>\n<coordinates>\n${coords}\n</coordinates>\n</LineString>\n`;
             kml += `</Placemark>\n`;
           }
