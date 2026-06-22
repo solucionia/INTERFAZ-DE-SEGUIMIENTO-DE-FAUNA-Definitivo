@@ -30,3 +30,21 @@ If you add map PNG/PDF export elsewhere (e.g. study-visualization.tsx uses plain
 `html2canvas` without this onclone), reuse the same logic or vector layers will shift.
 The fix is idempotent — `left/top + transform:none` is visually equivalent even if a
 future html2canvas version starts honoring svg transforms.
+
+# Tainted canvas → toDataURL throws → whole export aborts (separate failure)
+
+A second, distinct failure mode: if Leaflet tile layers are created WITHOUT
+`crossOrigin`, the tile `<img>`s load cross-origin without CORS, html2canvas draws
+them onto a **tainted** canvas, and `canvas.toDataURL()` throws a `SecurityError`.
+If that throw isn't caught, the entire export (PDF/PNG) aborts and NO file is produced.
+
+**Symptom that looks data-specific:** export fails only for animals/views that
+actually render a map (GPS present) and works for those showing a placeholder div
+(no tiles). It's not the data — it's whether tiles are on screen.
+
+**Fix:** pass `crossOrigin: true` to every `L.tileLayer(...)` in
+`client/src/components/map-layers.tsx`. Verified OSM and Google (`mt1.google.com/vt`)
+tile endpoints both return `access-control-allow-origin: *`, so crossOrigin is safe
+(tiles still render, canvas not tainted). Also wrap each `html2canvas`+`toDataURL`
+capture in its own try/catch with finite/>0 dimension guards so one failing section
+(chart or map) degrades gracefully instead of killing the whole export.

@@ -33,20 +33,24 @@ export function MapLayerControl() {
 
     const streetLayer = L.tileLayer(TILE_LAYERS.street.url, {
       attribution: TILE_LAYERS.street.attribution,
+      crossOrigin: true,
     });
 
     baseLayers[TILE_LAYERS.street.name] = streetLayer;
     baseLayers[TILE_LAYERS.satellite.name] = L.tileLayer(TILE_LAYERS.satellite.url, {
       attribution: TILE_LAYERS.satellite.attribution,
       maxZoom: 20,
+      crossOrigin: true,
     });
     baseLayers[TILE_LAYERS.hybrid.name] = L.tileLayer(TILE_LAYERS.hybrid.url, {
       attribution: TILE_LAYERS.hybrid.attribution,
       maxZoom: 20,
+      crossOrigin: true,
     });
     baseLayers[TILE_LAYERS.terrain.name] = L.tileLayer(TILE_LAYERS.terrain.url, {
       attribution: TILE_LAYERS.terrain.attribution,
       maxZoom: 20,
+      crossOrigin: true,
     });
 
     streetLayer.addTo(map);

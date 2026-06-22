@@ -805,30 +805,55 @@ export default function StudyVisualization() {
       cursorY += 8;
 
       if (chartContainerRef.current) {
-        const chartCanvas = await html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
-        const chartImg = chartCanvas.toDataURL("image/png");
-        const chartAspect = chartCanvas.width / chartCanvas.height;
-        const chartImgW = contentW;
-        const chartImgH = contentW / chartAspect;
-        const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
-        const finalW = finalH * chartAspect;
-        pdf.text("Grafica de acelerometro", margin, cursorY);
-        cursorY += 4;
-        pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
-        cursorY += finalH + 6;
+        try {
+          const chartCanvas = await html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+          if (chartCanvas.width > 0 && chartCanvas.height > 0) {
+            const chartImg = chartCanvas.toDataURL("image/png");
+            const chartAspect = chartCanvas.width / chartCanvas.height;
+            const chartImgH = contentW / chartAspect;
+            const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
+            const finalW = finalH * chartAspect;
+            if (finalH > 0 && finalW > 0 && Number.isFinite(finalH) && Number.isFinite(finalW)) {
+              pdf.text("Grafica de acelerometro", margin, cursorY);
+              cursorY += 4;
+              pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+              cursorY += finalH + 6;
+            }
+          }
+        } catch (err) {
+          console.error("No se pudo capturar la grafica para el PDF:", err);
+          pdf.setFontSize(9);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text("(No se pudo incluir la grafica de acelerometro)", margin, cursorY);
+          pdf.setTextColor(0, 0, 0);
+          cursorY += 6;
+        }
       }
 
       if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
-        const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
-        const mapImg = mapCanvas.toDataURL("image/png");
-        const mapAspect = mapCanvas.width / mapCanvas.height;
-        const remainH = pageH - cursorY - margin - 10;
-        const mapImgH = Math.min(remainH, 70);
-        const mapImgW = Math.min(mapImgH * mapAspect, contentW);
-        pdf.text("Mapa GPS", margin, cursorY);
-        cursorY += 4;
-        pdf.addImage(mapImg, "PNG", margin, cursorY, mapImgW, mapImgH);
-        cursorY += mapImgH + 6;
+        try {
+          const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
+          if (mapCanvas.width > 0 && mapCanvas.height > 0) {
+            const mapImg = mapCanvas.toDataURL("image/png");
+            const mapAspect = mapCanvas.width / mapCanvas.height;
+            const remainH = pageH - cursorY - margin - 10;
+            const mapImgH = Math.min(remainH, 70);
+            const mapImgW = Math.min(mapImgH * mapAspect, contentW);
+            if (mapImgH > 0 && mapImgW > 0 && Number.isFinite(mapImgH) && Number.isFinite(mapImgW)) {
+              pdf.text("Mapa GPS", margin, cursorY);
+              cursorY += 4;
+              pdf.addImage(mapImg, "PNG", margin, cursorY, mapImgW, mapImgH);
+              cursorY += mapImgH + 6;
+            }
+          }
+        } catch (err) {
+          console.error("No se pudo capturar el mapa para el PDF:", err);
+          pdf.setFontSize(9);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text("(No se pudo incluir el mapa GPS)", margin, cursorY);
+          pdf.setTextColor(0, 0, 0);
+          cursorY += 6;
+        }
       }
 
       if (detectedEvents.length > 0) {
