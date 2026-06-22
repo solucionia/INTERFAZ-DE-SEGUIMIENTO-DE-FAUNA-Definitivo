@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, type RefObject } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute } from "wouter";
+import { useRoute, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Individual, SavedAnalysis, Project } from "@shared/schema";
 import { ANALYSIS_LABELS, type AnalysisType } from "@shared/schema";
@@ -153,10 +153,19 @@ function FitBounds({ geojson }: { geojson: any }) {
 export default function GeoAnalysis() {
   const [, routeParams] = useRoute("/study/:id/analysis");
   const studyId = routeParams?.id || "";
+  const search = useSearch();
   const { toast } = useToast();
   const { canAnalyze, canExport } = usePermissions();
 
-  const [selectedAnimals, setSelectedAnimals] = useState<string[]>([]);
+  // Animales preseleccionados desde la URL (?animals=id1,id2 o ?animal=id).
+  const initialAnimals = useMemo(() => {
+    const sp = new URLSearchParams(search);
+    const p = sp.get("animals") || sp.get("animal") || "";
+    return p.split(",").map((s) => s.trim()).filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [selectedAnimals, setSelectedAnimals] = useState<string[]>(initialAnimals);
   const [projectFilterId, setProjectFilterId] = useState<string>("all");
   const [analysisType, setAnalysisType] = useState<AnalysisType>("comprehensive");
   const [dateStart, setDateStart] = useState("");

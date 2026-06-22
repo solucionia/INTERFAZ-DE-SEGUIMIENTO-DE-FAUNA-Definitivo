@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { useRoute, useSearch, Link } from "wouter";
+import { useRoute, useSearch, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Study, Individual, DetectedEvent, Project, AccelerometerLabel, BehaviorType } from "@shared/schema";
 import { EVENT_LABELS, EVENT_COLORS, BEHAVIOR_TYPES, BEHAVIOR_LABELS, BEHAVIOR_COLORS } from "@shared/schema";
@@ -211,6 +211,7 @@ function severityBadge(severity: string) {
 
 export default function StudyVisualization() {
   const [, params] = useRoute("/study/:id/visualize");
+  const [, setLocation] = useLocation();
   const studyId = params?.id;
   const search = useSearch();
   const { toast } = useToast();
@@ -990,6 +991,21 @@ export default function StudyVisualization() {
             >
               {forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Forzar recarga
+            </Button>
+          )}
+          {dataLoaded && selectedAnimals.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!studyId || selectedAnimals.length === 0) return;
+                const p = new URLSearchParams({ animals: selectedAnimals.join(",") });
+                setLocation(`/study/${studyId}/analysis?${p.toString()}`);
+              }}
+              data-testid="button-geo-analysis"
+              title="Abrir análisis geoespacial con estos animales preseleccionados"
+            >
+              <Globe className="w-4 h-4 mr-2" />
+              Análisis geoespacial
             </Button>
           )}
           {dataLoaded && canDetectEvents && (
