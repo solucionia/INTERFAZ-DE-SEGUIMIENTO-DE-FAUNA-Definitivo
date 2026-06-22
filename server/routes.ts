@@ -16,7 +16,7 @@ import { decrypt, encrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
-import { ornitelaSync, type OrnitelaDevice } from "./ornitelaSync";
+import { ornitelaSync, OrnitelaSyncError, type OrnitelaDevice } from "./ornitelaSync";
 import { runEventDetection, runEmissionCheck, runOrnitelaSync } from "./scheduler";
 import { sftpWatcher } from "./services/sftpWatcher";
 
@@ -111,6 +111,75 @@ function maskStudyCredentials(study: Study): Study {
 
 function hasMovebankCredentials(study: Study): boolean {
   return !!(study.movebankStudyId && study.movebankUsername && study.movebankPassword);
+}
+
+// Primera sincronización de un estudio Ornitela recién creado. Se ejecuta en
+// background (fire-and-forget) tras crear el estudio: descubre los dispositivos
+// del panel, importa sus CSV (lo que crea individuos/deployments) y deja el
+// estudio listo para que el cron periódico lo siga sincronizando. Sin esto, el
+// cron nunca arrancaría porque sólo procesa estudios que YA tienen deployments.
+async function runOrnitelaFirstSync(studyId: string): Promise<void> {
+  const FIRST_SYNC_HOURS_BACK = 168; // 7 días
+  const DEVICE_DELAY_MS = 1500;
+  try {
+    const study = await storage.getStudyDecrypted(studyId);
+    if (!study || !study.ornitelaEnabled || !study.ornitelaUsername || !study.ornitelaPassword) {
+      return;
+    }
+    const panelUrl = study.ornitelaPanelUrl || "https://cpanel.glosendas.net";
+    log(`Ornitela primera sincronización para estudio "${study.name}"...`, "ornitela");
+
+    const session = await ornitelaSync.login(panelUrl, study.ornitelaUsername, study.ornitelaPassword);
+    const devices = await ornitelaSync.getDeviceList(panelUrl, session);
+
+    if (devices.length === 0) {
+      await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
+      log(`Ornitela primera sincronización "${study.name}": no se encontraron dispositivos`, "ornitela");
+      return;
+    }
+
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - FIRST_SYNC_HOURS_BACK * 60 * 60 * 1000);
+    const fmtDt = (d: Date) => {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      const h = String(d.getUTCHours()).padStart(2, "0");
+      const min = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${y}-${m}-${day} ${h}:${min}`;
+    };
+    const fromStr = fmtDt(fromDate);
+    const toStr = fmtDt(now);
+
+    let totalGps = 0;
+    let totalAcc = 0;
+    for (let i = 0; i < devices.length; i++) {
+      const device = devices[i];
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, DEVICE_DELAY_MS));
+      try {
+        const csv = await ornitelaSync.downloadCSV(panelUrl, session, device.imei, fromStr, toStr);
+        if (csv && csv.trim().length >= 10) {
+          const result = await parseOrnitelaCsv(csv, studyId, storage, { ornitelaName: device.name });
+          totalGps += result.gpsImported;
+          totalAcc += result.accImported;
+        }
+      } catch (err: any) {
+        log(`Ornitela primera sync error dispositivo ${device.name} (${device.imei}): ${err.message}`, "ornitela");
+      }
+    }
+
+    await storage.updateStudy(studyId, { ornitelaLastSync: new Date() } as any);
+    log(`Ornitela primera sincronización "${study.name}" completada — ${devices.length} dispositivos, ${totalGps} GPS, ${totalAcc} ACC`, "ornitela");
+
+    if (totalGps > 0 || totalAcc > 0) {
+      try {
+        const { triggerImmobilityAnalysisInBackground } = await import("./immobilityDetector");
+        triggerImmobilityAnalysisInBackground(studyId, "ornitela-first-sync");
+      } catch {}
+    }
+  } catch (e: any) {
+    log(`Ornitela primera sincronización falló para estudio ${studyId}: ${e.message}`, "ornitela");
+  }
 }
 
 async function requireStudyAccess(req: Request, res: Response, next: NextFunction) {
@@ -1095,7 +1164,40 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: parsed.error.errors[0]?.message || "Datos inválidos" });
       }
+
+      // Si el estudio usa Ornitela con credenciales, validarlas contra el panel
+      // ANTES de crear el estudio para dar feedback inmediato si son inválidas.
+      const ornitelaConfigured = !!(
+        parsed.data.ornitelaEnabled &&
+        parsed.data.ornitelaUsername &&
+        parsed.data.ornitelaPassword
+      );
+      if (ornitelaConfigured) {
+        const panelUrl = parsed.data.ornitelaPanelUrl || "https://cpanel.glosendas.net";
+        try {
+          await ornitelaSync.login(panelUrl, parsed.data.ornitelaUsername!, parsed.data.ornitelaPassword!);
+        } catch (loginErr: any) {
+          const msg =
+            loginErr instanceof OrnitelaSyncError
+              ? loginErr.message
+              : `No se pudo conectar con el panel de Ornitela: ${loginErr.message}`;
+          return res.status(400).json({ message: msg });
+        }
+      }
+
       const study = await storage.createStudy(parsed.data);
+
+      // Disparar la primera sincronización en background (fire-and-forget) para
+      // que el estudio descubra dispositivos e importe datos sin bloquear la
+      // respuesta HTTP.
+      if (ornitelaConfigured) {
+        setImmediate(() => {
+          runOrnitelaFirstSync(study.id).catch((err) =>
+            log(`Ornitela primera sincronización (background) error: ${err?.message || err}`, "ornitela"),
+          );
+        });
+      }
+
       return res.json(maskStudyCredentials(study));
     } catch (e: any) {
       return res.status(400).json({ message: e.message });

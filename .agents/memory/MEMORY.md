@@ -4,3 +4,4 @@
 - [html2canvas Leaflet SVG shift](html2canvas-leaflet-svg-shift.md) — PNG/PDF export shifts vector overlays (KDE/MCP) west because html2canvas drops the svg's CSS transform; fix via left/top in onclone.
 - [GPS quality vs transmission](gps-quality-vs-transmission.md) — emission/transmission status must read GPS unfiltered by HDOP; the HDOP-filtered "latest valid position" helper is only for accuracy/map features.
 - [KDE home-range contours](kde-home-range-contours.md) — kernel polygons use a hand-rolled marching-squares isoline (not d3-contour/convex hull); keep it, preserve grid padding + props.
+- [Ornitela new-study first sync](ornitela-first-sync.md) — new Ornitela study can't be bootstrapped by the cron (no deployments yet); creation must trigger its own first sync.

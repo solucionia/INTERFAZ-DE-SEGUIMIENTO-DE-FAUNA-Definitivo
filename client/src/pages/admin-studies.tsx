@@ -178,10 +178,17 @@ export default function AdminStudies() {
         await apiRequest("POST", "/api/studies", values);
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/studies"] });
       setShowForm(false);
-      toast({ title: editStudy ? "Estudio actualizado" : "Estudio creado" });
+      if (!editStudy && variables.ornitelaEnabled && variables.ornitelaUsername && variables.ornitelaPassword) {
+        toast({
+          title: "Estudio creado",
+          description: "Credenciales de Ornitela validadas. La primera sincronización ha comenzado en segundo plano.",
+        });
+      } else {
+        toast({ title: editStudy ? "Estudio actualizado" : "Estudio creado" });
+      }
     },
     onError: (e: any) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
