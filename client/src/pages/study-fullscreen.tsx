@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRoute, useSearch } from "wouter";
+import { useRoute, useSearch, useLocation } from "wouter";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import { useQuery } from "@tanstack/react-query";
 import type { Study, Individual } from "@shared/schema";
 import {
@@ -25,13 +27,22 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, X, Eye, EyeOff, Route, GripVertical } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
 import { computeDateRange, type QuickRange } from "@/components/quick-date-range";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 
 const SENSOR_GPS = 653;
@@ -146,7 +157,11 @@ export default function StudyFullscreen() {
   const [, params] = useRoute("/study/:id/fullscreen");
   const studyId = params?.id;
   const search = useSearch();
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [exporting, setExporting] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
   // Parámetros iniciales desde la URL (solo se leen una vez para sembrar el estado).
   const initial = useMemo(() => {
@@ -464,6 +479,225 @@ export default function StudyFullscreen() {
     return `${selectedAnimals.length} animales`;
   }, [selectedAnimals, individualByLocalId]);
 
+  const hasDateRange = !!dateStart && !!dateEnd;
+  const canExportGeo = selectedAnimals.length > 0 && hasDateRange && totalGps > 0;
+  const canExportChart = selectedAnimals.length > 0 && totalAcc > 0;
+  const canExportAny = canExportGeo || canExportChart;
+  const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+
+  // Captura un mapa Leaflet con html2canvas corrigiendo el desplazamiento de las
+  // capas vectoriales SVG: html2canvas ignora el transform CSS propio del <svg> al
+  // rasterizarlo (pero respeta su viewBox), por lo que se desplazan hacia el oeste.
+  // Movemos el offset al layout (left/top).
+  const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
+    const parseTranslate = (t: string): { tx: number; ty: number } | null => {
+      if (!t || t === "none") return null;
+      let m: RegExpMatchArray | null;
+      if ((m = t.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/matrix3d\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 16) return { tx: v[12], ty: v[13] };
+      }
+      if ((m = t.match(/matrix\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 6) return { tx: v[4], ty: v[5] };
+      }
+      return null;
+    };
+
+    return html2canvas(el, {
+      backgroundColor,
+      useCORS: true,
+      onclone: (_doc, clonedEl) => {
+        const panes = clonedEl.querySelectorAll<HTMLElement>(
+          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
+        );
+        panes.forEach((p) => {
+          const parsed = parseTranslate(p.style.transform);
+          if (!parsed) return;
+          if (p.tagName.toLowerCase() === "svg") {
+            p.style.transform = "none";
+            p.style.left = `${parsed.tx}px`;
+            p.style.top = `${parsed.ty}px`;
+          } else {
+            p.style.transform = `translate(${parsed.tx}px, ${parsed.ty}px)`;
+          }
+        });
+      },
+    });
+  };
+
+  const exportChartPng = async () => {
+    if (!chartContainerRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(chartContainerRef.current, { backgroundColor: null, useCORS: true });
+      const link = document.createElement("a");
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      const animals = sanitizeFilename(selectedAnimals.join("_") || "todos");
+      link.download = `${studyName}_${animals}_${todayStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportación completada", description: "Gráfica exportada como PNG" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportMapPng = async () => {
+    if (!mapContainerRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await captureMap(mapContainerRef.current, null);
+      const link = document.createElement("a");
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      link.download = `mapa_${studyName}_${todayStr}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Exportación completada", description: "Mapa exportado como PNG" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentW = pageW - margin * 2;
+      let cursorY = margin;
+
+      pdf.setFontSize(18);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(study?.name || "Estudio", margin, cursorY + 6);
+      cursorY += 12;
+
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Animales: ${selectedAnimals.join(", ")}`, margin, cursorY);
+      cursorY += 5;
+      pdf.text(`Rango: ${dateStart} a ${dateEnd}`, margin, cursorY);
+      cursorY += 5;
+      pdf.text(`GPS: ${totalGps} puntos | Acelerometro: ${totalAcc} muestras`, margin, cursorY);
+      cursorY += 8;
+
+      if (chartContainerRef.current) {
+        try {
+          const chartCanvas = await html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+          if (chartCanvas.width > 0 && chartCanvas.height > 0) {
+            const chartImg = chartCanvas.toDataURL("image/png");
+            const chartAspect = chartCanvas.width / chartCanvas.height;
+            const chartImgH = contentW / chartAspect;
+            const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
+            const finalW = finalH * chartAspect;
+            if (finalH > 0 && finalW > 0 && Number.isFinite(finalH) && Number.isFinite(finalW)) {
+              pdf.text("Grafica de acelerometro", margin, cursorY);
+              cursorY += 4;
+              pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+              cursorY += finalH + 6;
+            }
+          }
+        } catch (err) {
+          console.error("No se pudo capturar la grafica para el PDF:", err);
+        }
+      }
+
+      if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
+        try {
+          const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
+          if (mapCanvas.width > 0 && mapCanvas.height > 0) {
+            const mapImg = mapCanvas.toDataURL("image/png");
+            const mapAspect = mapCanvas.width / mapCanvas.height;
+            const remainH = pageH - cursorY - margin - 10;
+            const mapImgH = Math.min(remainH, 70);
+            const mapImgW = Math.min(mapImgH * mapAspect, contentW);
+            if (mapImgH > 0 && mapImgW > 0 && Number.isFinite(mapImgH) && Number.isFinite(mapImgW)) {
+              pdf.text("Mapa GPS", margin, cursorY);
+              cursorY += 4;
+              pdf.addImage(mapImg, "PNG", margin, cursorY, mapImgW, mapImgH);
+              cursorY += mapImgH + 6;
+            }
+          }
+        } catch (err) {
+          console.error("No se pudo capturar el mapa para el PDF:", err);
+        }
+      }
+
+      pdf.setFontSize(7);
+      pdf.setFont("helvetica", "italic");
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(
+        `Generado el ${format(new Date(), "dd/MM/yyyy HH:mm:ss", { locale: es })} — WildTrack`,
+        margin,
+        pageH - 5
+      );
+
+      const studyName = sanitizeFilename(study?.name || "estudio");
+      pdf.save(`informe_${studyName}_${todayStr}.pdf`);
+      toast({ title: "Exportación completada", description: "Informe PDF generado correctamente" });
+    } catch (e: any) {
+      toast({ title: "Error al exportar PDF", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportData = async (fmt: "kmz" | "shp") => {
+    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/studies/${studyId}/export-visualization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          individualIds: selectedAnimals,
+          startDate: new Date(dateStart).getTime(),
+          endDate: new Date(dateEnd + "T23:59:59").getTime(),
+          format: fmt,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Error desconocido" }));
+        throw new Error(err.message || `Error ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = res.headers.get("content-disposition") || "";
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      link.download = filenameMatch ? filenameMatch[1] : `export.${fmt === "kmz" ? "kmz" : "zip"}`;
+      link.href = url;
+      link.click();
+      URL.revokeObjectURL(url);
+      const labels: Record<string, string> = { kmz: "KMZ (Google Earth)", shp: "Shapefile" };
+      toast({ title: "Exportación completada", description: `Datos exportados como ${labels[fmt]}` });
+    } catch (e: any) {
+      toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const goToGeoAnalysis = () => {
+    if (!studyId || selectedAnimals.length === 0) return;
+    const p = new URLSearchParams({ animals: selectedAnimals.join(",") });
+    setLocation(`/study/${studyId}/analysis?${p.toString()}`);
+  };
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
       {/* Mapa: tres cuartas partes superiores */}
@@ -522,7 +756,7 @@ export default function StudyFullscreen() {
                 data-testid="button-collapse-panel"
                 title="Minimizar panel"
               >
-                <X className="w-4 h-4" />
+                <Minimize2 className="w-4 h-4" />
               </button>
             </div>
             <div className="p-3 space-y-3 max-h-[calc(75vh-3rem)] overflow-y-auto">
@@ -626,6 +860,56 @@ export default function StudyFullscreen() {
                   </div>
                 </div>
               )}
+              <div className="space-y-1 pt-1 border-t border-border">
+                <Label className="text-xs text-muted-foreground">Acciones</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8 text-xs" disabled={exporting || loading || !canExportAny} data-testid="button-fullscreen-export-menu">
+                        {exporting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5 mr-1.5" />}
+                        Exportar
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuLabel>Imágenes</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={exportChartPng} disabled={!canExportChart} data-testid="menu-fullscreen-export-chart-png">
+                        <ImageIcon className="w-4 h-4 mr-2" />
+                        Gráfica como PNG
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportMapPng} disabled={!canExportGeo} data-testid="menu-fullscreen-export-map-png">
+                        <ImageIcon className="w-4 h-4 mr-2" />
+                        Mapa como PNG
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportPdf} disabled={!canExportAny} data-testid="menu-fullscreen-export-pdf">
+                        <FileText className="w-4 h-4 mr-2" />
+                        Informe PDF
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>Exportar datos como...</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => exportData("kmz")} disabled={!canExportGeo} data-testid="menu-fullscreen-export-kmz">
+                        <Globe className="w-4 h-4 mr-2" />
+                        KMZ (Google Earth)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => exportData("shp")} disabled={!canExportGeo} data-testid="menu-fullscreen-export-shp">
+                        <Database className="w-4 h-4 mr-2" />
+                        Shapefile (SHP)
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={goToGeoAnalysis}
+                    disabled={selectedAnimals.length === 0}
+                    data-testid="button-fullscreen-geo-analysis"
+                    title="Abrir análisis geoespacial con estos animales preseleccionados"
+                  >
+                    <Globe className="w-3.5 h-3.5 mr-1.5" />
+                    Análisis geoespacial
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         ) : (
@@ -660,6 +944,7 @@ export default function StudyFullscreen() {
             </div>
           </div>
         ) : (
+          <div ref={mapContainerRef} className="h-full w-full">
           <MapContainer center={mapCenter || [0, 0]} zoom={12} style={{ height: "100%", width: "100%" }} scrollWheelZoom={true}>
             <MapLayerControl />
             <GoogleMapsClick />
@@ -743,6 +1028,7 @@ export default function StudyFullscreen() {
               </Marker>
             )}
           </MapContainer>
+          </div>
         )}
       </div>
 
@@ -758,7 +1044,7 @@ export default function StudyFullscreen() {
               : null}
           <span className="text-muted-foreground font-normal ml-auto text-[10px]">Pincha un punto para resaltarlo en el mapa</span>
         </div>
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0" ref={chartContainerRef}>
           {loading ? (
             <div className="h-full flex items-center justify-center">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
