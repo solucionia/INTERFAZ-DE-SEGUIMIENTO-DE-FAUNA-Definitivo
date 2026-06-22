@@ -965,12 +965,13 @@ export default function StudyVisualization() {
             {loading && !forceLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
             Cargar datos
           </Button>
-          {currentDeviceId && (
+          {selectedAnimals.length > 0 && (
             <Button
               variant="outline"
               onClick={() => {
-                if (!studyId || !currentDeviceId || !dateStart || !dateEnd) return;
-                const p = new URLSearchParams({ animal: currentDeviceId, start: dateStart, end: dateEnd });
+                if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) return;
+                const p = new URLSearchParams({ animals: selectedAnimals.join(","), start: dateStart, end: dateEnd });
+                if (currentDeviceId) p.set("focus", currentDeviceId);
                 window.open(`/study/${studyId}/fullscreen?${p.toString()}`, "_blank");
               }}
               data-testid="button-fullscreen"
