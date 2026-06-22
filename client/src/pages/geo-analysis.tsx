@@ -443,30 +443,49 @@ export default function GeoAnalysis() {
   };
 
   const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
+    // Extrae el desplazamiento (tx, ty) de cualquier transform CSS de Leaflet
+    // (translate / translate3d / matrix / matrix3d). Devuelve null si no hay.
+    const parseTranslate = (t: string): { tx: number; ty: number } | null => {
+      if (!t || t === "none") return null;
+      let m: RegExpMatchArray | null;
+      if ((m = t.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
+        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
+      }
+      if ((m = t.match(/matrix3d\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 16) return { tx: v[12], ty: v[13] };
+      }
+      if ((m = t.match(/matrix\(([^)]+)\)/))) {
+        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
+        if (v.length === 6) return { tx: v[4], ty: v[5] };
+      }
+      return null;
+    };
+
     return html2canvas(el, {
       backgroundColor,
       scale: 2,
       useCORS: true,
       onclone: (_doc, clonedEl) => {
         const panes = clonedEl.querySelectorAll<HTMLElement>(
-          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow"
+          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
         );
         panes.forEach((p) => {
-          const t = p.style.transform;
-          if (!t) return;
-          if (t.includes("translate3d")) {
-            p.style.transform = t.replace(
-              /translate3d\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*[^)]+?\)/g,
-              "translate($1, $2)"
-            );
-          } else if (t.includes("matrix3d")) {
-            const m = t.match(/matrix3d\(([^)]+)\)/);
-            if (m) {
-              const v = m[1].split(",").map((n) => parseFloat(n.trim()));
-              if (v.length === 16) {
-                p.style.transform = `translate(${v[12]}px, ${v[13]}px)`;
-              }
-            }
+          const parsed = parseTranslate(p.style.transform);
+          if (!parsed) return;
+          // html2canvas IGNORA el transform CSS propio de un <svg> al rasterizarlo
+          // (pero sí respeta su viewBox), por lo que las capas vectoriales KDE/MCP
+          // se desplazaban hacia el oeste. Para el SVG movemos el desplazamiento al
+          // posicionamiento de layout (left/top), que html2canvas sí respeta.
+          if (p.tagName.toLowerCase() === "svg") {
+            p.style.transform = "none";
+            p.style.left = `${parsed.tx}px`;
+            p.style.top = `${parsed.ty}px`;
+          } else {
+            p.style.transform = `translate(${parsed.tx}px, ${parsed.ty}px)`;
           }
         });
       },

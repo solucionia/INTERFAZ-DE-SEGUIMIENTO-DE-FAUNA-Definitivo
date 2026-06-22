@@ -1,4 +1,5 @@
 - [Immobility-monitor deep links](immobility-monitor-deeplinks.md) — per-row action links must use the analyzed study id, not the mutable selector.
 - [WildTrack empty visualization](wildtrack-empty-viz.md) — "no veo datos" is usually data recency (dormant Ornitela devices + recent range), not a code bug; verify with SQL/tsx before editing.
 - [Fix committed but not in prod](deploy-stale-build.md) — "fix está en código pero prod sigue mal" usually means the build was never republished; verify live bundle before re-debugging.
+- [html2canvas Leaflet SVG shift](html2canvas-leaflet-svg-shift.md) — PNG/PDF export shifts vector overlays (KDE/MCP) west because html2canvas drops the svg's CSS transform; fix via left/top in onclone.
 - [KDE home-range contours](kde-home-range-contours.md) — kernel polygons use a hand-rolled marching-squares isoline (not d3-contour/convex hull); keep it, preserve grid padding + props.
