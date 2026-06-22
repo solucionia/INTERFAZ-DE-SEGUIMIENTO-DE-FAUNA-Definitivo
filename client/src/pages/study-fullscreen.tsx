@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { Study, Individual } from "@shared/schema";
@@ -25,10 +25,11 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, X } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, X, Eye, EyeOff, Route, GripVertical } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
+import { computeDateRange, type QuickRange } from "@/components/quick-date-range";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
@@ -167,6 +168,24 @@ export default function StudyFullscreen() {
   const [dateEnd, setDateEnd] = useState(initial.dateEnd);
   const [focusAnimal, setFocusAnimal] = useState<string>(initial.focus);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
+  const [hideLowQuality, setHideLowQuality] = useState(false);
+  const [showTrackLine, setShowTrackLine] = useState(true);
+  const [showPoints, setShowPoints] = useState(true);
+  const [hiddenAnimals, setHiddenAnimals] = useState<string[]>([]);
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const s = localStorage.getItem("fullscreen-panel-pos");
+      return s ? JSON.parse(s) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragParentRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const latestPosRef = useRef<{ x: number; y: number } | null>(panelPos);
 
   const { data: study } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -208,6 +227,96 @@ export default function StudyFullscreen() {
     setHighlightedTimestamp(null);
     setHighlightedGpsPoint(null);
   }, [focusAnimal]);
+
+  // Mantener la lista de animales ocultos sincronizada con la selección.
+  useEffect(() => {
+    setHiddenAnimals((prev) => prev.filter((a) => selectedAnimals.includes(a)));
+  }, [selectedAnimals]);
+
+  const handleQuickRange = useCallback((range: QuickRange) => {
+    const { start, end } = computeDateRange(range);
+    setActiveQuickRange(range);
+    setDateStart(start);
+    setDateEnd(end);
+  }, []);
+
+  const toggleAnimalVisibility = useCallback((a: string) => {
+    setHiddenAnimals((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
+  }, []);
+
+  // Arrastrar el panel de controles por su cabecera.
+  const onPanelDragStart = useCallback((e: React.PointerEvent) => {
+    if (!panelRef.current || !dragParentRef.current) return;
+    const panelRect = panelRef.current.getBoundingClientRect();
+    const parentRect = dragParentRef.current.getBoundingClientRect();
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: panelRect.left - parentRect.left,
+      origY: panelRect.top - parentRect.top,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, []);
+
+  const onPanelDragMove = useCallback((e: React.PointerEvent) => {
+    if (!dragState.current || !dragParentRef.current || !panelRef.current) return;
+    const dx = e.clientX - dragState.current.startX;
+    const dy = e.clientY - dragState.current.startY;
+    const parentRect = dragParentRef.current.getBoundingClientRect();
+    const panelRect = panelRef.current.getBoundingClientRect();
+    const nx = Math.max(0, Math.min(dragState.current.origX + dx, parentRect.width - panelRect.width));
+    const ny = Math.max(0, Math.min(dragState.current.origY + dy, parentRect.height - panelRect.height));
+    const pos = { x: nx, y: ny };
+    latestPosRef.current = pos;
+    setPanelPos(pos);
+  }, []);
+
+  const onPanelDragEnd = useCallback(() => {
+    if (dragState.current && latestPosRef.current) {
+      try {
+        localStorage.setItem("fullscreen-panel-pos", JSON.stringify(latestPosRef.current));
+      } catch {
+        /* ignore */
+      }
+    }
+    dragState.current = null;
+  }, []);
+
+  // Recolocar el panel dentro de los límites si la ventana cambia de tamaño
+  // (una posición guardada en una pantalla mayor podría quedar fuera de vista).
+  useEffect(() => {
+    if (!panelOpen) return;
+    const clampToBounds = () => {
+      if (!panelRef.current || !dragParentRef.current) return;
+      setPanelPos((prev) => {
+        if (!prev) return prev;
+        const parentRect = dragParentRef.current!.getBoundingClientRect();
+        const panelRect = panelRef.current!.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(prev.x, parentRect.width - panelRect.width));
+        const ny = Math.max(0, Math.min(prev.y, parentRect.height - panelRect.height));
+        if (nx === prev.x && ny === prev.y) return prev;
+        const next = { x: nx, y: ny };
+        latestPosRef.current = next;
+        try {
+          localStorage.setItem("fullscreen-panel-pos", JSON.stringify(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+    };
+    clampToBounds();
+    window.addEventListener("resize", clampToBounds);
+    return () => window.removeEventListener("resize", clampToBounds);
+  }, [panelOpen]);
+
+  const toggleBtnClass = useCallback(
+    (active: boolean) =>
+      `inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border ${
+        active ? "bg-primary text-primary-foreground border-primary" : "border-input text-foreground hover-elevate"
+      }`,
+    []
+  );
 
   // Carga de datos: se reejecuta cuando cambian los animales o el rango de fechas.
   const animalsKey = selectedAnimals.join(",");
@@ -358,7 +467,7 @@ export default function StudyFullscreen() {
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
       {/* Mapa: tres cuartas partes superiores */}
-      <div className="h-3/4 relative">
+      <div ref={dragParentRef} className="h-3/4 relative">
         <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
             <MapPin className="w-4 h-4 text-primary shrink-0" />
@@ -386,14 +495,29 @@ export default function StudyFullscreen() {
 
         {/* Panel de control flotante minimizable (esquina superior derecha) */}
         {panelOpen ? (
-          <div className="absolute top-2 right-2 z-[1001] w-80 max-w-[calc(100vw-1rem)] bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg" data-testid="panel-controls">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+          <div
+            ref={panelRef}
+            className={`absolute z-[1001] w-80 max-w-[calc(100vw-1rem)] bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg ${panelPos ? "" : "top-2 right-2"}`}
+            style={panelPos ? { top: panelPos.y, left: panelPos.x } : undefined}
+            data-testid="panel-controls"
+          >
+            <div
+              className="flex items-center justify-between px-3 py-2 border-b border-border cursor-move touch-none select-none"
+              onPointerDown={onPanelDragStart}
+              onPointerMove={onPanelDragMove}
+              onPointerUp={onPanelDragEnd}
+              onPointerCancel={onPanelDragEnd}
+              onLostPointerCapture={onPanelDragEnd}
+              data-testid="panel-drag-handle"
+              title="Arrastra para mover el panel"
+            >
               <div className="flex items-center gap-2 text-sm font-semibold">
-                <SlidersHorizontal className="w-4 h-4 text-primary" />
+                <GripVertical className="w-4 h-4 text-muted-foreground" />
                 Controles
               </div>
               <button
                 onClick={() => setPanelOpen(false)}
+                onPointerDown={(e) => e.stopPropagation()}
                 className="text-muted-foreground hover:text-foreground"
                 data-testid="button-collapse-panel"
                 title="Minimizar panel"
@@ -405,11 +529,26 @@ export default function StudyFullscreen() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Fecha inicio</Label>
-                  <Input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} className="h-8 text-xs" data-testid="input-fullscreen-date-start" />
+                  <Input type="date" value={dateStart} onChange={(e) => { setDateStart(e.target.value); setActiveQuickRange(null); }} className="h-8 text-xs" data-testid="input-fullscreen-date-start" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Fecha fin</Label>
-                  <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} className="h-8 text-xs" data-testid="input-fullscreen-date-end" />
+                  <Input type="date" value={dateEnd} onChange={(e) => { setDateEnd(e.target.value); setActiveQuickRange(null); }} className="h-8 text-xs" data-testid="input-fullscreen-date-end" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Rango rápido</Label>
+                <div className="flex flex-wrap gap-1">
+                  {(["1h", "6h", "24h", "7d", "30d", "90d"] as QuickRange[]).map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => handleQuickRange(r)}
+                      className={toggleBtnClass(activeQuickRange === r)}
+                      data-testid={`button-fullscreen-range-${r}`}
+                    >
+                      {r}
+                    </button>
+                  ))}
                 </div>
               </div>
               <div className="space-y-1">
@@ -422,6 +561,44 @@ export default function StudyFullscreen() {
                   placeholder="Añadir o quitar animal..."
                 />
               </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Visualización</Label>
+                <div className="flex flex-wrap gap-1">
+                  <button onClick={() => setShowTrackLine((v) => !v)} className={toggleBtnClass(showTrackLine)} data-testid="button-toggle-track-line" title="Mostrar/ocultar línea de trayectoria">
+                    <Route className="w-3 h-3" /> Línea
+                  </button>
+                  <button onClick={() => setShowPoints((v) => !v)} className={toggleBtnClass(showPoints)} data-testid="button-toggle-points" title="Mostrar/ocultar puntos individuales">
+                    <MapPin className="w-3 h-3" /> Puntos
+                  </button>
+                  <button onClick={() => setHideLowQuality((v) => !v)} className={toggleBtnClass(hideLowQuality)} data-testid="button-toggle-hdop" title="Ocultar posiciones con HDOP > 5 (baja calidad)">
+                    {hideLowQuality ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />} HDOP&gt;5
+                  </button>
+                </div>
+              </div>
+              {selectedAnimals.length > 1 && (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Mostrar track por animal</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedAnimals.map((a) => {
+                      const hidden = hiddenAnimals.includes(a);
+                      return (
+                        <button
+                          key={a}
+                          onClick={() => toggleAnimalVisibility(a)}
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border hover-elevate"
+                          style={hidden
+                            ? { borderColor: "hsl(var(--input))", color: "hsl(var(--muted-foreground))", opacity: 0.6 }
+                            : { borderColor: animalColorMap[a], color: animalColorMap[a] }}
+                          data-testid={`button-toggle-animal-${a}`}
+                        >
+                          {hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                          {formatAnimalLabelById(a, individualByLocalId)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {selectedAnimals.length > 1 && (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Acelerómetro: enfocar animal</Label>
@@ -488,15 +665,19 @@ export default function StudyFullscreen() {
             <GoogleMapsClick />
             <MapUpdater center={mapCenter} />
             {selectedAnimals.map((animalId) => {
+              if (hiddenAnimals.includes(animalId)) return null;
               const points = gpsData[animalId] || [];
               if (points.length === 0) return null;
               const color = animalColorMap[animalId];
               const positions: [number, number][] = points.map((p) => [p.lat, p.lng]);
-              const markersToShow = downsample(points, MAX_GPS_MARKERS);
+              const markerSource = hideLowQuality
+                ? points.filter((p) => !(p.hdop != null && p.hdop > HDOP_QUALITY_THRESHOLD))
+                : points;
+              const markersToShow = downsample(markerSource, MAX_GPS_MARKERS);
               return (
                 <span key={animalId}>
-                  <Polyline positions={positions} pathOptions={{ color, weight: 2.5, opacity: 0.8 }} />
-                  {markersToShow.map((p, idx) => {
+                  {showTrackLine && <Polyline positions={positions} pathOptions={{ color, weight: 2.5, opacity: 0.8 }} />}
+                  {showPoints && markersToShow.map((p, idx) => {
                     const lowQuality = p.hdop != null && p.hdop > HDOP_QUALITY_THRESHOLD;
                     return (
                       <CircleMarker
