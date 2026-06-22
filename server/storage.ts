@@ -85,6 +85,7 @@ export interface IStorage {
   markDetectedEventsResolved(studyId: string, individualLocalId: string, eventTypes: string[]): Promise<number>;
   insertDetectedEventNoDedupe(event: InsertDetectedEvent): Promise<DetectedEvent>;
   getLatestCachedGpsEvent(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined>;
+  getLatestCachedGpsEventAnyQuality(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined>;
 
   getAlertLog(eventId: string, email: string): Promise<boolean>;
   createAlertLog(eventId: string, email: string): Promise<void>;
@@ -624,6 +625,26 @@ export class DatabaseStorage implements IStorage {
         eq(cachedGpsEvents.studyId, studyId),
         eq(cachedGpsEvents.individualLocalIdentifier, individualLocalId),
         sql`(${cachedGpsEvents.hdop} IS NULL OR ${cachedGpsEvents.hdop} <= ${HDOP_QUALITY_THRESHOLD})`,
+      ))
+      .orderBy(desc(cachedGpsEvents.timestamp))
+      .limit(1);
+    return row;
+  }
+
+  async getLatestCachedGpsEventAnyQuality(studyId: string, individualLocalId: string): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined> {
+    // Última transmisión GPS SIN filtrar por calidad (HDOP). Para el monitor de emisión
+    // importa si el dispositivo emitió, no la precisión del punto (un fix de baja calidad
+    // sigue siendo una transmisión).
+    const [row] = await db.select({
+      timestamp: cachedGpsEvents.timestamp,
+      latitude: cachedGpsEvents.latitude,
+      longitude: cachedGpsEvents.longitude,
+      hdop: cachedGpsEvents.hdop,
+    })
+      .from(cachedGpsEvents)
+      .where(and(
+        eq(cachedGpsEvents.studyId, studyId),
+        eq(cachedGpsEvents.individualLocalIdentifier, individualLocalId),
       ))
       .orderBy(desc(cachedGpsEvents.timestamp))
       .limit(1);

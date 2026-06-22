@@ -1907,7 +1907,6 @@ export async function registerRoutes(
       const user = req.user!;
       const days = parseInt(req.query.days as string, 10) || 3;
       const now = Date.now();
-      const cutoffMs = days * 24 * 60 * 60 * 1000;
 
       const studiesWithAnimals = await storage.getActiveStudiesWithDeployments();
 
@@ -1927,44 +1926,16 @@ export async function registerRoutes(
         lng: number | null;
       }[] = [];
 
+      // Lee la última posición GPS desde la caché local (cached_gps_events), poblada
+      // por el sync SFTP de Ornitela (~2 min) y el backfill de Movebank. NO se llama a
+      // la API de Movebank, por lo que no hay límite de peticiones diarias.
       for (const { study, activeIndividuals } of accessibleStudies) {
-        if (!study.movebankStudyId || !study.movebankUsername || !study.movebankPassword) {
-          continue;
-        }
-        const decryptedUsername = decrypt(study.movebankUsername);
-        const decryptedPassword = decrypt(study.movebankPassword);
         for (const animal of activeIndividuals) {
           try {
-            const recentWindow = now - cutoffMs * 2;
-            const gpsEvents = await fetchMovebankEvents(
-              study.movebankStudyId,
-              decryptedUsername,
-              decryptedPassword,
-              animal.localIdentifier,
-              653,
-              recentWindow,
-              now
-            );
-            await movebankDelay();
-
-            let lastTs: number | null = null;
-            let lastLat: number | null = null;
-            let lastLng: number | null = null;
-
-            for (const ev of gpsEvents) {
-              const ts = new Date(ev.timestamp).getTime();
-              if (!isNaN(ts) && (lastTs === null || ts > lastTs)) {
-                lastTs = ts;
-                if (ev.location_lat && ev.location_long) {
-                  const lat = parseFloat(ev.location_lat);
-                  const lng = parseFloat(ev.location_long);
-                  if (!isNaN(lat) && !isNaN(lng)) {
-                    lastLat = lat;
-                    lastLng = lng;
-                  }
-                }
-              }
-            }
+            const latest = await storage.getLatestCachedGpsEventAnyQuality(study.id, animal.localIdentifier);
+            const lastTs = latest ? latest.timestamp : null;
+            const lastLat = latest ? latest.latitude : null;
+            const lastLng = latest ? latest.longitude : null;
 
             const daysSilent = lastTs ? Math.floor((now - lastTs) / (24 * 60 * 60 * 1000)) : null;
 
@@ -1981,9 +1952,6 @@ export async function registerRoutes(
             }
           } catch (e: any) {
             log(`Emission check error for ${animal.localIdentifier}: ${e.message}`, "monitor");
-            if (e instanceof MovebankError && e.statusCode === 429) {
-              return res.status(429).json({ message: e.message });
-            }
             results.push({
               animalId: animal.localIdentifier,
               studyName: study.name,
@@ -2002,9 +1970,6 @@ export async function registerRoutes(
       return res.json(results);
     } catch (e: any) {
       log(`Emission monitor error: ${e.message}`, "monitor");
-      if (e instanceof MovebankError) {
-        return res.status(e.statusCode).json({ message: e.message });
-      }
       return res.status(500).json({ message: `Error en monitor de emision: ${e.message}` });
     }
   });

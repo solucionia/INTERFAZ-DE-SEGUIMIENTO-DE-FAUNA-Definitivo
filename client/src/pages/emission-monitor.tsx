@@ -123,11 +123,6 @@ export default function EmissionMonitor() {
     setSearching(true);
     try {
       const res = await fetch(`/api/monitor/emissions?days=${d}`, { credentials: "include" });
-      if (res.status === 429) {
-        const errBody = await res.json().catch(() => ({}));
-        toast({ title: "Limite de peticiones", description: errBody.message || "Movebank ha limitado las peticiones temporalmente. Intente de nuevo mas tarde.", variant: "destructive" });
-        return;
-      }
       if (!res.ok) throw new Error("Error al consultar emisiones");
       const data = await res.json();
       setResults(data);
@@ -191,8 +186,8 @@ export default function EmissionMonitor() {
           <CardContent className="py-8">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Consultando datos de Movebank...</p>
-              <p className="text-xs text-muted-foreground">Esto puede tardar segun el numero de animales activos</p>
+              <p className="text-sm text-muted-foreground">Consultando datos locales...</p>
+              <p className="text-xs text-muted-foreground">Leyendo la última posición registrada de cada animal</p>
             </div>
           </CardContent>
         </Card>
