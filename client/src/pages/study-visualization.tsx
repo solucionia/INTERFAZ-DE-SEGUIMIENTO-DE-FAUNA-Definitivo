@@ -1158,7 +1158,7 @@ export default function StudyVisualization() {
           <div className="flex-1 min-w-0">
             <div className="flex flex-col">
               <div>
-                <div className="flex flex-col p-3" style={{ height: "640px" }}>
+                <div className="flex flex-col p-3" style={{ height: "800px" }}>
                   <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Activity className="w-4 h-4" />
