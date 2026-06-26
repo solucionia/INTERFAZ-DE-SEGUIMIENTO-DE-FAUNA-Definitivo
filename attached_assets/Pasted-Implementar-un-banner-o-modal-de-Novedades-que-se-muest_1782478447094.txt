@@ -1,0 +1,50 @@
+Implementar un banner o modal de "Novedades" que se muestre automáticamente 
+una sola vez cuando hay una nueva versión de la plataforma.
+
+Funcionamiento:
+1. Al entrar a la app, si hay novedades no vistas, mostrar un modal con 
+   el listado de cambios de la versión actual.
+2. Una vez el usuario lo cierra o pulsa "Entendido", no vuelve a aparecer 
+   — guardar en localStorage con clave "wildtrack_changelog_seen_v<VERSION>".
+3. La versión y el contenido se definen en client/src/changelog.ts con 
+   una constante VERSION y un array de entradas. Para futuras actualizaciones 
+   solo hay que editar ese archivo.
+4. Diseño limpio y consistente con la app, con título "Novedades en 
+   WildTrack", versión actual, y lista de cambios. Botón "Entendido" 
+   para cerrar.
+
+Rellenar el changelog con VERSION = "1.2" y los siguientes cambios:
+
+CORRECCIONES:
+- Datos históricos recuperados: ahora están disponibles más de un año 
+  de histórico para todos los animales (antes solo aparecía desde abril).
+- Exportar track como Shapefile ahora descarga un shapefile real con 
+  capas de puntos GPS y línea de trayectoria.
+- Botón de exportación en pantalla completa corregido: funciona con uno 
+  y varios animales.
+- Al abrir la pantalla completa, el mapa ahora se centra automáticamente 
+  en los datos del animal.
+- El panel "Controles" minimizado ya no se mete detrás del cuadro del 
+  nombre del animal.
+- El botón "Análisis geoespacial" en pantalla completa abre en una nueva 
+  pestaña.
+
+MEJORAS:
+- Detector de mortalidad: ahora muestra el nombre del animal en el mapa 
+  y en las tablas de resultados.
+- Detector de mortalidad: dos nuevos criterios basados en acelerómetro 
+  (inmovilidad ACC consecutiva y caída Z negativa), activables como 
+  opciones independientes.
+- Detector de eventos: nuevas alertas de "Depredación/Pelea" (eje Z ±200 
+  en 4 posiciones consecutivas) y "Riesgo caída emisor" (eje X ±300).
+- Acelerómetro más grande en la vista normal del visualizador.
+- Análisis geoespacial: MCP muestra por defecto 50% y 100%; el KDE 
+  tiene ahora selector de percentiles con botones predefinidos.
+- Análisis completo incluye ahora también los gráficos de distancia 
+  recorrida y velocidad de movimiento.
+- Análisis geoespacial: eliminado rango rápido de 1h, añadido 14 días.
+- Análisis geoespacial: nuevo slider de máximo de puntos para filtrar 
+  cuando hay demasiadas posiciones.
+- Visualizador: eventos filtrados por animal seleccionado, con selector 
+  de tipo de evento.
+- Visualizador de datos accesible desde el menú lateral de herramientas.
