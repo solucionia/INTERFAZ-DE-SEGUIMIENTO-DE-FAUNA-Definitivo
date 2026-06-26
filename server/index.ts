@@ -73,6 +73,11 @@ import { startScheduler } from "./scheduler";
 import { sftpWatcher } from "./services/sftpWatcher";
 
 (async () => {
+  // Allow standalone scripts (e.g. one-off backfills) to import server modules
+  // without booting the HTTP server, scheduler or SFTP watcher.
+  if (process.env.WILDTRACK_NO_BOOT === "1") {
+    return;
+  }
   initEncryption();
   await migrateEncryptCredentials();
   await registerRoutes(httpServer, app);
