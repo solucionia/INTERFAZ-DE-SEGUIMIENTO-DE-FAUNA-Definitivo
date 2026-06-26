@@ -479,10 +479,6 @@ export default function StudyFullscreen() {
     return `${selectedAnimals.length} animales`;
   }, [selectedAnimals, individualByLocalId]);
 
-  const hasDateRange = !!dateStart && !!dateEnd;
-  const canExportGeo = selectedAnimals.length > 0 && hasDateRange && totalGps > 0;
-  const canExportChart = selectedAnimals.length > 0 && totalAcc > 0;
-  const canExportAny = canExportGeo || canExportChart;
   const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
   const todayStr = format(new Date(), "yyyy-MM-dd");
 
@@ -865,32 +861,32 @@ export default function StudyFullscreen() {
                 <div className="flex flex-wrap gap-1.5">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" disabled={exporting || loading || !canExportAny} data-testid="button-fullscreen-export-menu">
+                      <Button variant="outline" size="sm" className="h-8 text-xs" disabled={exporting} data-testid="button-fullscreen-export-menu">
                         {exporting ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5 mr-1.5" />}
                         Exportar
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
                       <DropdownMenuLabel>Imágenes</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={exportChartPng} disabled={!canExportChart} data-testid="menu-fullscreen-export-chart-png">
+                      <DropdownMenuItem onClick={exportChartPng} data-testid="menu-fullscreen-export-chart-png">
                         <ImageIcon className="w-4 h-4 mr-2" />
                         Gráfica como PNG
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={exportMapPng} disabled={!canExportGeo} data-testid="menu-fullscreen-export-map-png">
+                      <DropdownMenuItem onClick={exportMapPng} data-testid="menu-fullscreen-export-map-png">
                         <ImageIcon className="w-4 h-4 mr-2" />
                         Mapa como PNG
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={exportPdf} disabled={!canExportAny} data-testid="menu-fullscreen-export-pdf">
+                      <DropdownMenuItem onClick={exportPdf} data-testid="menu-fullscreen-export-pdf">
                         <FileText className="w-4 h-4 mr-2" />
                         Informe PDF
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuLabel>Exportar datos como...</DropdownMenuLabel>
-                      <DropdownMenuItem onClick={() => exportData("kmz")} disabled={!canExportGeo} data-testid="menu-fullscreen-export-kmz">
+                      <DropdownMenuItem onClick={() => exportData("kmz")} data-testid="menu-fullscreen-export-kmz">
                         <Globe className="w-4 h-4 mr-2" />
                         KMZ (Google Earth)
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => exportData("shp")} disabled={!canExportGeo} data-testid="menu-fullscreen-export-shp">
+                      <DropdownMenuItem onClick={() => exportData("shp")} data-testid="menu-fullscreen-export-shp">
                         <Database className="w-4 h-4 mr-2" />
                         Shapefile (SHP)
                       </DropdownMenuItem>
