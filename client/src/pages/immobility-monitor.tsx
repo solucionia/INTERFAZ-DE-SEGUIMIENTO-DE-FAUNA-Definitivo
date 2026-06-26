@@ -502,7 +502,7 @@ export default function ImmobilityMonitor() {
                       >
                         <Popup>
                           <div className="text-sm">
-                            <p className="font-bold">{p.individual}</p>
+                            <p className="font-bold">{formatAnimalLabelById(p.individual, individualMap)}</p>
                             <p className="text-xs text-gray-500">{p.species}</p>
                             <p style={{ color: p.color, fontWeight: "bold" }}>{p.label}</p>
                             <p>{p.detail}</p>
@@ -558,7 +558,7 @@ export default function ImmobilityMonitor() {
                     <TableBody>
                       {result.immobilityAlerts.map((a, i) => (
                         <TableRow key={i} data-testid={`row-immobility-${i}`}>
-                          <TableCell className="font-medium">{a.individual}</TableCell>
+                          <TableCell className="font-medium">{formatAnimalLabelById(a.individual, individualMap)}</TableCell>
                           <TableCell className="text-xs">{a.species}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs" data-testid={`badge-method-${i}`}>
@@ -639,7 +639,7 @@ export default function ImmobilityMonitor() {
                     <TableBody>
                       {result.noTransmissionAlerts.map((a, i) => (
                         <TableRow key={i} data-testid={`row-no-transmission-${i}`}>
-                          <TableCell className="font-medium">{a.individual}</TableCell>
+                          <TableCell className="font-medium">{formatAnimalLabelById(a.individual, individualMap)}</TableCell>
                           <TableCell className="text-xs">{a.species}</TableCell>
                           <TableCell>{formatDate(a.lastTransmission)}</TableCell>
                           <TableCell>
@@ -718,7 +718,7 @@ export default function ImmobilityMonitor() {
                     <TableBody>
                       {result.zoneDeviationAlerts.map((a, i) => (
                         <TableRow key={i} data-testid={`row-zone-deviation-${i}`}>
-                          <TableCell className="font-medium">{a.individual}</TableCell>
+                          <TableCell className="font-medium">{formatAnimalLabelById(a.individual, individualMap)}</TableCell>
                           <TableCell className="text-xs">{a.species}</TableCell>
                           <TableCell>
                             <span className="font-bold text-purple-500" data-testid={`text-km-outside-${i}`}>{a.kmOutside} km</span>
