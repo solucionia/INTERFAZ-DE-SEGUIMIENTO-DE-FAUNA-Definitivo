@@ -243,6 +243,7 @@ export default function StudyVisualization() {
   const [detectedEvents, setDetectedEvents] = useState<DetectedEvent[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEvents, setShowEvents] = useState(true);
+  const [eventTypeFilter, setEventTypeFilter] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
 
   const [labelMode, setLabelMode] = useState(false);
@@ -664,15 +665,46 @@ export default function StudyVisualization() {
     },
   });
 
+  const availableEventTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const e of detectedEvents) {
+      if (currentDeviceId && e.individualLocalId !== currentDeviceId) continue;
+      types.add(e.eventType);
+    }
+    return Array.from(types);
+  }, [detectedEvents, currentDeviceId]);
+
+  const filteredDetectedEvents = useMemo(() => {
+    return detectedEvents.filter((e) => {
+      if (currentDeviceId && e.individualLocalId !== currentDeviceId) return false;
+      if (eventTypeFilter.size > 0 && !eventTypeFilter.has(e.eventType)) return false;
+      return true;
+    });
+  }, [detectedEvents, currentDeviceId, eventTypeFilter]);
+
+  // Si cambia el animal/los datos, descarta del filtro los tipos que ya no
+  // están disponibles para evitar quedar atrapado en una lista vacía sin poder
+  // limpiar el filtro (el selector se oculta cuando hay <=1 tipo disponible).
+  useEffect(() => {
+    setEventTypeFilter((prev) => {
+      if (prev.size === 0) return prev;
+      const available = new Set(availableEventTypes);
+      const next = new Set<string>();
+      for (const t of Array.from(prev)) {
+        if (available.has(t)) next.add(t);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [availableEventTypes]);
+
   const chartEventBands = useMemo(() => {
     if (!showEvents || chartData.length === 0) return [];
     const chartMin = chartData[0]?.timestamp ?? 0;
     const chartMax = chartData[chartData.length - 1]?.timestamp ?? 0;
-    return detectedEvents.filter((e) => {
-      if (activeAnimalFilter && e.individualLocalId !== activeAnimalFilter) return false;
-      return e.timestampEnd >= chartMin && e.timestampStart <= chartMax;
-    });
-  }, [detectedEvents, chartData, activeAnimalFilter, showEvents]);
+    return filteredDetectedEvents.filter(
+      (e) => e.timestampEnd >= chartMin && e.timestampStart <= chartMax
+    );
+  }, [filteredDetectedEvents, chartData, showEvents]);
 
   const animalColorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1096,7 +1128,7 @@ export default function StudyVisualization() {
               {detectedEvents.length > 0 && (
                 <>
                   <AlertTriangle className="w-3.5 h-3.5 ml-1" />
-                  <span>{detectedEvents.length} eventos</span>
+                  <span>{filteredDetectedEvents.length} eventos</span>
                 </>
               )}
             </div>
@@ -1408,15 +1440,58 @@ export default function StudyVisualization() {
 
           {detectedEvents.length > 0 && (
             <div className="w-80 border-l flex flex-col shrink-0">
-              <div className="p-3 border-b">
+              <div className="p-3 border-b space-y-2">
                 <h3 className="text-sm font-semibold flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4" />
-                  Eventos detectados ({detectedEvents.length})
+                  Eventos detectados ({filteredDetectedEvents.length})
                 </h3>
+                {availableEventTypes.length > 1 && (
+                  <div className="flex flex-wrap gap-1" data-testid="filter-event-types">
+                    <Badge
+                      variant={eventTypeFilter.size === 0 ? "default" : "outline"}
+                      className="cursor-pointer select-none text-[10px]"
+                      onClick={() => setEventTypeFilter(new Set())}
+                      data-testid="badge-event-type-all"
+                    >
+                      Todos
+                    </Badge>
+                    {availableEventTypes.map((t) => {
+                      const active = eventTypeFilter.has(t);
+                      const color = EVENT_COLORS[t as keyof typeof EVENT_COLORS] || "#888";
+                      return (
+                        <Badge
+                          key={t}
+                          variant={active ? "default" : "outline"}
+                          className="cursor-pointer select-none text-[10px] gap-1"
+                          onClick={() =>
+                            setEventTypeFilter((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(t)) next.delete(t);
+                              else next.add(t);
+                              return next;
+                            })
+                          }
+                          data-testid={`badge-event-type-${t}`}
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: color }}
+                          />
+                          {EVENT_LABELS[t as keyof typeof EVENT_LABELS] || t}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <ScrollArea className="flex-1">
                 <div className="p-2 space-y-1.5">
-                  {detectedEvents.map((ev) => {
+                  {filteredDetectedEvents.length === 0 && (
+                    <p className="text-xs text-muted-foreground p-2 text-center" data-testid="text-no-events">
+                      No hay eventos para los filtros seleccionados.
+                    </p>
+                  )}
+                  {filteredDetectedEvents.map((ev) => {
                     const Icon = EVENT_ICONS[ev.eventType] || AlertTriangle;
                     const color = EVENT_COLORS[ev.eventType as keyof typeof EVENT_COLORS] || "#888";
                     const isSelected = selectedEventId === ev.id;
