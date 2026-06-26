@@ -181,7 +181,7 @@ export default function GeoAnalysis() {
   const [kernelPercentages, setKernelPercentages] = useState<number[]>([50, 95]);
   const [kernelPctInput, setKernelPctInput] = useState("");
   const [showKernelPcts, setShowKernelPcts] = useState<number[]>([50, 95]);
-  const [showMcpPcts, setShowMcpPcts] = useState<number[]>([95, 100]);
+  const [showMcpPcts, setShowMcpPcts] = useState<number[]>([50, 100]);
   const [mapLayer, setMapLayer] = useState<"kernel" | "mcp">("kernel");
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -323,6 +323,22 @@ export default function GeoAnalysis() {
       return;
     }
     setKernelPercentages(kernelPercentages.filter((p) => p !== pct));
+  };
+
+  const toggleKernelCalcPct = (pct: number) => {
+    if (kernelPercentages.includes(pct)) {
+      if (kernelPercentages.length <= 1) {
+        toast({ title: "Mínimo 1 percentil", variant: "destructive" });
+        return;
+      }
+      setKernelPercentages(kernelPercentages.filter((p) => p !== pct));
+    } else {
+      if (kernelPercentages.length >= 10) {
+        toast({ title: "Máximo 10 percentiles", variant: "destructive" });
+        return;
+      }
+      setKernelPercentages([...kernelPercentages, pct].sort((a, b) => a - b));
+    }
   };
 
   const exportCsvLegacy = () => {
@@ -871,6 +887,23 @@ export default function GeoAnalysis() {
             {(analysisType === "kernel" || analysisType === "comprehensive") && (
               <div className="space-y-2">
                 <Label>Percentiles Kernel (%)</Label>
+                <div className="flex flex-wrap gap-1" data-testid="presets-kernel-percentages">
+                  {KERNEL_PCTS.map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => toggleKernelCalcPct(pct)}
+                      className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
+                        kernelPercentages.includes(pct)
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border text-muted-foreground"
+                      }`}
+                      data-testid={`preset-kernel-pct-${pct}`}
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
                 <div className="flex flex-wrap gap-1 mb-1" data-testid="taginput-kernel-percentages">
                   {kernelPercentages.map((pct) => (
                     <span
