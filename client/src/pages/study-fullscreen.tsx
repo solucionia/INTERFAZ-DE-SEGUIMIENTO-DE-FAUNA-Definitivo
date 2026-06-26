@@ -153,6 +153,22 @@ function MapUpdater({ center }: { center: [number, number] | null }) {
   return null;
 }
 
+// Ajusta automáticamente el encuadre del mapa a todos los puntos GPS cargados.
+// Se reejecuta solo cuando cambia el dataset (fitKey), no en cada interacción,
+// para no interferir con el paneo/zoom manual del usuario.
+function FitBounds({ points, fitKey }: { points: [number, number][]; fitKey: string }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length === 0) return;
+    const bounds = L.latLngBounds(points);
+    if (!bounds.isValid()) return;
+    map.invalidateSize();
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey, map]);
+  return null;
+}
+
 export default function StudyFullscreen() {
   const [, params] = useRoute("/study/:id/fullscreen");
   const studyId = params?.id;
@@ -370,12 +386,8 @@ export default function StudyFullscreen() {
         if (cancelled) return;
         setGpsData(parsedGps);
         setAccData(parsedAcc);
-        const allGps = Object.values(parsedGps).flat();
-        if (allGps.length > 0) {
-          const avgLat = allGps.reduce((s, p) => s + p.lat, 0) / allGps.length;
-          const avgLng = allGps.reduce((s, p) => s + p.lng, 0) / allGps.length;
-          setMapCenter([avgLat, avgLng]);
-        }
+        // El encuadre inicial lo gestiona <FitBounds> (fitBounds a todos los
+        // puntos GPS); no fijamos un centro promedio aquí para evitar conflictos.
       } catch (e: any) {
         if (!cancelled) setError(e.message || "Error al cargar los datos.");
       } finally {
@@ -945,6 +957,10 @@ export default function StudyFullscreen() {
             <MapLayerControl />
             <GoogleMapsClick />
             <MapUpdater center={mapCenter} />
+            <FitBounds
+              points={selectedAnimals.flatMap((animalId) => (gpsData[animalId] || []).map((p) => [p.lat, p.lng] as [number, number]))}
+              fitKey={`${animalsKey}|${dateStart}|${dateEnd}|${totalGps}`}
+            />
             {selectedAnimals.map((animalId) => {
               if (hiddenAnimals.includes(animalId)) return null;
               const points = gpsData[animalId] || [];
