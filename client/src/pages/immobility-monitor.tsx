@@ -69,7 +69,7 @@ interface ImmobilityAlert {
   googleMapsUrl: string;
   status: string;
   severity: string;
-  method: "acc" | "gps";
+  method: "acc" | "gps" | "acc_consecutive" | "z_negative";
   accVariance: number | null;
 }
 
@@ -129,6 +129,8 @@ interface AnalysisResult {
       positionChangeThreshold: number;
       enableImmobility?: boolean;
       enableNoTransmission?: boolean;
+      enableAccConsecutive?: boolean;
+      enableZNegative?: boolean;
     };
     zoneDeviation?: number;
   };
@@ -179,6 +181,8 @@ export default function ImmobilityMonitor() {
   const [noTransmissionThreshold, setNoTransmissionThreshold] = useState(48);
   const [enableImmobility, setEnableImmobility] = useState(true);
   const [enableNoTransmission, setEnableNoTransmission] = useState(true);
+  const [enableAccConsecutive, setEnableAccConsecutive] = useState(false);
+  const [enableZNegative, setEnableZNegative] = useState(false);
   const [speedThreshold, setSpeedThreshold] = useState(0.5);
   const [positionThreshold, setPositionThreshold] = useState(0.0001);
 
@@ -207,6 +211,8 @@ export default function ImmobilityMonitor() {
         positionChangeThreshold: positionThreshold,
         enableImmobility,
         enableNoTransmission,
+        enableAccConsecutive,
+        enableZNegative,
       });
       return res.json();
     },
@@ -381,6 +387,40 @@ export default function ImmobilityMonitor() {
               {!enableNoTransmission && (
                 <p className="text-xs text-muted-foreground">Criterio desactivado: emisores inactivos no aparecerán como falsos positivos.</p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-acc-consecutive"
+                  checked={enableAccConsecutive}
+                  onCheckedChange={(v) => setEnableAccConsecutive(v === true)}
+                  data-testid="checkbox-enable-acc-consecutive"
+                />
+                <Label htmlFor="enable-acc-consecutive" className={enableAccConsecutive ? "" : "text-muted-foreground"}>
+                  Inmovilidad ACC consecutiva
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Marca inmóvil si en 3 muestras ACC consecutivas la variación de cada eje (X, Y, Z) es menor que 20.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enable-z-negative"
+                  checked={enableZNegative}
+                  onCheckedChange={(v) => setEnableZNegative(v === true)}
+                  data-testid="checkbox-enable-z-negative"
+                />
+                <Label htmlFor="enable-z-negative" className={enableZNegative ? "" : "text-muted-foreground"}>
+                  Caída Z negativa
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Marca mortalidad si 2 muestras ACC consecutivas tienen aceleración Z menor que -200.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -562,7 +602,13 @@ export default function ImmobilityMonitor() {
                           <TableCell className="text-xs">{a.species}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs" data-testid={`badge-method-${i}`}>
-                              {a.method === "acc" ? "ACC" : "GPS"}
+                              {a.method === "acc"
+                                ? "ACC"
+                                : a.method === "acc_consecutive"
+                                  ? "ACC consecutiva"
+                                  : a.method === "z_negative"
+                                    ? "Z negativa"
+                                    : "GPS"}
                             </Badge>
                             {a.method === "acc" && a.accVariance != null && (
                               <span className="text-xs text-muted-foreground ml-1">var {a.accVariance}</span>

@@ -2636,6 +2636,8 @@ export async function registerRoutes(
         immobilityRadiusMeters: z.coerce.number().min(1).max(100000).optional(),
         enableImmobility: z.boolean().optional(),
         enableNoTransmission: z.boolean().optional(),
+        enableAccConsecutive: z.boolean().optional(),
+        enableZNegative: z.boolean().optional(),
       }).passthrough();
       const parsed = configSchema.safeParse(req.body || {});
       if (!parsed.success) {

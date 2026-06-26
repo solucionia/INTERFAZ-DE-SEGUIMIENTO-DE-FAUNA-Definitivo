@@ -33,6 +33,14 @@ export interface ImmobilityConfig {
   //   emisores inactivos cuando solo se quiere analizar inmovilidad).
   enableImmobility: boolean;
   enableNoTransmission: boolean;
+  // Criterios ADICIONALES de acelerómetro (opt-in, desactivados por defecto):
+  // - enableAccConsecutive: marca inmovilidad si hay `ACC_CONSECUTIVE_RUN` muestras
+  //   ACC consecutivas en las que la variación de CADA eje (X, Y, Z) respecto a la
+  //   muestra anterior es < `ACC_CONSECUTIVE_DELTA`.
+  // - enableZNegative: marca mortalidad si hay `Z_NEGATIVE_RUN` muestras ACC
+  //   consecutivas con zAcceleration por debajo de `Z_NEGATIVE_VALUE`.
+  enableAccConsecutive: boolean;
+  enableZNegative: boolean;
 }
 
 export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
@@ -46,7 +54,15 @@ export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
   immobilityRadiusMeters: 50,
   enableImmobility: true,
   enableNoTransmission: true,
+  enableAccConsecutive: false,
+  enableZNegative: false,
 };
+
+// Parámetros de los criterios ACC adicionales.
+const ACC_CONSECUTIVE_RUN = 3; // nº de muestras consecutivas a evaluar
+const ACC_CONSECUTIVE_DELTA = 20; // variación máxima por eje entre muestras consecutivas
+const Z_NEGATIVE_VALUE = -200; // umbral de caída del eje Z
+const Z_NEGATIVE_RUN = 2; // nº de muestras consecutivas por debajo del umbral
 
 export const NO_TRANSMISSION_THRESHOLD_DAYS_KEY = "no_transmission_threshold_days";
 export const DEFAULT_NO_TRANSMISSION_THRESHOLD_DAYS = 7;
@@ -80,7 +96,7 @@ export interface ImmobilityAlert {
   googleMapsUrl: string;
   status: string;
   severity: string;
-  method: "acc" | "gps";
+  method: "acc" | "gps" | "acc_consecutive" | "z_negative";
   accVariance: number | null;
 }
 
@@ -225,6 +241,96 @@ function detectAccMortality(
     samples: w.length,
     startTs: w[0].timestamp,
     endTs: w[w.length - 1].timestamp,
+  };
+}
+
+/**
+ * Criterio ADICIONAL 1 — "Inmovilidad ACC consecutiva".
+ * Recorre las muestras ACC ordenadas por tiempo y busca una racha de
+ * `ACC_CONSECUTIVE_RUN` muestras consecutivas en la que, entre cada par de
+ * muestras seguidas, la variación de CADA eje (|dX|, |dY|, |dZ|) sea menor que
+ * `ACC_CONSECUTIVE_DELTA`. Devuelve la primera racha encontrada o null.
+ */
+function detectAccConsecutiveImmobility(
+  acc: CachedAccEvent[],
+): { startTs: number; endTs: number; samples: number } | null {
+  if (acc.length < ACC_CONSECUTIVE_RUN) return null;
+  const w = [...acc].sort((a, b) => a.timestamp - b.timestamp);
+  for (let i = 0; i + ACC_CONSECUTIVE_RUN - 1 < w.length; i++) {
+    let ok = true;
+    for (let j = i + 1; j < i + ACC_CONSECUTIVE_RUN; j++) {
+      const dx = Math.abs(w[j].xAcceleration - w[j - 1].xAcceleration);
+      const dy = Math.abs(w[j].yAcceleration - w[j - 1].yAcceleration);
+      const dz = Math.abs(w[j].zAcceleration - w[j - 1].zAcceleration);
+      if (dx >= ACC_CONSECUTIVE_DELTA || dy >= ACC_CONSECUTIVE_DELTA || dz >= ACC_CONSECUTIVE_DELTA) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      return { startTs: w[i].timestamp, endTs: w[i + ACC_CONSECUTIVE_RUN - 1].timestamp, samples: ACC_CONSECUTIVE_RUN };
+    }
+  }
+  return null;
+}
+
+/**
+ * Criterio ADICIONAL 2 — "Caída Z negativa".
+ * Busca `Z_NEGATIVE_RUN` muestras ACC consecutivas (orden temporal) cuyo eje Z
+ * esté por debajo de `Z_NEGATIVE_VALUE`. Devuelve la primera racha o null.
+ */
+function detectZNegativeFall(
+  acc: CachedAccEvent[],
+): { startTs: number; endTs: number; samples: number } | null {
+  if (acc.length < Z_NEGATIVE_RUN) return null;
+  const w = [...acc].sort((a, b) => a.timestamp - b.timestamp);
+  let run = 0;
+  for (let i = 0; i < w.length; i++) {
+    if (w[i].zAcceleration < Z_NEGATIVE_VALUE) {
+      run++;
+      if (run >= Z_NEGATIVE_RUN) {
+        return { startTs: w[i - Z_NEGATIVE_RUN + 1].timestamp, endTs: w[i].timestamp, samples: Z_NEGATIVE_RUN };
+      }
+    } else {
+      run = 0;
+    }
+  }
+  return null;
+}
+
+/**
+ * Construye una alerta de inmovilidad/mortalidad para los criterios ACC
+ * adicionales (consecutiva / Z negativa). Reutiliza la última GPS para situar
+ * el marcador en el mapa.
+ */
+function buildAccCriteriaAlert(
+  id: string,
+  species: string,
+  gps: CachedGpsEvent[],
+  method: "acc_consecutive" | "z_negative",
+  run: { startTs: number; endTs: number; samples: number },
+): ImmobilityAlert {
+  const lastGps = gps.length ? gps.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null;
+  const lat = lastGps?.latitude ?? 0;
+  const lon = lastGps?.longitude ?? 0;
+  const hours = Math.round(((run.endTs - run.startTs) / (60 * 60 * 1000)) * 10) / 10;
+  return {
+    individual: id,
+    species,
+    alertStart: run.startTs,
+    alertEnd: run.endTs,
+    hoursImmobile: hours,
+    daysImmobile: Math.round((hours / 24) * 10) / 10,
+    numRecords: run.samples,
+    lastLat: lat,
+    lastLon: lon,
+    avgSpeed: 0,
+    maxSpeed: 0,
+    googleMapsUrl: `https://www.google.com/maps?q=${lat},${lon}`,
+    status: method === "acc_consecutive" ? "INMÓVIL (ACC consecutiva)" : "MORTALIDAD (Z negativa)",
+    severity: "critical",
+    method,
+    accVariance: null,
   };
 }
 
@@ -524,6 +630,28 @@ export async function analyzeImmobility(
     }
   }
 
+  // Criterios ACC ADICIONALES (opt-in). Independientes de `enableImmobility`:
+  // cada uno añade su propia fila a la tabla de inmovilidad con su `method`.
+  // Evitamos duplicar el mismo (animal, método) que ya pudo generar el criterio
+  // principal por varianza ACC.
+  if (cfg.enableAccConsecutive || cfg.enableZNegative) {
+    for (const animal of filteredIndividuals) {
+      const id = animal.localIdentifier;
+      const species = speciesMap.get(id) || "Desconocida";
+      const acc = accByAnimal.get(id) ?? [];
+      if (acc.length === 0) continue;
+      const gps = gpsByAnimal.get(id) ?? [];
+      if (cfg.enableAccConsecutive) {
+        const run = detectAccConsecutiveImmobility(acc);
+        if (run) immobilityAlerts.push(buildAccCriteriaAlert(id, species, gps, "acc_consecutive", run));
+      }
+      if (cfg.enableZNegative) {
+        const run = detectZNegativeFall(acc);
+        if (run) immobilityAlerts.push(buildAccCriteriaAlert(id, species, gps, "z_negative", run));
+      }
+    }
+  }
+
   // Estado de transmisión basado en histórico COMPLETO, no solo en la ventana analizada.
   // Así detectamos animales que llevan mucho tiempo silenciados (>>96h) cuya última GPS
   // ya no aparece en `allGpsEvents`.
@@ -614,9 +742,14 @@ export async function analyzeImmobility(
           timestampEnd: alert.alertEnd,
           lat: alert.lastLat,
           lng: alert.lastLon,
-          description: alert.method === "acc"
-            ? `Mortalidad detectada por acelerómetro: ${alert.hoursImmobile}h (${alert.daysImmobile} días) sin variación significativa, ${alert.numRecords} muestras ACC. Varianza combinada=${alert.accVariance} (umbral=${cfg.accVarianceThreshold})`
-            : `Inmovilidad detectada por GPS (radio ${cfg.immobilityRadiusMeters}m): ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} posiciones. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
+          description:
+            alert.method === "acc"
+              ? `Mortalidad detectada por acelerómetro: ${alert.hoursImmobile}h (${alert.daysImmobile} días) sin variación significativa, ${alert.numRecords} muestras ACC. Varianza combinada=${alert.accVariance} (umbral=${cfg.accVarianceThreshold})`
+              : alert.method === "acc_consecutive"
+                ? `Inmovilidad detectada por ACC consecutiva: ${alert.numRecords} muestras consecutivas con variación por eje < ${ACC_CONSECUTIVE_DELTA} (${alert.hoursImmobile}h)`
+                : alert.method === "z_negative"
+                  ? `Mortalidad detectada por caída Z negativa: ${alert.numRecords} muestras consecutivas con zAcceleration < ${Z_NEGATIVE_VALUE} (${alert.hoursImmobile}h)`
+                  : `Inmovilidad detectada por GPS (radio ${cfg.immobilityRadiusMeters}m): ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} posiciones. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
           metadata: {
             method: alert.method,
             acc_combined_variance: alert.accVariance,
@@ -707,7 +840,7 @@ export async function analyzeImmobility(
     //    Solo se resuelven los tipos cuyo criterio esté activo (un criterio
     //    desactivado se ignora por completo, no toca sus eventos existentes).
     const typesToResolve: ("mortality" | "no_transmission")[] = [];
-    if (cfg.enableImmobility) typesToResolve.push("mortality");
+    if (cfg.enableImmobility || cfg.enableAccConsecutive || cfg.enableZNegative) typesToResolve.push("mortality");
     if (cfg.enableNoTransmission) typesToResolve.push("no_transmission");
     if (typesToResolve.length > 0) {
       for (const a of active) {
