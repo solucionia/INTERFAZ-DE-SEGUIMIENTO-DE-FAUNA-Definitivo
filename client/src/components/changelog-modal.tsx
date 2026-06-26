@@ -50,18 +50,27 @@ export function ChangelogModal() {
           </DialogDescription>
         </DialogHeader>
 
-        <ul className="space-y-2 py-2">
-          {CHANGES.map((change, i) => (
-            <li
-              key={i}
-              className="flex gap-2 text-sm text-foreground"
-              data-testid={`text-changelog-item-${i}`}
-            >
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>{change}</span>
-            </li>
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto py-2 pr-1">
+          {CHANGES.map((section, si) => (
+            <div key={si} data-testid={`section-changelog-${si}`}>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {section.title}
+              </h3>
+              <ul className="space-y-2">
+                {section.items.map((item, i) => (
+                  <li
+                    key={i}
+                    className="flex gap-2 text-sm text-foreground"
+                    data-testid={`text-changelog-item-${si}-${i}`}
+                  >
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
 
         <DialogFooter>
           <Button onClick={handleClose} data-testid="button-changelog-dismiss">
