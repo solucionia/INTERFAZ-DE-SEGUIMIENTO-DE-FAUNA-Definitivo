@@ -757,34 +757,82 @@ export async function registerRoutes(
 
       if (fmt === "shp") {
         const JSZip = (await import("jszip")).default;
+        // Escritor de bajo nivel de shp-write (mismo enfoque que export-geospatial):
+        // genera shapefiles binarios reales (.shp/.shx/.dbf), no un GeoJSON envuelto.
+        // @ts-ignore - shp-write no incluye tipos
+        const shpModule: any = await import("shp-write");
+        const shpwriteWrite: (rows: any[], type: string, geometries: any[], cb: (err: any, files: any) => void) => void =
+          shpModule.default?.write ?? shpModule.write;
+        if (typeof shpwriteWrite !== "function") {
+          return res.status(500).json({ message: "No se pudo cargar el generador de shapefiles (shp-write)." });
+        }
+
+        if (allPoints.length === 0) {
+          return res.status(400).json({ message: "No hay puntos GPS para exportar en el rango seleccionado." });
+        }
+
+        // EPSG:4326 / WGS84. El .cpg declara ISO-8859-1 porque la librería dbf
+        // escribe los caracteres como bytes Latin-1.
+        const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]`;
+        const cpgContent = "ISO-8859-1";
+
+        const buildShp = (rows: any[], type: string, geometries: any[]) =>
+          new Promise<{ shp: ArrayBuffer; shx: ArrayBuffer; dbf: ArrayBuffer }>((resolve, reject) => {
+            shpwriteWrite(rows, type, geometries, (err, files) => {
+              if (err) return reject(err);
+              resolve({ shp: files.shp.buffer, shx: files.shx.buffer, dbf: files.dbf.buffer });
+            });
+          });
+
         const zip = new JSZip();
 
-        const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]`;
+        // 1) Puntos GPS (geometría POINT: cada elemento es [lng, lat]).
+        const pointGeometries = allPoints.map((p) => [p.lng, p.lat]);
+        const pointRows = allPoints.map((p) => ({
+          animal: String(p.individual ?? ""),
+          ts: p.timestamp,
+          datetime: new Date(p.timestamp).toISOString(),
+          lat: p.lat,
+          lon: p.lng,
+          speed: p.speed ?? 0,
+          alt: p.altitude ?? 0,
+        }));
+        const pointFiles = await buildShp(pointRows, "POINT", pointGeometries);
+        zip.file("gps_points.shp", pointFiles.shp, { binary: true });
+        zip.file("gps_points.shx", pointFiles.shx, { binary: true });
+        zip.file("gps_points.dbf", pointFiles.dbf, { binary: true });
         zip.file("gps_points.prj", prjContent);
+        zip.file("gps_points.cpg", cpgContent);
 
-        let csvContent = "individual,timestamp,datetime,latitude,longitude,speed,altitude\n";
+        // 2) Trayectorias por individuo (geometría POLYLINE: cada elemento es
+        //    [ linea ] y la linea es un array de [lng, lat]).
+        const byIndividual = new Map<string, typeof allPoints>();
         for (const p of allPoints) {
-          csvContent += `"${p.individual}",${p.timestamp},"${new Date(p.timestamp).toISOString()}",${p.lat},${p.lng},${p.speed ?? 0},${p.altitude ?? 0}\n`;
+          const key = String(p.individual ?? "");
+          if (!byIndividual.has(key)) byIndividual.set(key, []);
+          byIndividual.get(key)!.push(p);
         }
-        zip.file("gps_points.csv", csvContent);
-
-        const geojsonForShp = {
-          type: "FeatureCollection",
-          features: allPoints.map((p) => ({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-            properties: {
-              name: p.individual,
-              timestamp: p.timestamp,
-              datetime: new Date(p.timestamp).toISOString(),
-              latitude: p.lat,
-              longitude: p.lng,
-              speed: p.speed ?? 0,
-              altitude: p.altitude ?? 0,
-            },
-          })),
-        };
-        zip.file("gps_points.geojson", JSON.stringify(geojsonForShp, null, 2));
+        const lineGeometries: number[][][][] = [];
+        const lineRows: any[] = [];
+        for (const [animal, pts] of Array.from(byIndividual.entries())) {
+          const ordered = [...pts].sort((a, b) => a.timestamp - b.timestamp);
+          if (ordered.length < 2) continue;
+          lineGeometries.push([ordered.map((p) => [p.lng, p.lat])]);
+          lineRows.push({
+            animal,
+            points: ordered.length,
+            start: new Date(ordered[0].timestamp).toISOString(),
+            end: new Date(ordered[ordered.length - 1].timestamp).toISOString(),
+          });
+        }
+        if (lineGeometries.length > 0) {
+          const lineFiles = await buildShp(lineRows, "POLYLINE", lineGeometries);
+          zip.file("track_lines.shp", lineFiles.shp, { binary: true });
+          zip.file("track_lines.shx", lineFiles.shx, { binary: true });
+          zip.file("track_lines.dbf", lineFiles.dbf, { binary: true });
+          zip.file("track_lines.prj", prjContent);
+          zip.file("track_lines.cpg", cpgContent);
+        }
 
         const shpBuf = await zip.generateAsync({ type: "nodebuffer" });
         res.setHeader("Content-Type", "application/zip");
