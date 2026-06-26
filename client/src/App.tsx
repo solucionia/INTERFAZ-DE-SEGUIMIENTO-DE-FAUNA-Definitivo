@@ -19,6 +19,7 @@ import AdminUsers from "@/pages/admin-users";
 import AdminSpeciesProfiles from "@/pages/admin-species-profiles";
 import EmissionMonitor from "@/pages/emission-monitor";
 import GeoAnalysis from "@/pages/geo-analysis";
+import SelectStudyVisualize from "@/pages/select-study-visualize";
 import AlertHistory from "@/pages/alert-history";
 import RawData from "@/pages/raw-data";
 import ImportCsv from "@/pages/import-csv";
@@ -63,6 +64,7 @@ function AuthenticatedRouter() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/study/:id" component={StudyDetail} />
+      <Route path="/visualize" component={SelectStudyVisualize} />
       <Route path="/study/:id/visualize" component={StudyVisualization} />
       <Route path="/study/:id/analysis" component={GeoAnalysis} />
       <Route path="/study/:id/data" component={RawData} />

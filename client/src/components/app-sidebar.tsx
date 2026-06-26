@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin, Bug, FolderOpen, Globe } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin, Bug, FolderOpen, Globe, BarChart3 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -130,18 +130,28 @@ export function AppSidebar() {
               </SidebarMenuItem>
               {studies && studies.length > 0 && (() => {
                 const currentStudyId = location.match(/^\/study\/([^/]+)/)?.[1];
-                const targetStudyId = (currentStudyId && studies.some((s) => s.id === currentStudyId))
-                  ? currentStudyId
-                  : studies[0].id;
+                const inStudy = !!(currentStudyId && studies.some((s) => s.id === currentStudyId));
+                const targetStudyId = inStudy ? currentStudyId : studies[0].id;
+                const visualizeHref = inStudy ? `/study/${currentStudyId}/visualize` : "/visualize";
                 return (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.endsWith("/analysis")}>
-                      <Link href={`/study/${targetStudyId}/analysis`} data-testid="link-geo-analysis">
-                        <Globe className="w-4 h-4" />
-                        <span>Análisis geoespacial</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  <>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={location === "/visualize" || location.endsWith("/visualize")}>
+                        <Link href={visualizeHref} data-testid="link-data-visualizer">
+                          <BarChart3 className="w-4 h-4" />
+                          <span>Visualizador de datos</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={location.endsWith("/analysis")}>
+                        <Link href={`/study/${targetStudyId}/analysis`} data-testid="link-geo-analysis">
+                          <Globe className="w-4 h-4" />
+                          <span>Análisis geoespacial</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </>
                 );
               })()}
               <SidebarMenuItem>
