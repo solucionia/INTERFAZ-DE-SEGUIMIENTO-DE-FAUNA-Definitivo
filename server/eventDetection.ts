@@ -1,5 +1,5 @@
 import type { EventThresholds, EventType, InsertDetectedEvent } from "@shared/schema";
-import { EVENT_SEVERITY } from "@shared/schema";
+import { EVENT_SEVERITY, DEFAULT_THRESHOLDS } from "@shared/schema";
 
 interface AccSample {
   timestamp: number;
@@ -438,6 +438,97 @@ function detectElectrocution(
   return events;
 }
 
+/**
+ * Depredación / Pelea (eje Z ±200): busca una ventana de `consecutiveSamples`
+ * muestras ACC consecutivas en la que el eje Z presenta a la vez al menos un
+ * valor por encima de `zHighThreshold` (+200) y al menos uno por debajo de
+ * `zLowThreshold` (-200), es decir, oscila entre extremos positivo y negativo.
+ */
+function detectPredationFight(
+  samples: AccSample[],
+  gpsPoints: GpsPoint[],
+  thresholds: EventThresholds["predationFight"],
+  studyId: string,
+  animalId: string
+): InsertDetectedEvent[] {
+  const events: InsertDetectedEvent[] = [];
+  const run = Math.max(2, thresholds.consecutiveSamples);
+  const high = thresholds.zHighThreshold;
+  const low = thresholds.zLowThreshold;
+  if (samples.length < run) return events;
+
+  for (let i = 0; i + run - 1 < samples.length; i++) {
+    const window = samples.slice(i, i + run);
+    const hasHigh = window.some((s) => s.z > high);
+    const hasLow = window.some((s) => s.z < low);
+    if (hasHigh && hasLow) {
+      const gp = findNearestGps(gpsPoints, window[0].timestamp);
+      events.push({
+        studyId,
+        individualLocalId: animalId,
+        eventType: "predation_fight" as EventType,
+        severity: EVENT_SEVERITY.predation_fight,
+        timestampStart: window[0].timestamp,
+        timestampEnd: window[window.length - 1].timestamp,
+        lat: gp?.lat ?? null,
+        lng: gp?.lng ?? null,
+        accValues: window.map((s) => ({ x: s.x, y: s.y, z: s.z })),
+        description: `Depredación/Pelea: eje Z oscila entre > ${high} y < ${low} en ${run} muestras ACC consecutivas`,
+        metadata: {
+          z_high_threshold: high,
+          z_low_threshold: low,
+          consecutive_samples: run,
+        } as any,
+      });
+      // Saltar al final de la ventana detectada para no reportar solapamientos
+      i = i + run - 1;
+    }
+  }
+  return events;
+}
+
+/**
+ * Riesgo de caída del emisor o problema con el ejemplar: cualquier muestra ACC
+ * cuyo eje X supere `xHighThreshold` (+300) o baje de `xLowThreshold` (-300).
+ * Reporta una única alerta por pasada (la dedup 24h evita reincidencias).
+ */
+function detectTransmitterFallRisk(
+  samples: AccSample[],
+  gpsPoints: GpsPoint[],
+  thresholds: EventThresholds["transmitterFallRisk"],
+  studyId: string,
+  animalId: string
+): InsertDetectedEvent[] {
+  const events: InsertDetectedEvent[] = [];
+  const high = thresholds.xHighThreshold;
+  const low = thresholds.xLowThreshold;
+
+  for (const s of samples) {
+    if (s.x > high || s.x < low) {
+      const gp = findNearestGps(gpsPoints, s.timestamp);
+      events.push({
+        studyId,
+        individualLocalId: animalId,
+        eventType: "transmitter_fall_risk" as EventType,
+        severity: EVENT_SEVERITY.transmitter_fall_risk,
+        timestampStart: s.timestamp,
+        timestampEnd: s.timestamp,
+        lat: gp?.lat ?? null,
+        lng: gp?.lng ?? null,
+        accValues: [{ x: s.x, y: s.y, z: s.z }],
+        description: `Riesgo caída emisor / problema con el ejemplar: eje X = ${s.x.toFixed(1)} (umbral > ${high} o < ${low})`,
+        metadata: {
+          x_value: s.x,
+          x_high_threshold: high,
+          x_low_threshold: low,
+        } as any,
+      });
+      break;
+    }
+  }
+  return events;
+}
+
 export function detectEvents(
   accSamples: AccSample[],
   gpsSamples: GpsPoint[],
@@ -459,6 +550,8 @@ export function detectEvents(
     ...(thresholds.fight.enabled !== false ? detectFight(sorted, gpsSorted, thresholds.fight, studyId, animalId) : []),
     ...(thresholds.feeding.enabled !== false ? detectFeeding(sorted, gpsSorted, thresholds.feeding, studyId, animalId) : []),
     ...(thresholds.incubation.enabled !== false ? detectIncubation(sorted, gpsSorted, thresholds.incubation, studyId, animalId) : []),
+    ...(thresholds.predationFight?.enabled !== false ? detectPredationFight(sorted, gpsSorted, thresholds.predationFight ?? DEFAULT_THRESHOLDS.predationFight, studyId, animalId) : []),
+    ...(thresholds.transmitterFallRisk?.enabled !== false ? detectTransmitterFallRisk(sorted, gpsSorted, thresholds.transmitterFallRisk ?? DEFAULT_THRESHOLDS.transmitterFallRisk, studyId, animalId) : []),
     // Alertas exclusivas de Ornitela
     ...(ornitelaOnly && thresholds.lowActivity?.enabled !== false ? detectLowActivity(sorted, gpsSorted, thresholds.lowActivity, studyId, animalId) : []),
     ...(ornitelaOnly && thresholds.electrocution?.enabled !== false ? detectElectrocution(sorted, gpsSorted, thresholds.electrocution, studyId, animalId) : []),

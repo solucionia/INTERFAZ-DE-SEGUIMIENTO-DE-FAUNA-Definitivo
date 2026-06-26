@@ -160,6 +160,17 @@ export const eventThresholdsSchema = z.object({
     durationMinutes: z.number().min(30).default(30),
     minSamples: z.number().default(5),
   }),
+  predationFight: z.object({
+    enabled: z.boolean().default(true),
+    zHighThreshold: z.number().default(200),
+    zLowThreshold: z.number().default(-200),
+    consecutiveSamples: z.number().min(2).default(4),
+  }),
+  transmitterFallRisk: z.object({
+    enabled: z.boolean().default(true),
+    xHighThreshold: z.number().default(300),
+    xLowThreshold: z.number().default(-300),
+  }),
 });
 
 export type EventThresholds = z.infer<typeof eventThresholdsSchema>;
@@ -172,6 +183,8 @@ export const DEFAULT_THRESHOLDS: EventThresholds = {
   incubation: { enabled: true, yRangeLow: -200, yRangeHigh: 200, minStdDev: 30, windowMinutes: 60, minSignChanges: 3 },
   lowActivity: { enabled: true, criticalCombinedVariance: 5, warningCombinedVariance: 30, durationHours: 2, minSamples: 10 },
   electrocution: { enabled: true, zStepThreshold: 200, sustainedVariance: 5, durationMinutes: 30, minSamples: 5 },
+  predationFight: { enabled: true, zHighThreshold: 200, zLowThreshold: -200, consecutiveSamples: 4 },
+  transmitterFallRisk: { enabled: true, xHighThreshold: 300, xLowThreshold: -300 },
 };
 
 export function normalizeThresholds(stored: any): EventThresholds {
@@ -191,6 +204,8 @@ export function normalizeThresholds(stored: any): EventThresholds {
     },
     lowActivity: { ...d.lowActivity, ...stored.lowActivity },
     electrocution: { ...d.electrocution, ...stored.electrocution },
+    predationFight: { ...d.predationFight, ...stored.predationFight },
+    transmitterFallRisk: { ...d.transmitterFallRisk, ...stored.transmitterFallRisk },
   };
 }
 
@@ -207,7 +222,7 @@ export const insertSpeciesProfileSchema = createInsertSchema(speciesProfiles).om
 export type InsertSpeciesProfile = z.infer<typeof insertSpeciesProfileSchema>;
 export type SpeciesProfile = typeof speciesProfiles.$inferSelect;
 
-export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission", "zone_deviation", "low_activity", "electrocution"] as const;
+export const EVENT_TYPES = ["mortality", "detachment", "fight", "feeding", "incubation", "no_transmission", "zone_deviation", "low_activity", "electrocution", "predation_fight", "transmitter_fall_risk"] as const;
 export type EventType = typeof EVENT_TYPES[number];
 
 export const EVENT_SEVERITY: Record<EventType, string> = {
@@ -220,6 +235,8 @@ export const EVENT_SEVERITY: Record<EventType, string> = {
   zone_deviation: "warning",
   low_activity: "warning",
   electrocution: "critical",
+  predation_fight: "critical",
+  transmitter_fall_risk: "warning",
 };
 
 export const EVENT_COLORS: Record<EventType, string> = {
@@ -232,6 +249,8 @@ export const EVENT_COLORS: Record<EventType, string> = {
   zone_deviation: "#a855f7",
   low_activity: "#eab308",
   electrocution: "#b91c1c",
+  predation_fight: "#be123c",
+  transmitter_fall_risk: "#f59e0b",
 };
 
 export const EVENT_LABELS: Record<EventType, string> = {
@@ -244,6 +263,8 @@ export const EVENT_LABELS: Record<EventType, string> = {
   zone_deviation: "Desviación de zona",
   low_activity: "Baja actividad ACC",
   electrocution: "Posible electrocución",
+  predation_fight: "Depredación / Pelea (eje Z ±200)",
+  transmitter_fall_risk: "Riesgo caída emisor o problema con el ejemplar",
 };
 
 export const detectedEvents = pgTable("detected_events", {

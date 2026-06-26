@@ -2023,7 +2023,12 @@ export async function registerRoutes(
           const sinceCreatedAt = Date.now() - DEDUPE_WINDOW_MS;
 
           for (const event of detected) {
-            if (event.eventType === "low_activity" || event.eventType === "electrocution") {
+            if (
+              event.eventType === "low_activity" ||
+              event.eventType === "electrocution" ||
+              event.eventType === "predation_fight" ||
+              event.eventType === "transmitter_fall_risk"
+            ) {
               const recent = await storage.findRecentUnresolvedDetectedEvent(study.id, event.individualLocalId, event.eventType, sinceCreatedAt);
               if (recent) continue;
               if (event.eventType === "low_activity") {

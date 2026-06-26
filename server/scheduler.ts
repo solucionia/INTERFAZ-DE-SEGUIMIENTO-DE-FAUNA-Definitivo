@@ -248,8 +248,13 @@ async function runEventDetection() {
             const sinceCreatedAt = Date.now() - DEDUPE_WINDOW_MS;
 
             for (const event of detected) {
-              // Dedupe 24h para alertas ACC reincidentes (low_activity, electrocution)
-              if (event.eventType === "low_activity" || event.eventType === "electrocution") {
+              // Dedupe 24h para alertas ACC reincidentes (low_activity, electrocution, predation_fight, transmitter_fall_risk)
+              if (
+                event.eventType === "low_activity" ||
+                event.eventType === "electrocution" ||
+                event.eventType === "predation_fight" ||
+                event.eventType === "transmitter_fall_risk"
+              ) {
                 const recent = await storage.findRecentUnresolvedDetectedEvent(study.id, event.individualLocalId, event.eventType, sinceCreatedAt);
                 if (recent) continue;
                 // Precedencia: si hay mortality abierta reciente, suprimir low_activity para no duplicar semánticamente
