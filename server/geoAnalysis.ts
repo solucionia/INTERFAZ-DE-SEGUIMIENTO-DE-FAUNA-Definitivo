@@ -73,6 +73,8 @@ interface ComprehensiveResult {
   kernelPercentages: number[];
   perIndividual: IndividualComprehensiveMetrics[];
   geojson: GeoJSON.FeatureCollection;
+  distance: DistanceResult["individuals"];
+  speed: SpeedResult["individuals"];
 }
 
 export type AnalysisResult = McpResult | KernelResult | DistanceResult | SpeedResult | ComprehensiveResult;
@@ -1092,6 +1094,8 @@ export function computeComprehensive(
     perIndividual,
     kernelPercentages,
     geojson: turf.featureCollection(allFeatures),
+    distance: computeDistance(points).individuals,
+    speed: computeSpeed(points).individuals,
   };
 }
 

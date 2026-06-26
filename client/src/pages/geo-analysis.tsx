@@ -1440,6 +1440,13 @@ function ComprehensiveResults({
           </CardContent>
         </Card>
       )}
+
+      {Array.isArray(data.distance) && data.distance.length > 0 && (
+        <DistanceChart data={{ individuals: data.distance }} />
+      )}
+      {Array.isArray(data.speed) && data.speed.length > 0 && (
+        <SpeedChart data={{ individuals: data.speed }} />
+      )}
     </div>
   );
 }
