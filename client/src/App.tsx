@@ -30,6 +30,7 @@ import AdminProjects from "@/pages/admin-projects";
 import AdminAlerts from "@/pages/admin-alerts";
 import { Loader2, Search, RefreshCw } from "lucide-react";
 import { GlobalAnimalSearch } from "@/components/global-animal-search";
+import { ChangelogModal } from "@/components/changelog-modal";
 import { NotificationBell } from "@/components/notification-bell";
 import { SyncStatusProvider, useSyncStatus } from "@/lib/sync-status";
 import type { ComponentType } from "react";
@@ -140,6 +141,7 @@ function FullLayout({ style }: { style: React.CSSProperties }) {
             </div>
           </header>
           <GlobalAnimalSearch />
+          <ChangelogModal />
           <main className="flex-1 overflow-auto">
             <AuthenticatedRouter />
           </main>
