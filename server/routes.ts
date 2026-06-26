@@ -1419,6 +1419,42 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/studies/:id/gps-point-count", requireStudyAccess, async (req, res) => {
+    try {
+      const individuals = String(req.query.individuals ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const start = Number(req.query.start);
+      const end = Number(req.query.end);
+      if (individuals.length === 0 || !Number.isFinite(start) || !Number.isFinite(end)) {
+        return res.json({ count: 0, maxPerAnimal: 0 });
+      }
+      const { rows } = await pool.query(
+        `SELECT individual_local_identifier AS individual, COUNT(*)::int AS count
+         FROM cached_gps_events
+         WHERE study_id = $1
+           AND individual_local_identifier = ANY($2::text[])
+           AND timestamp >= $3 AND timestamp <= $4
+           AND latitude IS NOT NULL AND longitude IS NOT NULL
+         GROUP BY individual_local_identifier`,
+        [req.params.id, individuals, start, end]
+      );
+      let total = 0;
+      let maxPerAnimal = 0;
+      for (const r of rows) {
+        const c = Number(r.count) || 0;
+        total += c;
+        if (c > maxPerAnimal) maxPerAnimal = c;
+      }
+      // El submuestreo del análisis se aplica por animal, así que maxPerAnimal
+      // determina si el filtro estará activo.
+      return res.json({ count: total, maxPerAnimal });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/studies/:id/deployments", requireStudyAccess, async (req, res) => {
     const deployments = await storage.getDeployments(req.params.id as string);
     return res.json(deployments);
@@ -3037,10 +3073,42 @@ export async function registerRoutes(
         return res.status(400).json({ message: "No se encontraron datos GPS suficientes en el rango seleccionado" });
       }
 
+      // Submuestreo uniforme opcional: si un animal supera maxPoints, se toma
+      // 1 de cada N puntos espaciados uniformemente en el tiempo (por animal).
+      let gpsRowsForAnalysis = allGpsRows;
+      const maxPointsRaw = params?.maxPoints;
+      if (typeof maxPointsRaw === "number" && Number.isFinite(maxPointsRaw)) {
+        const maxPoints = Math.max(100, Math.min(5000, Math.round(maxPointsRaw)));
+        const uniformSubsample = <T>(arr: T[], max: number): T[] => {
+          if (arr.length <= max) return arr;
+          const out: T[] = [];
+          // Incluye primer y último punto del rango; max>=100 garantiza max>1.
+          for (let i = 0; i < max; i++) {
+            out.push(arr[Math.round((i * (arr.length - 1)) / (max - 1))]);
+          }
+          return out;
+        };
+        const byAnimal = new Map<string, typeof allGpsRows>();
+        for (const row of allGpsRows) {
+          let list = byAnimal.get(row.individual_id);
+          if (!list) { list = []; byAnimal.set(row.individual_id, list); }
+          list.push(row);
+        }
+        const reduced: typeof allGpsRows = [];
+        for (const list of Array.from(byAnimal.values())) {
+          list.sort((a, b) => a.timestamp - b.timestamp);
+          reduced.push(...uniformSubsample(list, maxPoints));
+        }
+        if (reduced.length !== allGpsRows.length) {
+          log(`Analysis: subsampled GPS points ${allGpsRows.length} -> ${reduced.length} (maxPoints=${maxPoints})`, "analysis");
+        }
+        gpsRowsForAnalysis = reduced;
+      }
+
       const ANALYSIS_TIMEOUT_MS = 60000;
       const analysisPromise = new Promise<AnalysisResult>((resolve, reject) => {
         try {
-          const result = runAnalysis(analysisType, allGpsRows, params);
+          const result = runAnalysis(analysisType, gpsRowsForAnalysis, params);
           resolve(result);
         } catch (err) {
           reject(err);

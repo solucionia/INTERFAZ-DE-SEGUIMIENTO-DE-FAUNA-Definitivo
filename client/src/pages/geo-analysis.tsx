@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import {
   Select,
@@ -171,6 +172,7 @@ export default function GeoAnalysis() {
   const [dateStart, setDateStart] = useState("");
   const [dateEnd, setDateEnd] = useState("");
   const [mcpPercent, setMcpPercent] = useState("95");
+  const [maxPoints, setMaxPoints] = useState(2000);
   const [bandwidthMethod, setBandwidthMethod] = useState("href");
   const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
   const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
@@ -234,15 +236,18 @@ export default function GeoAnalysis() {
         timestampStart: tsStart,
         timestampEnd: tsEnd,
       };
+      const params: any = { maxPoints };
       if (analysisType === "mcp") {
-        body.params = { percent: parseInt(mcpPercent, 10) };
+        params.percent = parseInt(mcpPercent, 10);
       }
       if (analysisType === "comprehensive") {
-        body.params = { bandwidthMethod, kernelPercentages };
+        params.bandwidthMethod = bandwidthMethod;
+        params.kernelPercentages = kernelPercentages;
       }
       if (analysisType === "kernel") {
-        body.params = { kernelPercentages };
+        params.kernelPercentages = kernelPercentages;
       }
+      body.params = params;
 
       const res = await apiRequest("POST", `/api/studies/${studyId}/analysis`, body);
       return res.json();
@@ -263,6 +268,37 @@ export default function GeoAnalysis() {
       });
     },
   });
+
+  const countTsStart = dateStart ? new Date(dateStart).getTime() : NaN;
+  const countTsEnd = dateEnd ? new Date(dateEnd + "T23:59:59.999").getTime() : NaN;
+  const countEnabled =
+    !!studyId &&
+    selectedAnimals.length > 0 &&
+    Number.isFinite(countTsStart) &&
+    Number.isFinite(countTsEnd);
+
+  const { data: pointCountData, isFetching: isCountFetching } = useQuery<{ count: number; maxPerAnimal: number }>({
+    queryKey: [
+      "/api/studies",
+      studyId,
+      "gps-point-count",
+      selectedAnimals.join(","),
+      countTsStart,
+      countTsEnd,
+    ],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        individuals: selectedAnimals.join(","),
+        start: String(countTsStart),
+        end: String(countTsEnd),
+      });
+      const res = await apiRequest("GET", `/api/studies/${studyId}/gps-point-count?${qs.toString()}`);
+      return res.json();
+    },
+    enabled: countEnabled,
+  });
+  const availablePoints = pointCountData?.count ?? null;
+  const maxPointsPerAnimal = pointCountData?.maxPerAnimal ?? 0;
 
   const deleteAnalysisMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -996,6 +1032,44 @@ export default function GeoAnalysis() {
                 onChange={(e) => handleDateEndChange(e.target.value)}
                 data-testid="input-date-end"
               />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Máximo de puntos</Label>
+                <span className="text-sm font-medium tabular-nums" data-testid="text-max-points">
+                  {maxPoints.toLocaleString("es-ES")}
+                </span>
+              </div>
+              <Slider
+                min={100}
+                max={5000}
+                step={100}
+                value={[maxPoints]}
+                onValueChange={(v) => setMaxPoints(v[0])}
+                data-testid="slider-max-points"
+              />
+              <p className="text-xs text-muted-foreground" data-testid="text-available-points">
+                {!countEnabled ? (
+                  "Seleccione animales y rango de fechas para ver los puntos disponibles."
+                ) : isCountFetching || availablePoints === null ? (
+                  "Calculando puntos disponibles…"
+                ) : (
+                  <>
+                    {availablePoints.toLocaleString("es-ES")} puntos GPS disponibles
+                    {selectedAnimals.length > 1 ? " (en total)" : ""}.{" "}
+                    {maxPointsPerAnimal > maxPoints ? (
+                      <span className="text-amber-600 dark:text-amber-500">
+                        Se submuestreará a {maxPoints.toLocaleString("es-ES")} por animal.
+                      </span>
+                    ) : (
+                      <span className="text-emerald-600 dark:text-emerald-500">
+                        Sin submuestreo.
+                      </span>
+                    )}
+                  </>
+                )}
+              </p>
             </div>
 
             {projectIdsInStudy.size > 0 && (
