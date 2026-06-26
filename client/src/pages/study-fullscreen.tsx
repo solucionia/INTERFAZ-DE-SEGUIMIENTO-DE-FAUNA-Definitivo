@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRoute, useSearch, useLocation } from "wouter";
+import { useRoute, useSearch } from "wouter";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { useQuery } from "@tanstack/react-query";
@@ -173,7 +173,6 @@ export default function StudyFullscreen() {
   const [, params] = useRoute("/study/:id/fullscreen");
   const studyId = params?.id;
   const search = useSearch();
-  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -703,7 +702,7 @@ export default function StudyFullscreen() {
   const goToGeoAnalysis = () => {
     if (!studyId || selectedAnimals.length === 0) return;
     const p = new URLSearchParams({ animals: selectedAnimals.join(",") });
-    setLocation(`/study/${studyId}/analysis?${p.toString()}`);
+    window.open(`/study/${studyId}/analysis?${p.toString()}`, "_blank", "noopener,noreferrer");
   };
 
   return (
