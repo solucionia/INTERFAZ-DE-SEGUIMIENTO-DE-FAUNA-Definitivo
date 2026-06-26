@@ -921,16 +921,22 @@ export default function StudyFullscreen() {
             </div>
           </div>
         ) : (
-          <button
-            onClick={() => setPanelOpen(true)}
-            className="absolute top-2 right-2 z-[1001] flex items-center gap-1.5 bg-background/95 backdrop-blur-sm border border-border rounded-md px-2.5 py-1.5 shadow-md text-xs font-medium hover-elevate"
-            data-testid="button-expand-panel"
-            title="Mostrar controles"
-          >
-            <SlidersHorizontal className="w-4 h-4 text-primary" />
-            Controles
-            <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-          </button>
+          // El wrapper lleva el posicionamiento absoluto y el z-index. No puede
+          // ir en el <button> porque `hover-elevate` (selector con :not, mayor
+          // especificidad) le impone `position:relative; z-index:0`, lo que sacaba
+          // el botón de su esquina y lo metía detrás del cuadro de información.
+          <div className="absolute top-2 right-2 z-[1001]">
+            <button
+              onClick={() => setPanelOpen(true)}
+              className="flex items-center gap-1.5 bg-background/95 backdrop-blur-sm border border-border rounded-md px-2.5 py-1.5 shadow-md text-xs font-medium hover-elevate"
+              data-testid="button-expand-panel"
+              title="Mostrar controles"
+            >
+              <SlidersHorizontal className="w-4 h-4 text-primary" />
+              Controles
+              <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+            </button>
+          </div>
         )}
 
         {loading ? (

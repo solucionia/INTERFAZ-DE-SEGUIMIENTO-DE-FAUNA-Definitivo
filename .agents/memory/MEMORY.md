@@ -6,3 +6,4 @@
 - [KDE home-range contours](kde-home-range-contours.md) — kernel polygons use a hand-rolled marching-squares isoline (not d3-contour/convex hull); keep it, preserve grid padding + props.
 - [Ornitela new-study first sync](ornitela-first-sync.md) — new Ornitela study can't be bootstrapped by the cron (no deployments yet); creation must trigger its own first sync.
 - [Ornitela historical backfill](ornitela-historical-backfill.md) — panel keeps long history but sync only pulls a rolling window; backfill via script+workflow, dense devices hit Node's ~512MB string limit → window-split.
+- [hover-elevate specificity trap](hover-elevate-specificity-trap.md) — `hover-elevate` (:not selector, 0,2,0) overrides same-element `absolute`/`z-[N]` to position:relative+z-0; positioning/z-index must go on a wrapper.
