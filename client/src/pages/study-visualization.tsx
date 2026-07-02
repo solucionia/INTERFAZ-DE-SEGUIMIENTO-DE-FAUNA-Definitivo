@@ -988,7 +988,7 @@ export default function StudyVisualization() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col min-h-full">
       <div className="p-4 border-b space-y-4 shrink-0">
         <div className="flex items-center gap-3 flex-wrap">
           <Link href={`/study/${studyId}`}>
@@ -1186,7 +1186,7 @@ export default function StudyVisualization() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div>
           <div className="flex-1 min-w-0">
             <div className="flex flex-col">
               <div>
