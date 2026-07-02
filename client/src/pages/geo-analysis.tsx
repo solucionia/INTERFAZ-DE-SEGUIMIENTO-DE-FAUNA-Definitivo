@@ -503,6 +503,20 @@ export default function GeoAnalysis() {
     }
   };
 
+  // Evita que una captura (html2canvas) se quede colgada indefinidamente: si
+  // tarda más de `ms`, rechaza para que el botón no quede bloqueado y el usuario
+  // reciba un error explícito.
+  const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Tiempo de espera agotado al ${label}. Inténtalo de nuevo o reduce el rango de datos.`)),
+          ms
+        )
+      ),
+    ]);
+
   const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
     // Extrae el desplazamiento (tx, ty) de cualquier transform CSS de Leaflet
     // (translate / translate3d / matrix / matrix3d). Devuelve null si no hay.
@@ -557,7 +571,7 @@ export default function GeoAnalysis() {
     const el = chartContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay gráfica visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await html2canvas(el, { backgroundColor: null, scale: 2 });
+      const canvas = await withTimeout(html2canvas(el, { backgroundColor: null, scale: 2 }), 30000, "capturar la gráfica");
       const link = document.createElement("a");
       link.download = `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -570,7 +584,7 @@ export default function GeoAnalysis() {
     const el = mapContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay mapa visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await captureMap(el, null);
+      const canvas = await withTimeout(captureMap(el, null), 30000, "capturar el mapa");
       const link = document.createElement("a");
       link.download = `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -598,7 +612,7 @@ export default function GeoAnalysis() {
 
       const chartEl = chartContainerRef.current;
       if (chartEl) {
-        const chartCanvas = await html2canvas(chartEl, { backgroundColor: "#ffffff", scale: 2 });
+        const chartCanvas = await withTimeout(html2canvas(chartEl, { backgroundColor: "#ffffff", scale: 2 }), 30000, "capturar la gráfica");
         const chartImg = chartCanvas.toDataURL("image/png");
         const aspect = chartCanvas.width / chartCanvas.height;
         const imgW = pageW - margin * 2;
@@ -610,7 +624,7 @@ export default function GeoAnalysis() {
       const mapEl = mapContainerRef.current;
       if (mapEl) {
         if (yOffset + 60 > pageH) { pdf.addPage(); yOffset = margin; }
-        const mapCanvas = await captureMap(mapEl, "#ffffff");
+        const mapCanvas = await withTimeout(captureMap(mapEl, "#ffffff"), 30000, "capturar el mapa");
         const mapImg = mapCanvas.toDataURL("image/png");
         const aspect = mapCanvas.width / mapCanvas.height;
         const imgW = pageW - margin * 2;

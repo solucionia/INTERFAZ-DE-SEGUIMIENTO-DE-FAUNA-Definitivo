@@ -493,6 +493,20 @@ export default function StudyFullscreen() {
   const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
   const todayStr = format(new Date(), "yyyy-MM-dd");
 
+  // Evita que una captura (html2canvas) o petición se quede colgada
+  // indefinidamente: si tarda más de `ms`, rechaza para que el botón no quede
+  // bloqueado y el usuario reciba un error explícito.
+  const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Tiempo de espera agotado al ${label}. Inténtalo de nuevo o reduce el rango de datos.`)),
+          ms
+        )
+      ),
+    ]);
+
   // Captura un mapa Leaflet con html2canvas corrigiendo el desplazamiento de las
   // capas vectoriales SVG: html2canvas ignora el transform CSS propio del <svg> al
   // rasterizarlo (pero respeta su viewBox), por lo que se desplazan hacia el oeste.
@@ -541,10 +555,17 @@ export default function StudyFullscreen() {
   };
 
   const exportChartPng = async () => {
-    if (!chartContainerRef.current) return;
+    if (!chartContainerRef.current) {
+      toast({ title: "Error al exportar", description: "No hay gráfica visible para exportar.", variant: "destructive" });
+      return;
+    }
     setExporting(true);
     try {
-      const canvas = await html2canvas(chartContainerRef.current, { backgroundColor: null, useCORS: true });
+      const canvas = await withTimeout(
+        html2canvas(chartContainerRef.current, { backgroundColor: null, useCORS: true }),
+        30000,
+        "capturar la gráfica"
+      );
       const link = document.createElement("a");
       const studyName = sanitizeFilename(study?.name || "estudio");
       const animals = sanitizeFilename(selectedAnimals.join("_") || "todos");
@@ -560,10 +581,13 @@ export default function StudyFullscreen() {
   };
 
   const exportMapPng = async () => {
-    if (!mapContainerRef.current) return;
+    if (!mapContainerRef.current) {
+      toast({ title: "Error al exportar", description: "No hay mapa visible para exportar.", variant: "destructive" });
+      return;
+    }
     setExporting(true);
     try {
-      const canvas = await captureMap(mapContainerRef.current, null);
+      const canvas = await withTimeout(captureMap(mapContainerRef.current, null), 30000, "capturar el mapa");
       const link = document.createElement("a");
       const studyName = sanitizeFilename(study?.name || "estudio");
       link.download = `mapa_${studyName}_${todayStr}.png`;
@@ -601,9 +625,14 @@ export default function StudyFullscreen() {
       pdf.text(`GPS: ${totalGps} puntos | Acelerometro: ${totalAcc} muestras`, margin, cursorY);
       cursorY += 8;
 
+      let sectionFailed = false;
       if (chartContainerRef.current) {
         try {
-          const chartCanvas = await html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true });
+          const chartCanvas = await withTimeout(
+            html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true }),
+            30000,
+            "capturar la gráfica"
+          );
           if (chartCanvas.width > 0 && chartCanvas.height > 0) {
             const chartImg = chartCanvas.toDataURL("image/png");
             const chartAspect = chartCanvas.width / chartCanvas.height;
@@ -618,13 +647,14 @@ export default function StudyFullscreen() {
             }
           }
         } catch (err) {
+          sectionFailed = true;
           console.error("No se pudo capturar la grafica para el PDF:", err);
         }
       }
 
       if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
         try {
-          const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
+          const mapCanvas = await withTimeout(captureMap(mapContainerRef.current, "#ffffff"), 30000, "capturar el mapa");
           if (mapCanvas.width > 0 && mapCanvas.height > 0) {
             const mapImg = mapCanvas.toDataURL("image/png");
             const mapAspect = mapCanvas.width / mapCanvas.height;
@@ -639,6 +669,7 @@ export default function StudyFullscreen() {
             }
           }
         } catch (err) {
+          sectionFailed = true;
           console.error("No se pudo capturar el mapa para el PDF:", err);
         }
       }
@@ -654,7 +685,14 @@ export default function StudyFullscreen() {
 
       const studyName = sanitizeFilename(study?.name || "estudio");
       pdf.save(`informe_${studyName}_${todayStr}.pdf`);
-      toast({ title: "Exportación completada", description: "Informe PDF generado correctamente" });
+      if (sectionFailed) {
+        toast({
+          title: "Informe generado con incidencias",
+          description: "No se pudo incluir la gráfica o el mapa (tiempo de espera agotado). El resto del informe se generó correctamente.",
+        });
+      } else {
+        toast({ title: "Exportación completada", description: "Informe PDF generado correctamente" });
+      }
     } catch (e: any) {
       toast({ title: "Error al exportar PDF", description: e.message, variant: "destructive" });
     } finally {
@@ -663,7 +701,10 @@ export default function StudyFullscreen() {
   };
 
   const exportData = async (fmt: "kmz" | "shp") => {
-    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) return;
+    if (!studyId || selectedAnimals.length === 0 || !dateStart || !dateEnd) {
+      toast({ title: "Error al exportar", description: "Selecciona al menos un animal y un rango de fechas válido.", variant: "destructive" });
+      return;
+    }
     setExporting(true);
     try {
       const res = await fetch(`/api/studies/${studyId}/export-visualization`, {
