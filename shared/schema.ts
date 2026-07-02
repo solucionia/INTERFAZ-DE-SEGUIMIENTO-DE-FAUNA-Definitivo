@@ -433,6 +433,46 @@ export const processedSftpFiles = pgTable("processed_sftp_files", {
 
 export type ProcessedSftpFile = typeof processedSftpFiles.$inferSelect;
 
+export const ornitelaDeviceStudies = pgTable("ornitela_device_studies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studyId: varchar("study_id").notNull().references(() => studies.id, { onDelete: "cascade" }),
+  deviceId: text("device_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
+}, (table) => [
+  uniqueIndex("ornitela_device_studies_device_unique").on(table.deviceId),
+  index("ornitela_device_studies_study_idx").on(table.studyId),
+]);
+
+export const insertOrnitelaDeviceStudySchema = createInsertSchema(ornitelaDeviceStudies).omit({
+  id: true,
+  createdAt: true,
+  createdBy: true,
+}).extend({
+  deviceId: z.string().min(1, "device_id requerido").max(200),
+});
+export type InsertOrnitelaDeviceStudy = z.infer<typeof insertOrnitelaDeviceStudySchema>;
+export type OrnitelaDeviceStudy = typeof ornitelaDeviceStudies.$inferSelect;
+
+export const unassignedSftpFiles = pgTable("unassigned_sftp_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  filename: text("filename").notNull().unique(),
+  deviceId: text("device_id"),
+  csvContent: text("csv_content").notNull(),
+  fileModifiedAt: timestamp("file_modified_at"),
+  retryCount: integer("retry_count").notNull().default(1),
+  firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+  lastAttemptAt: timestamp("last_attempt_at").defaultNow().notNull(),
+  resolvedStatus: boolean("resolved_status").notNull().default(false),
+  resolvedStudyId: varchar("resolved_study_id").references(() => studies.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at"),
+}, (table) => [
+  index("unassigned_sftp_files_device_idx").on(table.deviceId),
+  index("unassigned_sftp_files_resolved_idx").on(table.resolvedStatus),
+]);
+
+export type UnassignedSftpFile = typeof unassignedSftpFiles.$inferSelect;
+
 export const BEHAVIOR_TYPES = ["feeding", "resting", "incubating", "electrocution", "unknown", "other"] as const;
 export type BehaviorType = (typeof BEHAVIOR_TYPES)[number];
 

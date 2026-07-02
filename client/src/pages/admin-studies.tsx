@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { Study, User, SpeciesProfile } from "@shared/schema";
+import type { Study, User, SpeciesProfile, OrnitelaDeviceStudy, UnassignedSftpFile } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -56,7 +56,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings, X, FileWarning } from "lucide-react";
 
 const createStudyFormSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
@@ -96,6 +96,7 @@ export default function AdminStudies() {
   const [showForm, setShowForm] = useState(false);
   const [deleteStudy, setDeleteStudy] = useState<Study | null>(null);
   const [assignStudy, setAssignStudy] = useState<Study | null>(null);
+  const [newDeviceIds, setNewDeviceIds] = useState<string[]>([]);
 
   const { data: studies, isLoading } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
@@ -134,6 +135,7 @@ export default function AdminStudies() {
 
   const openCreate = () => {
     setEditStudy(null);
+    setNewDeviceIds([]);
     form.reset({
       name: "",
       movebankStudyId: 0,
@@ -175,7 +177,7 @@ export default function AdminStudies() {
       if (editStudy) {
         await apiRequest("PATCH", `/api/studies/${editStudy.id}`, values);
       } else {
-        await apiRequest("POST", "/api/studies", values);
+        await apiRequest("POST", "/api/studies", { ...values, ornitelaDeviceIds: newDeviceIds });
       }
     },
     onSuccess: (_data, variables) => {
@@ -324,6 +326,8 @@ export default function AdminStudies() {
           )}
         </CardContent>
       </Card>
+
+      <UnassignedFilesCard studies={studies ?? []} />
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="sm:max-w-lg">
@@ -549,6 +553,18 @@ export default function AdminStudies() {
                       </FormItem>
                     )}
                   />
+                  <div className="pt-2 border-t">
+                    <p className="text-sm font-medium mb-1">Dispositivos asignados (SFTP)</p>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Los archivos SFTP con estos device_id se importan a este estudio. Al añadir un
+                      dispositivo se reprocesan sus archivos sin asignar pendientes.
+                    </p>
+                    <OrnitelaDeviceAllowlist
+                      study={editStudy}
+                      localIds={newDeviceIds}
+                      setLocalIds={setNewDeviceIds}
+                    />
+                  </div>
                 </TabsContent>
               </Tabs>
 
@@ -632,5 +648,233 @@ export default function AdminStudies() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function OrnitelaDeviceAllowlist({
+  study,
+  localIds,
+  setLocalIds,
+}: {
+  study: Study | null;
+  localIds: string[];
+  setLocalIds: (ids: string[]) => void;
+}) {
+  const { toast } = useToast();
+  const [input, setInput] = useState("");
+
+  const { data: devices } = useQuery<OrnitelaDeviceStudy[]>({
+    queryKey: ["/api/studies", study?.id, "ornitela-devices"],
+    enabled: !!study,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async (deviceId: string) => {
+      const res = await apiRequest("POST", `/api/studies/${study!.id}/ornitela-devices`, { deviceId });
+      return (await res.json()) as { reprocessed: { files: number; gps: number; acc: number } };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", study?.id, "ornitela-devices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sftp/unassigned"] });
+      const r = data.reprocessed;
+      toast({
+        title: "Dispositivo añadido",
+        description:
+          r.files > 0
+            ? `Reprocesados ${r.files} archivo(s): ${r.gps} GPS, ${r.acc} ACC importados.`
+            : "Sin archivos pendientes que reprocesar.",
+      });
+      setInput("");
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (deviceId: string) => {
+      await apiRequest("DELETE", `/api/studies/${study!.id}/ornitela-devices/${encodeURIComponent(deviceId)}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", study?.id, "ornitela-devices"] });
+      toast({ title: "Dispositivo eliminado" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const handleAdd = () => {
+    const id = input.trim();
+    if (!id) return;
+    if (study) {
+      addMutation.mutate(id);
+    } else {
+      if (!localIds.includes(id)) setLocalIds([...localIds, id]);
+      setInput("");
+    }
+  };
+
+  const chips = study ? (devices ?? []).map((d) => d.deviceId) : localIds;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <Input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAdd();
+            }
+          }}
+          placeholder="device_id (IMEI)"
+          data-testid="input-ornitela-device"
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={handleAdd}
+          disabled={addMutation.isPending}
+          data-testid="button-add-ornitela-device"
+        >
+          {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Añadir"}
+        </Button>
+      </div>
+      {chips.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((id) => (
+            <Badge key={id} variant="secondary" className="gap-1" data-testid={`chip-device-${id}`}>
+              {id}
+              <button
+                type="button"
+                onClick={() => {
+                  if (study) removeMutation.mutate(id);
+                  else setLocalIds(localIds.filter((x) => x !== id));
+                }}
+                className="ml-1 hover:text-destructive"
+                data-testid={`button-remove-device-${id}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Ningún dispositivo asignado.</p>
+      )}
+    </div>
+  );
+}
+
+function UnassignedFilesCard({ studies }: { studies: Study[] }) {
+  const { toast } = useToast();
+  const [selected, setSelected] = useState<Record<string, string>>({});
+
+  const { data: files, isLoading } = useQuery<UnassignedSftpFile[]>({
+    queryKey: ["/api/sftp/unassigned"],
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: async ({ studyId, deviceId }: { studyId: string; deviceId: string }) => {
+      const res = await apiRequest("POST", `/api/studies/${studyId}/ornitela-devices`, { deviceId });
+      return (await res.json()) as { reprocessed: { files: number; gps: number; acc: number } };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sftp/unassigned"] });
+      const r = data.reprocessed;
+      toast({
+        title: "Dispositivo asignado",
+        description: `Reprocesados ${r.files} archivo(s): ${r.gps} GPS, ${r.acc} ACC importados.`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  if (!isLoading && (!files || files.length === 0)) return null;
+
+  const ornitelaStudies = studies.filter((s) => s.ornitelaEnabled);
+
+  return (
+    <Card className="mt-4">
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-2 mb-1">
+          <FileWarning className="w-5 h-5 text-amber-500" />
+          <h3 className="text-base font-semibold">Archivos SFTP sin asignar</h3>
+          {files && <Badge variant="destructive" data-testid="badge-unassigned-count">{files.length}</Badge>}
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">
+          Estos archivos no se pudieron asignar a ningún estudio. Asigna su dispositivo a un estudio
+          para importarlos.
+        </p>
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-9 w-full rounded" />
+            ))}
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Device ID</TableHead>
+                <TableHead>Archivo</TableHead>
+                <TableHead>Fecha archivo</TableHead>
+                <TableHead>Último intento</TableHead>
+                <TableHead className="text-center">Reintentos</TableHead>
+                <TableHead>Asignar a estudio</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(files ?? []).map((f) => (
+                <TableRow key={f.id} data-testid={`row-unassigned-${f.id}`}>
+                  <TableCell className="font-mono text-xs">{f.deviceId ?? "—"}</TableCell>
+                  <TableCell className="text-xs max-w-[180px] truncate" title={f.filename}>
+                    {f.filename}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {f.fileModifiedAt ? new Date(f.fileModifiedAt as any).toLocaleString() : "—"}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {f.lastAttemptAt ? new Date(f.lastAttemptAt as any).toLocaleString() : "—"}
+                  </TableCell>
+                  <TableCell className="text-center text-xs">{f.retryCount}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-2 items-center">
+                      <Select
+                        value={selected[f.id] ?? ""}
+                        onValueChange={(v) => setSelected((prev) => ({ ...prev, [f.id]: v }))}
+                        disabled={!f.deviceId}
+                      >
+                        <SelectTrigger className="h-8 w-[160px]" data-testid={`select-study-${f.id}`}>
+                          <SelectValue placeholder="Estudio" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ornitelaStudies.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!f.deviceId || !selected[f.id] || assignMutation.isPending}
+                        onClick={() =>
+                          f.deviceId &&
+                          selected[f.id] &&
+                          assignMutation.mutate({ studyId: selected[f.id], deviceId: f.deviceId })
+                        }
+                        data-testid={`button-assign-${f.id}`}
+                      >
+                        Asignar
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }

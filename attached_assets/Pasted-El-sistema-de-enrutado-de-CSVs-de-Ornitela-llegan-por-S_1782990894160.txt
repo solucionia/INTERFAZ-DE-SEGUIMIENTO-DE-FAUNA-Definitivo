@@ -1,0 +1,46 @@
+El sistema de enrutado de CSVs de Ornitela (llegan por SFTP a una única 
+cuenta compartida, 146.148.12.195) asume que solo existe un estudio 
+Ornitela activo. La función findOrnitelaStudyForDevice (server/storage.ts) 
+tiene un fallback: si el dispositivo no está aún registrado como 
+deployment, y hay exactamente 1 estudio Ornitela activo, le asigna ese 
+estudio. Con 2+ estudios Ornitela activos, ese fallback deja de aplicar 
+y CUALQUIER dispositivo no pre-registrado (nuevo o viejo) deja de 
+poder enrutarse: el archivo SFTP se marca como fallido, no se importa, 
+y no se avisa en ningún sitio — falla en silencio cada ~2 minutos.
+
+Se pide implementar un enrutado determinista por dispositivo, 
+independiente del número de estudios activos:
+
+1. Añadir una tabla o campo de asociación explícita dispositivo→estudio 
+   para Ornitela (por ejemplo device_id/IMEI + study_id), de forma que 
+   findOrnitelaStudyForDevice consulte primero esta tabla antes de caer 
+   en cualquier fallback.
+2. Añadir en la UI de creación/edición de estudio (admin-studies.tsx, 
+   pestaña Ornitela) un campo para introducir manualmente los IDs de 
+   dispositivo/IMEI que pertenecen a ese estudio, como lista editable 
+   (añadir/quitar).
+3. Eliminar el fallback "si solo hay 1 estudio activo, asignar ahí" — 
+   sustituirlo por: si el dispositivo no está en ningún deployment NI en 
+   la nueva tabla de asociación explícita, el archivo no se enruta 
+   automáticamente.
+4. CRÍTICO — visibilidad del fallo: cuando un CSV de sftpWatcher.ts no 
+   pueda resolverse a ningún estudio, en vez de fallar en silencio:
+   - Registrar el intento fallido en una tabla/log visible desde la UI 
+     (ej. una sección "Archivos sin asignar" en admin-studies.tsx o el 
+     panel de estudios), mostrando device_id, fecha del archivo, y 
+     número de reintentos.
+   - Esto permite que Juanjo/el equipo vea qué dispositivos nuevos 
+     llegaron sin poder asignarse, y los añada a la allowlist del 
+     estudio correcto manualmente desde la UI.
+5. Cuando se añada un dispositivo a la allowlist de un estudio, procesar 
+   retroactivamente los archivos SFTP que habían quedado sin resolver 
+   para ese device_id (sin tener que esperar a que Ornitela reenvíe el 
+   dato).
+6. Mantener compatibilidad con el único estudio Ornitela existente hoy: 
+   no debe requerir configurar manualmente los dispositivos que ya 
+   están funcionando (los que ya tienen deployment registrado siguen 
+   enrutándose igual que ahora).
+
+Este cambio toca el flujo crítico de ingesta de datos en producción — 
+antes de desplegar, verificar con datos reales que ningún dispositivo 
+del estudio actual deja de recibir datos.

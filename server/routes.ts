@@ -18,7 +18,7 @@ import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 import { ornitelaSync, OrnitelaSyncError, type OrnitelaDevice } from "./ornitelaSync";
 import { runEventDetection, runEmissionCheck, runOrnitelaSync } from "./scheduler";
-import { sftpWatcher } from "./services/sftpWatcher";
+import { sftpWatcher, reprocessUnassignedForDevice } from "./services/sftpWatcher";
 
 function fmtDate(isoStr: string): string {
   if (!isoStr) return "";
@@ -483,6 +483,50 @@ export async function registerRoutes(
       return res.json(result);
     } catch (e: any) {
       return res.status(500).json({ message: `Error ejecutando SFTP: ${e.message}` });
+    }
+  });
+
+  // Archivos SFTP que no se pudieron asignar a ningún estudio (visibilidad del fallo).
+  app.get("/api/sftp/unassigned", requireSuperuser, async (_req, res) => {
+    try {
+      const files = await storage.listUnassignedSftpFiles({ limit: 200 });
+      return res.json(files);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error listando archivos sin asignar: ${e.message}` });
+    }
+  });
+
+  // Allowlist de dispositivos Ornitela por estudio (asociación explícita device→estudio).
+  app.get("/api/studies/:id/ornitela-devices", requireSuperuser, async (req, res) => {
+    try {
+      const devices = await storage.getOrnitelaDeviceStudies(req.params.id);
+      return res.json(devices);
+    } catch (e: any) {
+      return res.status(500).json({ message: `Error listando dispositivos: ${e.message}` });
+    }
+  });
+
+  app.post("/api/studies/:id/ornitela-devices", requireSuperuser, async (req, res) => {
+    try {
+      const study = await storage.getStudy(req.params.id);
+      if (!study) return res.status(404).json({ message: "Estudio no encontrado" });
+      const deviceId = String(req.body?.deviceId ?? "").trim();
+      if (!deviceId) return res.status(400).json({ message: "device_id requerido" });
+      const userId = (req.user as any)?.id ?? null;
+      const added = await storage.addOrnitelaDeviceStudy(study.id, deviceId, userId);
+      const reprocessed = await reprocessUnassignedForDevice(deviceId, study.id);
+      return res.json({ added, reprocessed });
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
+    }
+  });
+
+  app.delete("/api/studies/:id/ornitela-devices/:deviceId", requireSuperuser, async (req, res) => {
+    try {
+      await storage.removeOrnitelaDeviceStudy(req.params.id, req.params.deviceId);
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(400).json({ message: e.message });
     }
   });
 
@@ -1249,6 +1293,26 @@ export async function registerRoutes(
       }
 
       const study = await storage.createStudy(parsed.data);
+
+      // Allowlist de dispositivos Ornitela indicada en el formulario de creación.
+      // Se persiste tras crear el estudio y se reprocesan retroactivamente los
+      // archivos SFTP que hubieran quedado sin asignar para esos dispositivos.
+      const deviceIds: string[] = Array.isArray(req.body?.ornitelaDeviceIds)
+        ? req.body.ornitelaDeviceIds
+            .map((d: any) => String(d ?? "").trim())
+            .filter((d: string) => d.length > 0)
+        : [];
+      if (deviceIds.length > 0) {
+        const userId = (req.user as any)?.id ?? null;
+        for (const deviceId of Array.from(new Set(deviceIds))) {
+          try {
+            await storage.addOrnitelaDeviceStudy(study.id, deviceId, userId);
+            await reprocessUnassignedForDevice(deviceId, study.id);
+          } catch (devErr: any) {
+            log(`Ornitela allowlist (creación) device ${deviceId}: ${devErr?.message ?? devErr}`, "ornitela");
+          }
+        }
+      }
 
       // Disparar la primera sincronización en background (fire-and-forget) para
       // que el estudio descubra dispositivos e importe datos sin bloquear la

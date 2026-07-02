@@ -21,6 +21,8 @@ import {
   HDOP_QUALITY_THRESHOLD,
   accelerometerLabels, type AccelerometerLabel, type InsertAccelerometerLabel,
   deviceDeployments, type DeviceDeployment, type InsertDeviceDeployment,
+  ornitelaDeviceStudies, type OrnitelaDeviceStudy,
+  unassignedSftpFiles, type UnassignedSftpFile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -175,6 +177,14 @@ export interface IStorage {
   listProcessedSftpFiles(limit: number): Promise<ProcessedSftpFile[]>;
   countProcessedSftpFiles(): Promise<number>;
   findOrnitelaStudyForDevice(deviceId: string): Promise<string | null>;
+  getOrnitelaDeviceStudies(studyId: string): Promise<OrnitelaDeviceStudy[]>;
+  addOrnitelaDeviceStudy(studyId: string, deviceId: string, createdBy?: string | null): Promise<OrnitelaDeviceStudy>;
+  removeOrnitelaDeviceStudy(studyId: string, deviceId: string): Promise<void>;
+  recordUnassignedSftpFile(filename: string, deviceId: string | null, csvContent: string, fileModifiedAt: Date | null): Promise<void>;
+  listUnassignedSftpFiles(opts?: { includeResolved?: boolean; limit?: number }): Promise<UnassignedSftpFile[]>;
+  getUnresolvedUnassignedFilesForDevice(deviceId: string): Promise<UnassignedSftpFile[]>;
+  markUnassignedFileResolved(id: string, studyId: string): Promise<void>;
+  resolveUnassignedFileByFilename(filename: string, studyId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1503,16 +1513,115 @@ export class DatabaseStorage implements IStorage {
   }
 
   async findOrnitelaStudyForDevice(deviceId: string): Promise<string | null> {
+    // 1. Dispositivos ya registrados como deployment (compatibilidad: los que ya
+    //    funcionan hoy siguen enrutándose exactamente igual, sin configurar nada).
     const [dep] = await db.select({ studyId: deployments.studyId })
       .from(deployments)
       .where(eq(deployments.localIdentifier, deviceId))
       .limit(1);
     if (dep) return dep.studyId;
-    const enabled = await db.select({ id: studies.id })
-      .from(studies)
-      .where(and(eq(studies.ornitelaEnabled, true), eq(studies.active, true)));
-    if (enabled.length === 1) return enabled[0].id;
+    // 2. Asociación explícita dispositivo→estudio (allowlist configurada por el admin).
+    const [assoc] = await db.select({ studyId: ornitelaDeviceStudies.studyId })
+      .from(ornitelaDeviceStudies)
+      .where(eq(ornitelaDeviceStudies.deviceId, deviceId))
+      .limit(1);
+    if (assoc) return assoc.studyId;
+    // 3. Sin fallback: si el dispositivo no está en ningún deployment ni en la
+    //    allowlist, el archivo NO se enruta automáticamente (se registra como sin asignar).
     return null;
+  }
+
+  async getOrnitelaDeviceStudies(studyId: string): Promise<OrnitelaDeviceStudy[]> {
+    return db.select().from(ornitelaDeviceStudies)
+      .where(eq(ornitelaDeviceStudies.studyId, studyId))
+      .orderBy(desc(ornitelaDeviceStudies.createdAt));
+  }
+
+  async addOrnitelaDeviceStudy(studyId: string, deviceId: string, createdBy?: string | null): Promise<OrnitelaDeviceStudy> {
+    const trimmed = deviceId.trim();
+    const [existing] = await db.select().from(ornitelaDeviceStudies)
+      .where(eq(ornitelaDeviceStudies.deviceId, trimmed))
+      .limit(1);
+    if (existing) {
+      if (existing.studyId === studyId) return existing;
+      const [other] = await db.select({ name: studies.name }).from(studies)
+        .where(eq(studies.id, existing.studyId)).limit(1);
+      throw new Error(
+        `El dispositivo "${trimmed}" ya está asignado a otro estudio${other?.name ? ` ("${other.name}")` : ""}. Quítalo de allí primero.`,
+      );
+    }
+    const [row] = await db.insert(ornitelaDeviceStudies)
+      .values({ studyId, deviceId: trimmed, createdBy: createdBy ?? null })
+      .returning();
+    return row;
+  }
+
+  async removeOrnitelaDeviceStudy(studyId: string, deviceId: string): Promise<void> {
+    await db.delete(ornitelaDeviceStudies)
+      .where(and(
+        eq(ornitelaDeviceStudies.studyId, studyId),
+        eq(ornitelaDeviceStudies.deviceId, deviceId.trim()),
+      ));
+  }
+
+  async recordUnassignedSftpFile(filename: string, deviceId: string | null, csvContent: string, fileModifiedAt: Date | null): Promise<void> {
+    await db.insert(unassignedSftpFiles)
+      .values({ filename, deviceId, csvContent, fileModifiedAt })
+      .onConflictDoUpdate({
+        target: unassignedSftpFiles.filename,
+        set: {
+          deviceId,
+          csvContent,
+          fileModifiedAt,
+          retryCount: sql`${unassignedSftpFiles.retryCount} + 1`,
+          lastAttemptAt: new Date(),
+        },
+      });
+  }
+
+  async listUnassignedSftpFiles(opts?: { includeResolved?: boolean; limit?: number }): Promise<UnassignedSftpFile[]> {
+    const limit = opts?.limit ?? 200;
+    const base = db.select({
+      id: unassignedSftpFiles.id,
+      filename: unassignedSftpFiles.filename,
+      deviceId: unassignedSftpFiles.deviceId,
+      csvContent: sql<string>`''`.as("csv_content"),
+      fileModifiedAt: unassignedSftpFiles.fileModifiedAt,
+      retryCount: unassignedSftpFiles.retryCount,
+      firstSeenAt: unassignedSftpFiles.firstSeenAt,
+      lastAttemptAt: unassignedSftpFiles.lastAttemptAt,
+      resolvedStatus: unassignedSftpFiles.resolvedStatus,
+      resolvedStudyId: unassignedSftpFiles.resolvedStudyId,
+      resolvedAt: unassignedSftpFiles.resolvedAt,
+    }).from(unassignedSftpFiles);
+    const rows = opts?.includeResolved
+      ? await base.orderBy(desc(unassignedSftpFiles.lastAttemptAt)).limit(limit)
+      : await base.where(eq(unassignedSftpFiles.resolvedStatus, false)).orderBy(desc(unassignedSftpFiles.lastAttemptAt)).limit(limit);
+    return rows as UnassignedSftpFile[];
+  }
+
+  async getUnresolvedUnassignedFilesForDevice(deviceId: string): Promise<UnassignedSftpFile[]> {
+    return db.select().from(unassignedSftpFiles)
+      .where(and(
+        eq(unassignedSftpFiles.deviceId, deviceId.trim()),
+        eq(unassignedSftpFiles.resolvedStatus, false),
+      ))
+      .orderBy(desc(unassignedSftpFiles.lastAttemptAt));
+  }
+
+  async markUnassignedFileResolved(id: string, studyId: string): Promise<void> {
+    await db.update(unassignedSftpFiles)
+      .set({ resolvedStatus: true, resolvedStudyId: studyId, resolvedAt: new Date() })
+      .where(eq(unassignedSftpFiles.id, id));
+  }
+
+  async resolveUnassignedFileByFilename(filename: string, studyId: string): Promise<void> {
+    await db.update(unassignedSftpFiles)
+      .set({ resolvedStatus: true, resolvedStudyId: studyId, resolvedAt: new Date() })
+      .where(and(
+        eq(unassignedSftpFiles.filename, filename),
+        eq(unassignedSftpFiles.resolvedStatus, false),
+      ));
   }
 
   async getIndividualCountsByProject(): Promise<Record<number, number>> {

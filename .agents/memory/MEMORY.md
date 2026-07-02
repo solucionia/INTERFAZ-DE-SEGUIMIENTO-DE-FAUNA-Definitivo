@@ -7,4 +7,5 @@
 - [Ornitela new-study first sync](ornitela-first-sync.md) — new Ornitela study can't be bootstrapped by the cron (no deployments yet); creation must trigger its own first sync.
 - [ACC immobility detectors](acc-immobility-detectors.md) — viz has no detector; event-detector already simultaneous; ACC immobility false positives come from immobilityDetector's pairwise-drift check.
 - [Ornitela historical backfill](ornitela-historical-backfill.md) — panel keeps long history but sync only pulls a rolling window; backfill via script+workflow, dense devices hit Node's ~512MB string limit → window-split.
+- [drizzle-kit push interactive](drizzle-push-interactive.md) — push prompts can't be answered from the agent shell + a live-table truncate prompt; add new tables via matching raw SQL DDL instead.
 - [hover-elevate specificity trap](hover-elevate-specificity-trap.md) — `hover-elevate` (:not selector, 0,2,0) overrides same-element `absolute`/`z-[N]` to position:relative+z-0; positioning/z-index must go on a wrapper.

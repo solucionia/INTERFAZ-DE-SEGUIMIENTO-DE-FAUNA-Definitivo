@@ -9,7 +9,6 @@ const SFTP_USER = process.env.ORNITELA_SFTP_USER || "ornitela";
 const SFTP_PASSWORD = process.env.ORNITELA_SFTP_PASSWORD || "";
 const SFTP_REMOTE_DIR = process.env.ORNITELA_SFTP_REMOTE_DIR || "/uploads";
 const SFTP_PROCESSED_DIR = `${SFTP_REMOTE_DIR.replace(/\/$/, "")}/processed`;
-const SFTP_DEFAULT_STUDY_ID = process.env.ORNITELA_DEFAULT_STUDY_ID || "";
 
 const POLL_INTERVAL_MS = parseInt(
   process.env.ORNITELA_SFTP_POLL_MS || `${2 * 60 * 1000}`,
@@ -150,9 +149,16 @@ class SftpWatcher {
           const buf = (await sftp.get(remotePath)) as Buffer;
           const csv = buf.toString("utf-8");
 
-          const studyId = await this.resolveStudyId(csv);
+          const deviceId = extractFirstDeviceId(csv);
+          const studyId = deviceId ? await storage.findOrnitelaStudyForDevice(deviceId) : null;
           if (!studyId) {
-            const msg = `${f.name}: no se pudo determinar studyId (sin device match ni study Ornitela único)`;
+            // Sin asignación determinista: guardar el archivo (contenido incluido) en la
+            // cola de "sin asignar" para que sea visible en la UI y se pueda reprocesar
+            // retroactivamente cuando el admin añada el dispositivo a la allowlist.
+            const modAt =
+              typeof (f as any).modifyTime === "number" ? new Date((f as any).modifyTime) : null;
+            await storage.recordUnassignedSftpFile(f.name, deviceId, csv, modAt);
+            const msg = `${f.name}: dispositivo "${deviceId ?? "?"}" sin estudio asignado (añádelo a la allowlist del estudio)`;
             this.pushError(msg);
             result.errors.push(msg);
             result.filesFailed++;
@@ -164,6 +170,10 @@ class SftpWatcher {
           const parseResult = await parseOrnitelaCsv(csv, studyId, storage);
           const records = parseResult.gpsImported + parseResult.accImported;
           await storage.recordProcessedSftpFile(f.name, records);
+          // Reconciliación: si este archivo estuvo previamente en la cola "sin
+          // asignar" (p.ej. el dispositivo ya tiene deployment/allowlist), márcalo
+          // resuelto para que no quede como pendiente fantasma en la UI.
+          await storage.resolveUnassignedFileByFilename(f.name, studyId);
           if (records > 0) studiesWithNewData.add(studyId);
 
           try {
@@ -268,30 +278,6 @@ class SftpWatcher {
     );
   }
 
-  private async resolveStudyId(csv: string): Promise<string | null> {
-    const cleaned = csv.replace(/^\uFEFF/, "");
-    const lines = cleaned.split(/\r?\n/).filter((l) => l.trim().length > 0);
-    if (lines.length < 2) return SFTP_DEFAULT_STUDY_ID || null;
-    const sep = lines[0].includes(";") ? ";" : ",";
-    const headers = parseCsvLine(lines[0], sep).map((h) =>
-      h.trim().toLowerCase().replace(/^\uFEFF/, ""),
-    );
-    const idx = headers.findIndex((h) =>
-      ["device_id", "deviceid", "dev_id", "tag_id", "tagid"].includes(h),
-    );
-    if (idx === -1) return SFTP_DEFAULT_STUDY_ID || null;
-
-    const maxScan = Math.min(lines.length, 11);
-    for (let i = 1; i < maxScan; i++) {
-      const vals = parseCsvLine(lines[i], sep);
-      const deviceId = (vals[idx] || "").trim();
-      if (!deviceId) continue;
-      const found = await storage.findOrnitelaStudyForDevice(deviceId);
-      if (found) return found;
-    }
-    return SFTP_DEFAULT_STUDY_ID || null;
-  }
-
   private pushError(message: string) {
     this.recentErrors.unshift({ at: Date.now(), message });
     if (this.recentErrors.length > MAX_RECENT_ERRORS) {
@@ -336,3 +322,66 @@ class SftpWatcher {
 }
 
 export const sftpWatcher = new SftpWatcher();
+
+/**
+ * Extrae el primer device_id no vacío de un CSV Ornitela (escanea hasta 10 filas).
+ * Devuelve null si no hay columna device_id o valores.
+ */
+export function extractFirstDeviceId(csv: string): string | null {
+  const cleaned = csv.replace(/^\uFEFF/, "");
+  const lines = cleaned.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return null;
+  const sep = lines[0].includes(";") ? ";" : ",";
+  const headers = parseCsvLine(lines[0], sep).map((h) =>
+    h.trim().toLowerCase().replace(/^\uFEFF/, ""),
+  );
+  const idx = headers.findIndex((h) =>
+    ["device_id", "deviceid", "dev_id", "tag_id", "tagid"].includes(h),
+  );
+  if (idx === -1) return null;
+  const maxScan = Math.min(lines.length, 11);
+  for (let i = 1; i < maxScan; i++) {
+    const vals = parseCsvLine(lines[i], sep);
+    const deviceId = (vals[idx] || "").trim();
+    if (deviceId) return deviceId;
+  }
+  return null;
+}
+
+/**
+ * Reprocesa retroactivamente los archivos SFTP que quedaron "sin asignar" para un
+ * device_id concreto, importándolos al estudio indicado desde el contenido guardado
+ * (no requiere que Ornitela reenvíe el dato ni una conexión SFTP). Las inserciones
+ * son idempotentes, así que es seguro aunque el archivo se vuelva a procesar luego.
+ */
+export async function reprocessUnassignedForDevice(
+  deviceId: string,
+  studyId: string,
+): Promise<{ files: number; gps: number; acc: number }> {
+  const pending = await storage.getUnresolvedUnassignedFilesForDevice(deviceId);
+  let files = 0;
+  let gps = 0;
+  let acc = 0;
+  for (const f of pending) {
+    try {
+      const r = await parseOrnitelaCsv(f.csvContent, studyId, storage);
+      gps += r.gpsImported;
+      acc += r.accImported;
+      files++;
+      await storage.markUnassignedFileResolved(f.id, studyId);
+      const already = await storage.getProcessedSftpFile(f.filename);
+      if (!already) {
+        await storage.recordProcessedSftpFile(f.filename, r.gpsImported + r.accImported);
+      }
+    } catch (e: any) {
+      log(`SFTP reprocesado ${f.filename} (device ${deviceId}) falló: ${e?.message ?? e}`, "sftp");
+    }
+  }
+  if (gps > 0 || acc > 0) {
+    try {
+      const { triggerImmobilityAnalysisInBackground } = await import("../immobilityDetector");
+      triggerImmobilityAnalysisInBackground(studyId, "ornitela-allowlist-reprocess");
+    } catch {}
+  }
+  return { files, gps, acc };
+}
