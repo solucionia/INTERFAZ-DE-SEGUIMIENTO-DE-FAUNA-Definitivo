@@ -888,7 +888,7 @@ export default function StudyVisualization() {
         }
       }
 
-      if (detectedEvents.length > 0) {
+      if (filteredDetectedEvents.length > 0) {
         if (cursorY + 30 > pageH - margin) {
           pdf.addPage();
           cursorY = margin;
@@ -896,7 +896,7 @@ export default function StudyVisualization() {
 
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
-        pdf.text(`Eventos detectados (${detectedEvents.length})`, margin, cursorY);
+        pdf.text(`Eventos detectados (${filteredDetectedEvents.length})`, margin, cursorY);
         cursorY += 6;
 
         pdf.setFontSize(8);
@@ -913,7 +913,7 @@ export default function StudyVisualization() {
         cursorY += 2;
 
         pdf.setFont("helvetica", "normal");
-        for (const ev of detectedEvents) {
+        for (const ev of filteredDetectedEvents) {
           if (cursorY + 6 > pageH - margin) {
             pdf.addPage();
             cursorY = margin;
