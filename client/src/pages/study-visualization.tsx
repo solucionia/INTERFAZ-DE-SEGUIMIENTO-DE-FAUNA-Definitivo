@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useRoute, useSearch, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Study, Individual, DetectedEvent, Project, AccelerometerLabel, BehaviorType } from "@shared/schema";
-import { EVENT_LABELS, EVENT_COLORS, BEHAVIOR_TYPES, BEHAVIOR_LABELS, BEHAVIOR_COLORS } from "@shared/schema";
+import { EVENT_LABELS, EVENT_COLORS, EVENT_TYPES, BEHAVIOR_TYPES, BEHAVIOR_LABELS, BEHAVIOR_COLORS } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Dialog,
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -243,7 +244,7 @@ export default function StudyVisualization() {
   const [detectedEvents, setDetectedEvents] = useState<DetectedEvent[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEvents, setShowEvents] = useState(true);
-  const [eventTypeFilter, setEventTypeFilter] = useState<Set<string>>(new Set());
+  const [eventTypeFilter, setEventTypeFilter] = useState<Set<string>>(new Set(EVENT_TYPES));
   const [exporting, setExporting] = useState(false);
 
   const [labelMode, setLabelMode] = useState(false);
@@ -665,37 +666,34 @@ export default function StudyVisualization() {
     },
   });
 
-  const availableEventTypes = useMemo(() => {
-    const types = new Set<string>();
+  // Conteo de eventos por tipo, ya filtrado por animal (currentDeviceId) y por
+  // el rango de fechas (aplicado al hacer fetch). Sirve para mostrar cuántos
+  // eventos hay de cada tipo junto a su checkbox.
+  const eventCountsByType = useMemo(() => {
+    const counts: Record<string, number> = {};
     for (const e of detectedEvents) {
       if (currentDeviceId && e.individualLocalId !== currentDeviceId) continue;
-      types.add(e.eventType);
+      counts[e.eventType] = (counts[e.eventType] || 0) + 1;
     }
-    return Array.from(types);
+    return counts;
   }, [detectedEvents, currentDeviceId]);
 
   const filteredDetectedEvents = useMemo(() => {
     return detectedEvents.filter((e) => {
       if (currentDeviceId && e.individualLocalId !== currentDeviceId) return false;
-      if (eventTypeFilter.size > 0 && !eventTypeFilter.has(e.eventType)) return false;
+      if (!eventTypeFilter.has(e.eventType)) return false;
       return true;
     });
   }, [detectedEvents, currentDeviceId, eventTypeFilter]);
 
-  // Si cambia el animal/los datos, descarta del filtro los tipos que ya no
-  // están disponibles para evitar quedar atrapado en una lista vacía sin poder
-  // limpiar el filtro (el selector se oculta cuando hay <=1 tipo disponible).
-  useEffect(() => {
+  const toggleEventType = useCallback((type: string) => {
     setEventTypeFilter((prev) => {
-      if (prev.size === 0) return prev;
-      const available = new Set(availableEventTypes);
-      const next = new Set<string>();
-      for (const t of Array.from(prev)) {
-        if (available.has(t)) next.add(t);
-      }
-      return next.size === prev.size ? prev : next;
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
     });
-  }, [availableEventTypes]);
+  }, []);
 
   const chartEventBands = useMemo(() => {
     if (!showEvents || chartData.length === 0) return [];
@@ -1445,44 +1443,57 @@ export default function StudyVisualization() {
                   <AlertTriangle className="w-4 h-4" />
                   Eventos detectados ({filteredDetectedEvents.length})
                 </h3>
-                {availableEventTypes.length > 1 && (
-                  <div className="flex flex-wrap gap-1" data-testid="filter-event-types">
-                    <Badge
-                      variant={eventTypeFilter.size === 0 ? "default" : "outline"}
-                      className="cursor-pointer select-none text-[10px]"
-                      onClick={() => setEventTypeFilter(new Set())}
-                      data-testid="badge-event-type-all"
-                    >
-                      Todos
-                    </Badge>
-                    {availableEventTypes.map((t) => {
-                      const active = eventTypeFilter.has(t);
+                <div className="space-y-1.5" data-testid="filter-event-types">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-muted-foreground">Filtrar por tipo</span>
+                    <div className="flex gap-1">
+                      <Badge
+                        variant="outline"
+                        className="cursor-pointer select-none text-[10px]"
+                        onClick={() => setEventTypeFilter(new Set(EVENT_TYPES))}
+                        data-testid="badge-event-type-all"
+                      >
+                        Todos
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="cursor-pointer select-none text-[10px]"
+                        onClick={() => setEventTypeFilter(new Set())}
+                        data-testid="badge-event-type-none"
+                      >
+                        Ninguno
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-1 max-h-52 overflow-y-auto pr-1">
+                    {EVENT_TYPES.map((t) => {
                       const color = EVENT_COLORS[t as keyof typeof EVENT_COLORS] || "#888";
+                      const count = eventCountsByType[t] || 0;
                       return (
-                        <Badge
+                        <label
                           key={t}
-                          variant={active ? "default" : "outline"}
-                          className="cursor-pointer select-none text-[10px] gap-1"
-                          onClick={() =>
-                            setEventTypeFilter((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(t)) next.delete(t);
-                              else next.add(t);
-                              return next;
-                            })
-                          }
-                          data-testid={`badge-event-type-${t}`}
+                          className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] leading-tight"
+                          data-testid={`label-event-type-${t}`}
                         >
+                          <Checkbox
+                            checked={eventTypeFilter.has(t)}
+                            onCheckedChange={() => toggleEventType(t)}
+                            className="h-3.5 w-3.5"
+                            data-testid={`checkbox-event-type-${t}`}
+                          />
                           <span
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: color }}
                           />
-                          {EVENT_LABELS[t as keyof typeof EVENT_LABELS] || t}
-                        </Badge>
+                          <span className="truncate flex-1">
+                            {EVENT_LABELS[t as keyof typeof EVENT_LABELS] || t}
+                          </span>
+                          <span className="text-muted-foreground tabular-nums">{count}</span>
+                        </label>
                       );
                     })}
                   </div>
-                )}
+                </div>
               </div>
               <ScrollArea className="flex-1">
                 <div className="p-2 space-y-1.5">
