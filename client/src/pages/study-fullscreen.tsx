@@ -27,7 +27,7 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
@@ -197,6 +197,7 @@ export default function StudyFullscreen() {
   const [dateStart, setDateStart] = useState(initial.dateStart);
   const [dateEnd, setDateEnd] = useState(initial.dateEnd);
   const [focusAnimal, setFocusAnimal] = useState<string>(initial.focus);
+  const [compareAnimal, setCompareAnimal] = useState<string>("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
   const [hideLowQuality, setHideLowQuality] = useState(false);
@@ -237,6 +238,9 @@ export default function StudyFullscreen() {
   const [error, setError] = useState<string | null>(null);
   const [gpsData, setGpsData] = useState<Record<string, GpsPoint[]>>({});
   const [accData, setAccData] = useState<Record<string, AccPoint[]>>({});
+  const [compareAccData, setCompareAccData] = useState<AccPoint[]>([]);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
   const [highlightedTimestamp, setHighlightedTimestamp] = useState<number | null>(null);
   const [highlightedGpsPoint, setHighlightedGpsPoint] = useState<GpsPoint | null>(null);
@@ -396,6 +400,41 @@ export default function StudyFullscreen() {
     return () => { cancelled = true; };
   }, [studyId, animalsKey, dateStart, dateEnd]);
 
+  // Carga del acelerómetro del segundo animal a comparar. Usa el MISMO rango de
+  // fechas que el principal para poder contrastar patrones en el mismo periodo.
+  useEffect(() => {
+    if (!studyId || !compareAnimal) {
+      setCompareAccData([]);
+      setCompareError(null);
+      setCompareLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setCompareLoading(true);
+      setCompareError(null);
+      try {
+        const tsStart = new Date(dateStart).getTime();
+        const tsEnd = new Date(dateEnd + "T23:59:59").getTime();
+        if (isNaN(tsStart) || isNaN(tsEnd) || tsStart >= tsEnd) {
+          throw new Error("Rango de fechas inválido.");
+        }
+        const params = `individuals=${encodeURIComponent(compareAnimal)}&timestamp_start=${tsStart}&timestamp_end=${tsEnd}&sensor_type=${SENSOR_ACC}`;
+        const res = await fetch(`/api/studies/${studyId}/events?${params}`, { credentials: "include" });
+        if (!res.ok) throw new Error("No se pudieron cargar los datos.");
+        const raw: Record<string, Record<string, string>[]> = await res.json();
+        const parsed = parseAccEvents(compareAnimal, raw[compareAnimal] || []);
+        if (cancelled) return;
+        setCompareAccData(parsed);
+      } catch (e: any) {
+        if (!cancelled) { setCompareError(e.message || "Error al cargar los datos."); setCompareAccData([]); }
+      } finally {
+        if (!cancelled) setCompareLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [studyId, compareAnimal, dateStart, dateEnd]);
+
   const totalGps = useMemo(() => Object.values(gpsData).reduce((s, a) => s + a.length, 0), [gpsData]);
   const totalAcc = useMemo(() => Object.values(accData).reduce((s, a) => s + a.length, 0), [accData]);
 
@@ -407,6 +446,14 @@ export default function StudyFullscreen() {
     else data = Object.values(accData).flat().sort((a, b) => a.timestamp - b.timestamp);
     return downsample(data, MAX_CHART_POINTS);
   }, [accData, focusAnimal, selectedAnimals]);
+
+  const compareChartData = useMemo(() => downsample(compareAccData, MAX_CHART_POINTS), [compareAccData]);
+
+  // Animal cuyo ACC se muestra en el panel principal (foco o único seleccionado).
+  const mainAccAnimalId = useMemo(
+    () => focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null),
+    [focusAnimal, selectedAnimals]
+  );
 
   const findClosestGpsPoint = useCallback(
     (timestamp: number, animalFilter?: string, maxDiffMs: number = ACC_GPS_MATCH_WINDOW_MS): GpsPoint | null => {
@@ -746,10 +793,39 @@ export default function StudyFullscreen() {
     window.open(`/study/${studyId}/analysis?${p.toString()}`, "_blank", "noopener,noreferrer");
   };
 
+  // Render reutilizable de la gráfica ACC (X/Y/Z). `interactive` habilita el
+  // click→resaltar-en-mapa y el ReferenceDot del punto resaltado (solo principal).
+  const renderAccLineChart = (data: AccPoint[], interactive: boolean) => (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} onClick={interactive ? handleChartClick : undefined}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+        <XAxis dataKey="timestamp" tickFormatter={formatTimestamp} type="number" domain={["dataMin", "dataMax"]} fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+        <YAxis fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} width={40} />
+        <RechartsTooltip
+          labelFormatter={(ts) => formatTimestamp(ts as number)}
+          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "12px", color: "hsl(var(--foreground))" }}
+        />
+        <Legend wrapperStyle={{ fontSize: "11px" }} />
+        <Line type="monotone" dataKey="x" stroke="#3B82F6" name="Eje X" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+        <Line type="monotone" dataKey="y" stroke="#EF4444" name="Eje Y" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+        <Line type="monotone" dataKey="z" stroke="#EAB308" name="Eje Z" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+        {interactive && highlightedTimestamp !== null && data.length > 0 && (() => {
+          let nearest = data[0];
+          let minDiff = Math.abs(nearest.timestamp - highlightedTimestamp);
+          for (const d of data) {
+            const diff = Math.abs(d.timestamp - highlightedTimestamp);
+            if (diff < minDiff) { minDiff = diff; nearest = d; }
+          }
+          return <ReferenceDot x={nearest.timestamp} y={nearest.x} r={6} fill="#ef4444" stroke="white" strokeWidth={2} />;
+        })()}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
-      {/* Mapa: tres cuartas partes superiores */}
-      <div ref={dragParentRef} className="h-3/4 relative">
+      {/* Mapa: dos tercios superiores (se reduce para ampliar el acelerómetro) */}
+      <div ref={dragParentRef} className="h-2/3 relative">
         <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
             <MapPin className="w-4 h-4 text-primary shrink-0" />
@@ -807,7 +883,7 @@ export default function StudyFullscreen() {
                 <Minimize2 className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-3 space-y-3 max-h-[calc(75vh-3rem)] overflow-y-auto">
+            <div className="p-3 space-y-3 max-h-[calc(66vh-3rem)] overflow-y-auto">
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Fecha inicio</Label>
@@ -908,6 +984,17 @@ export default function StudyFullscreen() {
                   </div>
                 </div>
               )}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Comparar acelerómetro con 2º animal</Label>
+                <AnimalSearch
+                  individuals={individuals || []}
+                  selected={compareAnimal ? [compareAnimal] : []}
+                  onChange={(sel) => setCompareAnimal(sel[0] || "")}
+                  multiple={false}
+                  placeholder="Elegir 2º animal..."
+                />
+                <p className="text-[10px] text-muted-foreground">Se muestra un panel adicional con su acelerómetro en el mismo rango de fechas.</p>
+              </div>
               <div className="space-y-1 pt-1 border-t border-border">
                 <Label className="text-xs text-muted-foreground">Acciones</Label>
                 <div className="flex flex-wrap gap-1.5">
@@ -1090,8 +1177,8 @@ export default function StudyFullscreen() {
         )}
       </div>
 
-      {/* Acelerómetro: cuarto inferior */}
-      <div className="h-1/4 border-t border-border flex flex-col px-2 pt-1 pb-2">
+      {/* Acelerómetro: tercio inferior (ampliado). Con 2º animal, dos paneles lado a lado. */}
+      <div className="h-1/3 border-t border-border flex flex-col px-2 pt-1 pb-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1 shrink-0">
           <Activity className="w-3.5 h-3.5" />
           Acelerómetro
@@ -1102,39 +1189,59 @@ export default function StudyFullscreen() {
               : null}
           <span className="text-muted-foreground font-normal ml-auto text-[10px]">Pincha un punto para resaltarlo en el mapa</span>
         </div>
-        <div className="flex-1 min-h-0" ref={chartContainerRef}>
-          {loading ? (
-            <div className="h-full flex items-center justify-center">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+        <div className="flex-1 min-h-0 flex gap-3">
+          <div className="flex-1 min-w-0 flex flex-col">
+            {compareAnimal && (
+              <div className="text-[11px] font-medium text-foreground shrink-0 mb-0.5 truncate" data-testid="label-acc-main">
+                {mainAccAnimalId
+                  ? formatAnimalLabelById(mainAccAnimalId, individualByLocalId)
+                  : `${selectedAnimals.length} animales (combinado)`}
+              </div>
+            )}
+            <div className="flex-1 min-h-0" ref={chartContainerRef}>
+              {loading ? (
+                <div className="h-full flex items-center justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : chartData.length > 0 ? (
+                renderAccLineChart(chartData, true)
+              ) : (
+                <div className="h-full flex items-center justify-center">
+                  <p className="text-xs text-muted-foreground">No hay datos de acelerómetro para este rango</p>
+                </div>
+              )}
             </div>
-          ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} onClick={handleChartClick}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis dataKey="timestamp" tickFormatter={formatTimestamp} type="number" domain={["dataMin", "dataMax"]} fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} />
-                <YAxis fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} width={40} />
-                <RechartsTooltip
-                  labelFormatter={(ts) => formatTimestamp(ts as number)}
-                  contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "12px", color: "hsl(var(--foreground))" }}
-                />
-                <Legend wrapperStyle={{ fontSize: "11px" }} />
-                <Line type="monotone" dataKey="x" stroke="#3B82F6" name="Eje X" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                <Line type="monotone" dataKey="y" stroke="#EF4444" name="Eje Y" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                <Line type="monotone" dataKey="z" stroke="#EAB308" name="Eje Z" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-                {highlightedTimestamp !== null && chartData.length > 0 && (() => {
-                  let nearest = chartData[0];
-                  let minDiff = Math.abs(nearest.timestamp - highlightedTimestamp);
-                  for (const d of chartData) {
-                    const diff = Math.abs(d.timestamp - highlightedTimestamp);
-                    if (diff < minDiff) { minDiff = diff; nearest = d; }
-                  }
-                  return <ReferenceDot x={nearest.timestamp} y={nearest.x} r={6} fill="#ef4444" stroke="white" strokeWidth={2} />;
-                })()}
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full flex items-center justify-center">
-              <p className="text-xs text-muted-foreground">No hay datos de acelerómetro para este rango</p>
+          </div>
+          {compareAnimal && (
+            <div className="flex-1 min-w-0 flex flex-col border-l border-border pl-3" data-testid="panel-acc-compare">
+              <div className="flex items-center gap-1 text-[11px] font-medium text-foreground shrink-0 mb-0.5">
+                <span className="truncate" data-testid="label-acc-compare">{formatAnimalLabelById(compareAnimal, individualByLocalId)}</span>
+                <button
+                  onClick={() => setCompareAnimal("")}
+                  className="ml-auto text-muted-foreground hover:text-destructive shrink-0"
+                  data-testid="button-close-compare"
+                  title="Quitar comparación"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                {compareLoading ? (
+                  <div className="h-full flex items-center justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : compareError ? (
+                  <div className="h-full flex items-center justify-center p-2 text-center">
+                    <p className="text-xs text-destructive">{compareError}</p>
+                  </div>
+                ) : compareChartData.length > 0 ? (
+                  renderAccLineChart(compareChartData, false)
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <p className="text-xs text-muted-foreground">No hay datos de acelerómetro para este rango</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
