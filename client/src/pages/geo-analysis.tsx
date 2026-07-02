@@ -897,6 +897,39 @@ export default function GeoAnalysis() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {projectIdsInStudy.size > 0 && (
+              <div className="space-y-2">
+                <Label>Proyecto</Label>
+                <Select value={projectFilterId} onValueChange={(v) => { setProjectFilterId(v); setSelectedAnimals([]); }}>
+                  <SelectTrigger data-testid="select-filter-project">
+                    <SelectValue placeholder="Todos los proyectos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los proyectos</SelectItem>
+                    {allProjects?.filter(p => projectIdsInStudy.has(p.id)).map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Animales</Label>
+              {loadingIndividuals ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ) : (
+                <AnimalSearch
+                  individuals={filteredByProject.filter((i) => i.localIdentifier) || []}
+                  selected={selectedAnimals}
+                  onChange={setSelectedAnimals}
+                  multiple
+                  placeholder="Buscar animal..."
+                />
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label>Tipo de analisis</Label>
               <Select value={analysisType} onValueChange={(v) => setAnalysisType(v as AnalysisType)}>
@@ -1084,39 +1117,6 @@ export default function GeoAnalysis() {
                   </>
                 )}
               </p>
-            </div>
-
-            {projectIdsInStudy.size > 0 && (
-              <div className="space-y-2">
-                <Label>Proyecto</Label>
-                <Select value={projectFilterId} onValueChange={(v) => { setProjectFilterId(v); setSelectedAnimals([]); }}>
-                  <SelectTrigger data-testid="select-filter-project">
-                    <SelectValue placeholder="Todos los proyectos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos los proyectos</SelectItem>
-                    {allProjects?.filter(p => projectIdsInStudy.has(p.id)).map(p => (
-                      <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label>Animales</Label>
-              {loadingIndividuals ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-9 w-full" />
-                </div>
-              ) : (
-                <AnimalSearch
-                  individuals={filteredByProject.filter((i) => i.localIdentifier) || []}
-                  selected={selectedAnimals}
-                  onChange={setSelectedAnimals}
-                  multiple
-                  placeholder="Buscar animal..."
-                />
-              )}
             </div>
 
             {canAnalyze && (
