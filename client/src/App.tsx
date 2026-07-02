@@ -25,6 +25,7 @@ import RawData from "@/pages/raw-data";
 import ImportCsv from "@/pages/import-csv";
 import ImmobilityMonitor from "@/pages/immobility-monitor";
 import LastPositions from "@/pages/last-positions";
+import AccelerometerComparison from "@/pages/accelerometer-comparison";
 import AdminSpecies from "@/pages/admin-species";
 import AdminProjects from "@/pages/admin-projects";
 import AdminAlerts from "@/pages/admin-alerts";
@@ -81,6 +82,7 @@ function AuthenticatedRouter() {
       <Route path="/last-positions" component={LastPositions} />
       <Route path="/monitor" component={EmissionMonitor} />
       <Route path="/immobility" component={ImmobilityMonitor} />
+      <Route path="/accelerometer-comparison" component={AccelerometerComparison} />
       <Route path="/alerts" component={AlertHistory} />
       <Route component={NotFound} />
     </Switch>

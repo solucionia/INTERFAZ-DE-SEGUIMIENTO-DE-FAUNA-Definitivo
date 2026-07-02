@@ -14,23 +14,13 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  Legend,
-  ReferenceDot,
-  ResponsiveContainer,
-} from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
+import { AccelerometerChart } from "@/components/accelerometer-chart";
 import { computeDateRange, type QuickRange } from "@/components/quick-date-range";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -126,11 +116,6 @@ function downsample<T>(arr: T[], maxPoints: number): T[] {
   if (arr.length <= maxPoints) return arr;
   const step = Math.ceil(arr.length / maxPoints);
   return arr.filter((_, i) => i % step === 0);
-}
-
-function formatTimestamp(ts: number) {
-  try { return format(new Date(ts), "dd/MM HH:mm:ss", { locale: es }); }
-  catch { return String(ts); }
 }
 
 function defaultRange() {
@@ -796,30 +781,12 @@ export default function StudyFullscreen() {
   // Render reutilizable de la gráfica ACC (X/Y/Z). `interactive` habilita el
   // click→resaltar-en-mapa y el ReferenceDot del punto resaltado (solo principal).
   const renderAccLineChart = (data: AccPoint[], interactive: boolean) => (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} onClick={interactive ? handleChartClick : undefined}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-        <XAxis dataKey="timestamp" tickFormatter={formatTimestamp} type="number" domain={["dataMin", "dataMax"]} fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} />
-        <YAxis fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} width={40} />
-        <RechartsTooltip
-          labelFormatter={(ts) => formatTimestamp(ts as number)}
-          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "12px", color: "hsl(var(--foreground))" }}
-        />
-        <Legend wrapperStyle={{ fontSize: "11px" }} />
-        <Line type="monotone" dataKey="x" stroke="#3B82F6" name="Eje X" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-        <Line type="monotone" dataKey="y" stroke="#EF4444" name="Eje Y" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-        <Line type="monotone" dataKey="z" stroke="#EAB308" name="Eje Z" dot={false} strokeWidth={1.5} isAnimationActive={false} />
-        {interactive && highlightedTimestamp !== null && data.length > 0 && (() => {
-          let nearest = data[0];
-          let minDiff = Math.abs(nearest.timestamp - highlightedTimestamp);
-          for (const d of data) {
-            const diff = Math.abs(d.timestamp - highlightedTimestamp);
-            if (diff < minDiff) { minDiff = diff; nearest = d; }
-          }
-          return <ReferenceDot x={nearest.timestamp} y={nearest.x} r={6} fill="#ef4444" stroke="white" strokeWidth={2} />;
-        })()}
-      </LineChart>
-    </ResponsiveContainer>
+    <AccelerometerChart
+      data={data}
+      interactive={interactive}
+      onPointClick={handleChartClick}
+      highlightTimestamp={highlightedTimestamp}
+    />
   );
 
   return (

@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin, Bug, FolderOpen, Globe, BarChart3 } from "lucide-react";
+import { PawPrint, LayoutDashboard, Settings, Users, ChevronUp, LogOut, Radio, Dna, WifiOff, Bell, FileText, Upload, HeartPulse, MapPin, Bug, FolderOpen, Globe, BarChart3, Activity } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AppSidebar() {
@@ -159,6 +159,14 @@ export function AppSidebar() {
                   <Link href="/immobility" data-testid="link-immobility-monitor">
                     <HeartPulse className="w-4 h-4" />
                     <span>Detector de mortalidad</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/accelerometer-comparison"}>
+                  <Link href="/accelerometer-comparison" data-testid="link-accelerometer-comparison">
+                    <Activity className="w-4 h-4" />
+                    <span>Comparador de acelerómetros</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
