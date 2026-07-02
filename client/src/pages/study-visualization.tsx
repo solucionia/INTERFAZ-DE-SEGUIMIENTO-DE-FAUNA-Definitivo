@@ -1006,6 +1006,8 @@ export default function StudyVisualization() {
           onRangeSelect={handleQuickRange}
           autoLoad={autoLoadEnabled}
           onAutoLoadChange={setAutoLoadEnabled}
+          studyId={studyId}
+          individuals={selectedAnimals}
         />
 
         <div className="flex flex-wrap items-end gap-3">

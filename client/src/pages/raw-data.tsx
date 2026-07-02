@@ -191,6 +191,8 @@ export default function RawData() {
           <QuickDateRange
             activeRange={activeQuickRange}
             onRangeSelect={handleQuickRange}
+            studyId={studyId}
+            individuals={selectedAnimal ? [selectedAnimal] : []}
             autoLoad={autoLoadEnabled}
             onAutoLoadChange={setAutoLoadEnabled}
           />

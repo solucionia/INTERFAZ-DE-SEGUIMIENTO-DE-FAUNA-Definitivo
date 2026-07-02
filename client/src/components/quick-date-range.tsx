@@ -1,10 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 
-export type QuickRange = "1h" | "6h" | "24h" | "7d" | "14d" | "30d" | "90d" | "1a" | "todo";
+export type QuickRange = "1h" | "6h" | "24h" | "7d" | "14d" | "30d" | "90d" | "1a" | "3a" | "todo";
 
 const RANGE_LABELS: Record<QuickRange, string> = {
   "1h": "1h",
@@ -15,10 +15,11 @@ const RANGE_LABELS: Record<QuickRange, string> = {
   "30d": "30d",
   "90d": "90d",
   "1a": "1a",
+  "3a": "3a",
   "todo": "Todo",
 };
 
-const DEFAULT_RANGE_KEYS: QuickRange[] = ["1h", "6h", "24h", "7d", "30d", "90d", "1a", "todo"];
+const DEFAULT_RANGE_KEYS: QuickRange[] = ["1h", "6h", "24h", "7d", "30d", "90d", "1a", "3a", "todo"];
 
 function computeDateRange(range: QuickRange): { start: string; end: string } {
   const now = new Date();
@@ -50,7 +51,12 @@ function computeDateRange(range: QuickRange): { start: string; end: string } {
     case "1a":
       start = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
       break;
+    case "3a":
+      start = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000);
+      break;
     case "todo":
+      // Fallback cuando no se puede resolver el primer dato real del animal
+      // (p. ej. sin animal seleccionado o comparación multi-estudio).
       start = new Date(now.getTime() - 5 * 365 * 24 * 60 * 60 * 1000);
       break;
     default:
@@ -67,6 +73,10 @@ interface QuickDateRangeProps {
   onAutoLoadChange: (value: boolean) => void;
   className?: string;
   ranges?: QuickRange[];
+  // Cuando se proporcionan, "Todo" arranca desde el primer dato real de los
+  // animales indicados (y termina en el último), en lugar de un rango fijo.
+  studyId?: string;
+  individuals?: string[];
 }
 
 export function QuickDateRange({
@@ -76,14 +86,52 @@ export function QuickDateRange({
   onAutoLoadChange,
   className = "",
   ranges,
+  studyId,
+  individuals,
 }: QuickDateRangeProps) {
   const rangeKeys = ranges ?? DEFAULT_RANGE_KEYS;
+  const [resolvingTodo, setResolvingTodo] = useState(false);
+  // Contador para descartar respuestas obsoletas de "Todo": si el usuario pulsa
+  // otro rango (o cambia de animal) mientras la petición está en vuelo, la
+  // respuesta tardía no debe sobreescribir la selección más reciente.
+  const todoReqId = useRef(0);
+
   const handleClick = useCallback(
-    (range: QuickRange) => {
+    async (range: QuickRange) => {
+      // Cualquier clic invalida una resolución de "Todo" en curso.
+      todoReqId.current++;
+      const myReqId = todoReqId.current;
+
+      if (range === "todo" && studyId && individuals && individuals.length > 0) {
+        setResolvingTodo(true);
+        try {
+          const params = new URLSearchParams({ individuals: individuals.join(",") });
+          const res = await fetch(`/api/studies/${studyId}/data-range?${params.toString()}`, {
+            credentials: "include",
+          });
+          if (res.ok) {
+            const data: { min: number | null; max: number | null } = await res.json();
+            // Descartamos si ya hubo una interacción más reciente.
+            if (myReqId !== todoReqId.current) return;
+            if (data.min != null) {
+              const startStr = format(new Date(data.min), "yyyy-MM-dd");
+              const endStr = format(new Date(data.max ?? Date.now()), "yyyy-MM-dd");
+              onRangeSelect(range, startStr, endStr);
+              return;
+            }
+          }
+        } catch {
+          // Ignoramos el error y caemos al rango fijo de respaldo.
+        } finally {
+          if (myReqId === todoReqId.current) setResolvingTodo(false);
+        }
+        // Fallback solo si esta petición sigue siendo la vigente.
+        if (myReqId !== todoReqId.current) return;
+      }
       const { start, end } = computeDateRange(range);
       onRangeSelect(range, start, end);
     },
-    [onRangeSelect]
+    [onRangeSelect, studyId, individuals]
   );
 
   return (
@@ -92,7 +140,7 @@ export function QuickDateRange({
         <Badge
           key={key}
           variant={activeRange === key ? "default" : "outline"}
-          className={`cursor-pointer select-none text-xs toggle-elevate ${activeRange === key ? "toggle-elevated" : ""}`}
+          className={`cursor-pointer select-none text-xs toggle-elevate ${activeRange === key ? "toggle-elevated" : ""} ${key === "todo" && resolvingTodo ? "opacity-50 pointer-events-none" : ""}`}
           onClick={() => handleClick(key)}
           data-testid={`badge-range-${key}`}
         >

@@ -1057,7 +1057,9 @@ export default function GeoAnalysis() {
                 onRangeSelect={handleQuickRange}
                 autoLoad={autoLoadEnabled}
                 onAutoLoadChange={setAutoLoadEnabled}
-                ranges={["6h", "24h", "7d", "14d", "30d", "90d", "1a", "todo"]}
+                ranges={["6h", "24h", "7d", "14d", "30d", "90d", "1a", "3a", "todo"]}
+                studyId={studyId}
+                individuals={selectedAnimals}
               />
             </div>
 

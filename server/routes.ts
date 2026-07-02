@@ -618,6 +618,31 @@ export async function registerRoutes(
     return res.json(result);
   });
 
+  app.get("/api/studies/:id/data-range", requireStudyAccess, async (req, res) => {
+    try {
+      const studyId = req.params.id as string;
+      const raw = (req.query.individuals as string) || "";
+      const individualsList = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      if (individualsList.length === 0) {
+        return res.json({ min: null, max: null });
+      }
+      let min: number | null = null;
+      let max: number | null = null;
+      for (const ind of individualsList) {
+        for (const sensor of ["gps", "acc"] as const) {
+          const r = await storage.getCachedTimestampRange(studyId, ind, sensor);
+          if (r) {
+            if (min === null || r.min < min) min = r.min;
+            if (max === null || r.max > max) max = r.max;
+          }
+        }
+      }
+      res.json({ min, max });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.get("/api/studies/:id/export-kml", checkRole("superuser", "user"), requireStudyAccess, async (req, res) => {
     try {
       const study = await storage.getStudy(req.params.id as string);
