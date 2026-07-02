@@ -162,9 +162,12 @@ export const eventThresholdsSchema = z.object({
   }),
   predationFight: z.object({
     enabled: z.boolean().default(true),
-    zHighThreshold: z.number().default(200),
-    zLowThreshold: z.number().default(-200),
-    consecutiveSamples: z.number().min(2).default(4),
+    zThreshold: z.number().default(-200), // Z por debajo de este valor (puntual)
+    xThreshold: z.number().default(200), // X por encima de este valor (puntual)
+    zSevereThreshold: z.number().default(-300), // Z muy negativo → sube severidad
+    zCriticalThreshold: z.number().default(-400), // Z extremo → severidad crítica
+    xSevereThreshold: z.number().default(300), // X muy alto → sube severidad
+    windowMinutes: z.number().default(10), // ventana temporal para agrupar los picos
   }),
   transmitterFallRisk: z.object({
     enabled: z.boolean().default(true),
@@ -183,7 +186,7 @@ export const DEFAULT_THRESHOLDS: EventThresholds = {
   incubation: { enabled: true, yRangeLow: -200, yRangeHigh: 200, minStdDev: 30, windowMinutes: 60, minSignChanges: 3 },
   lowActivity: { enabled: true, criticalCombinedVariance: 5, warningCombinedVariance: 30, durationHours: 2, minSamples: 10 },
   electrocution: { enabled: true, zStepThreshold: 200, sustainedVariance: 5, durationMinutes: 30, minSamples: 5 },
-  predationFight: { enabled: true, zHighThreshold: 200, zLowThreshold: -200, consecutiveSamples: 4 },
+  predationFight: { enabled: true, zThreshold: -200, xThreshold: 200, zSevereThreshold: -300, zCriticalThreshold: -400, xSevereThreshold: 300, windowMinutes: 10 },
   transmitterFallRisk: { enabled: true, xHighThreshold: 300, xLowThreshold: -300 },
 };
 
@@ -204,7 +207,15 @@ export function normalizeThresholds(stored: any): EventThresholds {
     },
     lowActivity: { ...d.lowActivity, ...stored.lowActivity },
     electrocution: { ...d.electrocution, ...stored.electrocution },
-    predationFight: { ...d.predationFight, ...stored.predationFight },
+    predationFight: {
+      ...d.predationFight,
+      ...stored.predationFight,
+      // Compat: perfiles antiguos guardaban zLowThreshold (Z negativo). Se
+      // mapea a la nueva clave zThreshold si esta no existe en el registro.
+      ...(stored.predationFight?.zLowThreshold !== undefined && stored.predationFight?.zThreshold === undefined
+        ? { zThreshold: stored.predationFight.zLowThreshold }
+        : {}),
+    },
     transmitterFallRisk: { ...d.transmitterFallRisk, ...stored.transmitterFallRisk },
   };
 }
@@ -263,7 +274,7 @@ export const EVENT_LABELS: Record<EventType, string> = {
   zone_deviation: "Desviación de zona",
   low_activity: "Baja actividad ACC",
   electrocution: "Posible electrocución",
-  predation_fight: "Depredación / Pelea (eje Z ±200)",
+  predation_fight: "Depredación / Pelea (Z muy negativo + X alto)",
   transmitter_fall_risk: "Riesgo caída emisor o problema con el ejemplar",
 };
 

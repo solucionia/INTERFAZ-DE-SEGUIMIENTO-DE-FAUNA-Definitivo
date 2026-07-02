@@ -439,10 +439,14 @@ function detectElectrocution(
 }
 
 /**
- * Depredación / Pelea (eje Z ±200): busca una ventana de `consecutiveSamples`
- * muestras ACC consecutivas en la que el eje Z presenta a la vez al menos un
- * valor por encima de `zHighThreshold` (+200) y al menos uno por debajo de
- * `zLowThreshold` (-200), es decir, oscila entre extremos positivo y negativo.
+ * Depredación / Pelea (eje Z muy negativo + eje X con picos altos): en una pelea
+ * los ejes oscilan bruscamente y NO se mantienen en valores estables ni
+ * consecutivos. Por eso basta con que DENTRO de una misma ventana temporal
+ * (`windowMinutes`) exista al menos una muestra con `z < zThreshold` (-200) y al
+ * menos una con `x > xThreshold` (+200), aunque sean muestras puntuales/aisladas
+ * y no consecutivas. La severidad escala según lo extremos que sean los picos:
+ * crítica si `z < zCriticalThreshold` (-400) o si (`z < zSevereThreshold` (-300)
+ * y `x > xSevereThreshold` (+300)); en caso contrario, warning.
  */
 function detectPredationFight(
   samples: AccSample[],
@@ -452,36 +456,55 @@ function detectPredationFight(
   animalId: string
 ): InsertDetectedEvent[] {
   const events: InsertDetectedEvent[] = [];
-  const run = Math.max(2, thresholds.consecutiveSamples);
-  const high = thresholds.zHighThreshold;
-  const low = thresholds.zLowThreshold;
-  if (samples.length < run) return events;
+  const zThr = thresholds.zThreshold;
+  const xThr = thresholds.xThreshold;
+  const zSevere = thresholds.zSevereThreshold;
+  const zCritical = thresholds.zCriticalThreshold;
+  const xSevere = thresholds.xSevereThreshold;
+  const windowMs = thresholds.windowMinutes * 60 * 1000;
+  if (samples.length === 0) return events;
 
-  for (let i = 0; i + run - 1 < samples.length; i++) {
-    const window = samples.slice(i, i + run);
-    const hasHigh = window.some((s) => s.z > high);
-    const hasLow = window.some((s) => s.z < low);
-    if (hasHigh && hasLow) {
-      const gp = findNearestGps(gpsPoints, window[0].timestamp);
+  for (let i = 0; i < samples.length; i++) {
+    const windowEnd = samples[i].timestamp + windowMs;
+    const win: AccSample[] = [];
+    for (let j = i; j < samples.length && samples[j].timestamp <= windowEnd; j++) {
+      win.push(samples[j]);
+    }
+
+    // Picos puntuales (no necesariamente consecutivos) dentro de la ventana.
+    const hasZ = win.some((s) => s.z < zThr);
+    const hasX = win.some((s) => s.x > xThr);
+    if (hasZ && hasX) {
+      const minZ = Math.min(...win.map((s) => s.z));
+      const maxX = Math.max(...win.map((s) => s.x));
+      const severity =
+        minZ < zCritical || (minZ < zSevere && maxX > xSevere) ? "critical" : "warning";
+      const gp = findNearestGps(gpsPoints, win[0].timestamp);
+      // Muestras representativas: primero los picos, si no las primeras de la ventana.
+      const extremos = win.filter((s) => s.z < zThr || s.x > xThr).slice(0, 10);
       events.push({
         studyId,
         individualLocalId: animalId,
         eventType: "predation_fight" as EventType,
-        severity: EVENT_SEVERITY.predation_fight,
-        timestampStart: window[0].timestamp,
-        timestampEnd: window[window.length - 1].timestamp,
+        severity,
+        timestampStart: win[0].timestamp,
+        timestampEnd: win[win.length - 1].timestamp,
         lat: gp?.lat ?? null,
         lng: gp?.lng ?? null,
-        accValues: window.map((s) => ({ x: s.x, y: s.y, z: s.z })),
-        description: `Depredación/Pelea: eje Z oscila entre > ${high} y < ${low} en ${run} muestras ACC consecutivas`,
+        accValues: (extremos.length ? extremos : win.slice(0, 10)).map((s) => ({ x: s.x, y: s.y, z: s.z })),
+        description: `Depredación/Pelea: eje Z mín=${minZ.toFixed(0)} (< ${zThr}) y eje X máx=${maxX.toFixed(0)} (> ${xThr}) en ${thresholds.windowMinutes} min (picos puntuales)`,
         metadata: {
-          z_high_threshold: high,
-          z_low_threshold: low,
-          consecutive_samples: run,
+          z_min: minZ,
+          x_max: maxX,
+          z_threshold: zThr,
+          x_threshold: xThr,
+          window_minutes: thresholds.windowMinutes,
+          severity_tier: severity,
         } as any,
       });
-      // Saltar al final de la ventana detectada para no reportar solapamientos
-      i = i + run - 1;
+      // Saltar al final de la ventana detectada para no reportar solapamientos.
+      const lastTs = win[win.length - 1].timestamp;
+      while (i < samples.length - 1 && samples[i + 1].timestamp <= lastTs) i++;
     }
   }
   return events;
