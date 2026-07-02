@@ -1,0 +1,40 @@
+Actualizar el changelog de la aplicación para reflejar las mejoras de 
+esta sesión, siguiendo el mecanismo ya existente (modal/banner que se 
+muestra una sola vez por versión, guardado en localStorage con clave 
+"wildtrack_changelog_seen_v<VERSION>").
+
+Funcionamiento esperado:
+1. Localizar el archivo de configuración del changelog (client/src/
+   changelog.ts o equivalente) donde se define la constante VERSION y 
+   el array de cambios.
+2. Incrementar VERSION a la siguiente versión.
+3. Añadir un nuevo bloque de changelog con estos cambios como texto claro 
+   y breve, en español, orientado al usuario final (no jerga técnica):
+
+   - Arreglada la exportación de mapas y análisis geoespacial, que se 
+     quedaba bloqueada sin generar el archivo.
+   - El PDF del visualizador ya solo muestra los eventos del animal 
+     seleccionado, no de todos los animales del estudio.
+   - Reducidos los falsos positivos del detector de "repetición de 
+     posición" del acelerómetro.
+   - El detector de pelea/depredación ahora detecta casos reales que 
+     antes se pasaban por alto.
+   - El visualizador de datos ya no tiene scroll interno: toda la 
+     pantalla se desplaza de forma normal.
+   - En pantalla completa, el acelerómetro es más grande y ahora se 
+     puede comparar con el de un segundo animal.
+   - Nueva herramienta: comparador de hasta 10 acelerómetros a la vez, 
+     disponible en el menú de Herramientas.
+   - El detector de eventos permite filtrar por tipo de evento con 
+     casillas de selección.
+   - El buscador de animal en análisis geoespacial se movió a la parte 
+     superior de la pantalla.
+   - Mejorado el sistema de enlace de nuevos estudios de Ornitela para 
+     que funcione correctamente con más de un estudio activo a la vez.
+
+4. El modal debe mantener el diseño ya existente: título "Novedades en 
+   WildTrack", número de versión, lista de cambios, botón "Entendido" 
+   para cerrar.
+5. Verificar que se muestra automáticamente al entrar a la app si el 
+   usuario no ha visto esta versión todavía, y que no vuelve a aparecer 
+   tras cerrarlo.
