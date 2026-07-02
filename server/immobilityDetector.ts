@@ -35,8 +35,8 @@ export interface ImmobilityConfig {
   enableNoTransmission: boolean;
   // Criterios ADICIONALES de acelerómetro (opt-in, desactivados por defecto):
   // - enableAccConsecutive: marca inmovilidad si hay `ACC_CONSECUTIVE_RUN` muestras
-  //   ACC consecutivas en las que la variación de CADA eje (X, Y, Z) respecto a la
-  //   muestra anterior es < `ACC_CONSECUTIVE_DELTA`.
+  //   ACC consecutivas en las que el rango (máx−mín) de CADA eje (X, Y, Z) dentro
+  //   de esa misma ventana es < `ACC_CONSECUTIVE_DELTA`, cumpliéndose los tres a la vez.
   // - enableZNegative: marca mortalidad si hay `Z_NEGATIVE_RUN` muestras ACC
   //   consecutivas con zAcceleration por debajo de `Z_NEGATIVE_VALUE`.
   enableAccConsecutive: boolean;
@@ -60,7 +60,7 @@ export const DEFAULT_IMMOBILITY_CONFIG: ImmobilityConfig = {
 
 // Parámetros de los criterios ACC adicionales.
 const ACC_CONSECUTIVE_RUN = 3; // nº de muestras consecutivas a evaluar
-const ACC_CONSECUTIVE_DELTA = 20; // variación máxima por eje entre muestras consecutivas
+const ACC_CONSECUTIVE_DELTA = 15; // rango máximo (máx−mín) por eje dentro de la ventana
 const Z_NEGATIVE_VALUE = -200; // umbral de caída del eje Z
 const Z_NEGATIVE_RUN = 2; // nº de muestras consecutivas por debajo del umbral
 
@@ -98,6 +98,7 @@ export interface ImmobilityAlert {
   severity: string;
   method: "acc" | "gps" | "acc_consecutive" | "z_negative";
   accVariance: number | null;
+  triggerTimestamp: number | null;
 }
 
 export interface NoTransmissionAlert {
@@ -247,28 +248,34 @@ function detectAccMortality(
 /**
  * Criterio ADICIONAL 1 — "Inmovilidad ACC consecutiva".
  * Recorre las muestras ACC ordenadas por tiempo y busca una racha de
- * `ACC_CONSECUTIVE_RUN` muestras consecutivas en la que, entre cada par de
- * muestras seguidas, la variación de CADA eje (|dX|, |dY|, |dZ|) sea menor que
- * `ACC_CONSECUTIVE_DELTA`. Devuelve la primera racha encontrada o null.
+ * `ACC_CONSECUTIVE_RUN` muestras consecutivas en la que el rango (máx−mín) de
+ * CADA eje X, Y, Z dentro de esa misma ventana sea menor que
+ * `ACC_CONSECUTIVE_DELTA`, cumpliéndose los tres de forma SIMULTÁNEA. Devuelve
+ * la primera ventana encontrada (con el timestamp exacto en que se cumple) o null.
  */
 function detectAccConsecutiveImmobility(
   acc: CachedAccEvent[],
-): { startTs: number; endTs: number; samples: number } | null {
+): { startTs: number; endTs: number; triggerTs: number; samples: number } | null {
   if (acc.length < ACC_CONSECUTIVE_RUN) return null;
   const w = [...acc].sort((a, b) => a.timestamp - b.timestamp);
   for (let i = 0; i + ACC_CONSECUTIVE_RUN - 1 < w.length; i++) {
-    let ok = true;
-    for (let j = i + 1; j < i + ACC_CONSECUTIVE_RUN; j++) {
-      const dx = Math.abs(w[j].xAcceleration - w[j - 1].xAcceleration);
-      const dy = Math.abs(w[j].yAcceleration - w[j - 1].yAcceleration);
-      const dz = Math.abs(w[j].zAcceleration - w[j - 1].zAcceleration);
-      if (dx >= ACC_CONSECUTIVE_DELTA || dy >= ACC_CONSECUTIVE_DELTA || dz >= ACC_CONSECUTIVE_DELTA) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) {
-      return { startTs: w[i].timestamp, endTs: w[i + ACC_CONSECUTIVE_RUN - 1].timestamp, samples: ACC_CONSECUTIVE_RUN };
+    const win = w.slice(i, i + ACC_CONSECUTIVE_RUN);
+    // Rango (máximo − mínimo) de cada eje DENTRO de la misma ventana de
+    // muestras consecutivas. La condición debe cumplirse de forma SIMULTÁNEA
+    // en X, Y y Z: los tres rangos < ACC_CONSECUTIVE_DELTA. Usar el rango
+    // completo (no comparar punto a punto) evita el falso positivo por deriva,
+    // donde cada paso consecutivo es pequeño pero la suma es grande.
+    const xs = win.map((s) => s.xAcceleration);
+    const ys = win.map((s) => s.yAcceleration);
+    const zs = win.map((s) => s.zAcceleration);
+    const rangeX = Math.max(...xs) - Math.min(...xs);
+    const rangeY = Math.max(...ys) - Math.min(...ys);
+    const rangeZ = Math.max(...zs) - Math.min(...zs);
+    if (rangeX < ACC_CONSECUTIVE_DELTA && rangeY < ACC_CONSECUTIVE_DELTA && rangeZ < ACC_CONSECUTIVE_DELTA) {
+      const last = win[win.length - 1];
+      // triggerTs = instante exacto en que se completa la ventana que cumple
+      // la condición (última muestra), para poder auditar el resultado.
+      return { startTs: win[0].timestamp, endTs: last.timestamp, triggerTs: last.timestamp, samples: ACC_CONSECUTIVE_RUN };
     }
   }
   return null;
@@ -308,7 +315,7 @@ function buildAccCriteriaAlert(
   species: string,
   gps: CachedGpsEvent[],
   method: "acc_consecutive" | "z_negative",
-  run: { startTs: number; endTs: number; samples: number },
+  run: { startTs: number; endTs: number; samples: number; triggerTs?: number },
 ): ImmobilityAlert {
   const lastGps = gps.length ? gps.reduce((a, b) => (a.timestamp > b.timestamp ? a : b)) : null;
   const lat = lastGps?.latitude ?? 0;
@@ -331,6 +338,7 @@ function buildAccCriteriaAlert(
     severity: "critical",
     method,
     accVariance: null,
+    triggerTimestamp: run.triggerTs ?? run.endTs,
   };
 }
 
@@ -419,6 +427,7 @@ function buildMortalityAlert(
       severity: "critical",
       method: "acc",
       accVariance: accRes.combinedVariance,
+      triggerTimestamp: accRes.endTs,
     };
   }
 
@@ -442,6 +451,7 @@ function buildMortalityAlert(
       severity: gpsRes.durationHours > 48 ? "critical" : "warning",
       method: "gps",
       accVariance: null,
+      triggerTimestamp: null,
     };
   }
 
@@ -746,7 +756,7 @@ export async function analyzeImmobility(
             alert.method === "acc"
               ? `Mortalidad detectada por acelerómetro: ${alert.hoursImmobile}h (${alert.daysImmobile} días) sin variación significativa, ${alert.numRecords} muestras ACC. Varianza combinada=${alert.accVariance} (umbral=${cfg.accVarianceThreshold})`
               : alert.method === "acc_consecutive"
-                ? `Inmovilidad detectada por ACC consecutiva: ${alert.numRecords} muestras consecutivas con variación por eje < ${ACC_CONSECUTIVE_DELTA} (${alert.hoursImmobile}h)`
+                ? `Inmovilidad detectada por ACC consecutiva: ${alert.numRecords} muestras consecutivas con rango por eje (máx−mín) < ${ACC_CONSECUTIVE_DELTA} de forma simultánea en X, Y y Z${alert.triggerTimestamp ? ` (condición cumplida el ${new Date(alert.triggerTimestamp).toISOString()})` : ""} (${alert.hoursImmobile}h)`
                 : alert.method === "z_negative"
                   ? `Mortalidad detectada por caída Z negativa: ${alert.numRecords} muestras consecutivas con zAcceleration < ${Z_NEGATIVE_VALUE} (${alert.hoursImmobile}h)`
                   : `Inmovilidad detectada por GPS (radio ${cfg.immobilityRadiusMeters}m): ${alert.hoursImmobile}h (${alert.daysImmobile} días), ${alert.numRecords} posiciones. Vel. prom: ${alert.avgSpeed} m/s, máx: ${alert.maxSpeed} m/s`,
@@ -755,6 +765,7 @@ export async function analyzeImmobility(
             acc_combined_variance: alert.accVariance,
             duration_hours: alert.hoursImmobile,
             samples: alert.numRecords,
+            acc_repetition_trigger_ts: alert.triggerTimestamp ?? null,
           } as any,
           readStatus: false,
           resolvedStatus: false,
