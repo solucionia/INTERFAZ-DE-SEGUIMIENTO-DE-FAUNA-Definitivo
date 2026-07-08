@@ -1,0 +1,52 @@
+Se pide cargar 3 años de histórico para TODOS los dispositivos activos 
+de la plataforma, exclusivamente desde Ornitela (no usar Movebank para 
+esto).
+
+Contexto importante: Ornitela entrega datos por SFTP push a una cuenta 
+compartida (146.148.12.195) — el sistema no hace pull activo hacia 
+Ornitela, solo recibe lo que ellos envían. Antes de implementar nada, 
+investigar y confirmar viabilidad real:
+
+1. Confirmar si Ornitela ofrece algún mecanismo de descarga masiva de 
+   histórico aparte del SFTP push normal:
+   - ¿Existe una API de Ornitela (distinta del panel web) que permita 
+     solicitar datos históricos por rango de fechas y por dispositivo?
+   - ¿El panel (cpanel.glosendas.net) permite exportar CSV con rango de 
+     fechas de hasta 3 años por dispositivo, o tiene un límite menor 
+     (en la reunión se mencionó que el panel podría limitar a 1 año lo 
+     descargable)?
+   - Si hace falta, señalar qué se necesitaría confirmar con Mindaugas 
+     (contacto técnico de Ornitela) — no asumir capacidades no 
+     confirmadas en el código actual.
+
+2. Si Ornitela SÍ permite descarga histórica automática por API:
+   - Diseñar un proceso de backfill que recorra todos los dispositivos 
+     activos y solicite su histórico de 3 años, reutilizando el parser 
+     ya existente (ornitelaCsvParser.ts) y el mecanismo de deduplicación 
+     ya probado (inserciones idempotentes).
+   - Procesar por lotes, con progreso visible (contador de dispositivos 
+     completados/pendientes).
+
+3. IMPLEMENTAR SIEMPRE, independientemente del resultado del punto 1: 
+   una herramienta de import MÚLTIPLE de CSVs en la pantalla de 
+   "Importar datos".
+   - Permitir seleccionar/arrastrar varios archivos CSV a la vez (no 
+     uno por uno como ahora).
+   - Procesarlos en secuencia o en paralelo controlado, mostrando 
+     progreso por archivo (nombre, estado: pendiente/procesando/
+     completado/error) y un resumen final (total importados, 
+     duplicados, errores, agrupado por archivo).
+   - Reutilizar toda la lógica de detección de tipo de CSV, parser y 
+     deduplicación ya existente para cada archivo individual — no 
+     cambia la lógica de importación, solo permite lanzar varias a la 
+     vez en lugar de repetir el proceso manualmente por cada CSV.
+   - Esta funcionalidad es necesaria en cualquier caso: si Ornitela 
+     resulta no tener descarga histórica automática (escenario más 
+     probable dado que es push-only), esta es la vía real para que 
+     GREFA cargue el histórico de muchos dispositivos sin tener que 
+     subir CSV por CSV.
+
+4. Reportar el diagnóstico del punto 1 antes de dar por cerrada la 
+   tarea, mmindependientemente de que el import múltiple (punto 3) ya 
+   esté implementado — quiero saber si además del import múltiple, hace 
+   falta gestionar algo del lado de Ornitela para el backfill masivo.
