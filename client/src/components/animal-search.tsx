@@ -36,10 +36,25 @@ export function AnimalSearch({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selectableAnimals = useMemo(
-    () => individuals.filter((i) => i.localIdentifier && i.localIdentifier.trim() !== ""),
-    [individuals]
-  );
+  const selectableAnimals = useMemo(() => {
+    const withId = individuals.filter(
+      (i) => i.localIdentifier && i.localIdentifier.trim() !== ""
+    );
+    // Dedupe por localIdentifier: el mismo emisor puede aparecer en varios
+    // estudios (p.ej. un stub sin metadatos + el registro real importado).
+    // Nos quedamos con el registro más informativo para no mostrarlo dos veces.
+    const score = (i: Individual) =>
+      (i.ornitelaName?.trim() ? 2 : 0) +
+      (i.nickName?.trim() ? 1 : 0) +
+      (i.taxonCanonicalName?.trim() ? 1 : 0);
+    const byLocalId = new Map<string, Individual>();
+    for (const ind of withId) {
+      const key = ind.localIdentifier!.trim();
+      const current = byLocalId.get(key);
+      if (!current || score(ind) > score(current)) byLocalId.set(key, ind);
+    }
+    return Array.from(byLocalId.values());
+  }, [individuals]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return selectableAnimals;
