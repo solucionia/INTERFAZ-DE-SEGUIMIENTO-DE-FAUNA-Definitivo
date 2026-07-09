@@ -2256,8 +2256,16 @@ export async function registerRoutes(
       const tsEnd = parseInt(timestamp_end as string, 10);
 
       // Animales marcados como inactivos no generan alertas nuevas.
+      // El token puede ser el localIdentifier del titular actual o el id (UUID)
+      // de un animal transferido, así que se incluyen ambos en el set.
       const studyInds = await storage.getIndividuals(study.id);
-      const inactiveIds = new Set(studyInds.filter((i) => i.isActive === false && i.localIdentifier).map((i) => i.localIdentifier!));
+      const inactiveIds = new Set<string>();
+      for (const i of studyInds) {
+        if (i.isActive === false) {
+          inactiveIds.add(i.id);
+          if (i.localIdentifier) inactiveIds.add(i.localIdentifier);
+        }
+      }
 
       let totalEvents = 0;
       let emailsSent = 0;
@@ -2501,7 +2509,7 @@ export async function registerRoutes(
       });
 
       await Promise.all([
-        storage.upsertIndividuals(study.id, individualsData),
+        storage.upsertIndividuals(study.id, individualsData.map((i) => ({ ...i, isActive: true }))),
         storage.upsertDeployments(study.id, deploymentsData),
       ]);
 

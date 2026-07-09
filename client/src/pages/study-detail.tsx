@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft, Power, PowerOff } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -70,6 +70,7 @@ export default function StudyDetail() {
   const [ornitelaSyncResult, setOrnitelaSyncResult] = useState<any>(null);
   const [ornitelaProgress, setOrnitelaProgress] = useState<{ processed: number; total: number; gps: number; acc: number; current?: string } | null>(null);
   const [ornitelaPanelOpen, setOrnitelaPanelOpen] = useState(false);
+  const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -590,6 +591,31 @@ export default function StudyDetail() {
     setDeployOffDate(activeDep?.deployOff || "");
   };
 
+  const handleToggleActive = async (ind: Individual) => {
+    const makeInactive = ind.isActive !== false;
+    const label = ind.nickName || ind.localIdentifier || String(ind.movebankId);
+    const msg = makeInactive
+      ? `¿Marcar "${label}" como inactivo?\n\nDejará de generar alertas nuevas (mortalidad, sin transmisión, desviación de zona, eventos ACC). Su historial seguirá visible.`
+      : `¿Reactivar "${label}"?\n\nVolverá a generar alertas normalmente.`;
+    if (!window.confirm(msg)) return;
+    setTogglingActiveId(ind.id);
+    try {
+      await apiRequest("PATCH", `/api/individuals/${ind.id}/active-status`, { isActive: !makeInactive });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/individuals/all"] });
+      toast({
+        title: makeInactive ? "Animal marcado como inactivo" : "Animal reactivado",
+        description: makeInactive
+          ? `${label} ya no generará alertas nuevas. Su historial sigue disponible.`
+          : `${label} vuelve a generar alertas.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Error al cambiar estado", description: e.message || "Error desconocido", variant: "destructive" });
+    } finally {
+      setTogglingActiveId(null);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!editingIndividual || !studyId) return;
     setSaving(true);
@@ -1014,6 +1040,11 @@ export default function StudyDetail() {
                                 <span className="text-xs text-amber-500">No encontrado en ultima sincronizacion</span>
                               </div>
                             )}
+                            {ind.isActive === false && (
+                              <Badge variant="outline" className="bg-muted text-muted-foreground border-muted-foreground/30 w-fit" data-testid={`badge-inactive-${ind.movebankId}`}>
+                                Inactivo — sin alertas
+                              </Badge>
+                            )}
                           </div>
                         </TableCell>
                         {canEditIndividuals && (
@@ -1041,6 +1072,24 @@ export default function StudyDetail() {
                                   data-testid={`button-transfer-device-${ind.movebankId}`}
                                 >
                                   <ArrowRightLeft className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {isSuperuser && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title={ind.isActive === false ? "Reactivar animal (volverá a generar alertas)" : "Marcar como inactivo (dejará de generar alertas)"}
+                                  disabled={togglingActiveId === ind.id}
+                                  onClick={() => handleToggleActive(ind)}
+                                  data-testid={`button-toggle-active-${ind.movebankId}`}
+                                >
+                                  {togglingActiveId === ind.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : ind.isActive === false ? (
+                                    <Power className="w-3.5 h-3.5 text-emerald-500" />
+                                  ) : (
+                                    <PowerOff className="w-3.5 h-3.5 text-muted-foreground" />
+                                  )}
                                 </Button>
                               )}
                             </div>
