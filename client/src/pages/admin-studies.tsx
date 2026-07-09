@@ -97,6 +97,7 @@ export default function AdminStudies() {
   const [deleteStudy, setDeleteStudy] = useState<Study | null>(null);
   const [assignStudy, setAssignStudy] = useState<Study | null>(null);
   const [newDeviceIds, setNewDeviceIds] = useState<string[]>([]);
+  const [formTab, setFormTab] = useState("general");
 
   const { data: studies, isLoading } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
@@ -150,6 +151,7 @@ export default function AdminStudies() {
       ornitelaSyncIntervalHours: 6,
       active: true,
     });
+    setFormTab("general");
     setShowForm(true);
   };
 
@@ -169,6 +171,7 @@ export default function AdminStudies() {
       ornitelaSyncIntervalHours: study.ornitelaSyncIntervalHours ?? 6,
       active: study.active,
     });
+    setFormTab("general");
     setShowForm(true);
   };
 
@@ -229,6 +232,35 @@ export default function AdminStudies() {
 
   const onSubmit = (values: StudyFormValues) => {
     saveMutation.mutate(values);
+  };
+
+  const FIELD_TAB_MAP: Record<string, string> = {
+    name: "general",
+    movebankStudyId: "general",
+    alertEmail: "general",
+    speciesProfileId: "general",
+    active: "general",
+    movebankUsername: "movebank",
+    movebankPassword: "movebank",
+    ornitelaEnabled: "ornitela",
+    ornitelaPanelUrl: "ornitela",
+    ornitelaUsername: "ornitela",
+    ornitelaPassword: "ornitela",
+    ornitelaSyncIntervalHours: "ornitela",
+  };
+
+  const onInvalid = (errors: Record<string, any>) => {
+    const firstField = Object.keys(errors)[0];
+    if (!firstField) return;
+    const tab = FIELD_TAB_MAP[firstField] || "general";
+    setFormTab(tab);
+    setTimeout(() => form.setFocus(firstField as keyof StudyFormValues), 50);
+    const message = errors[firstField]?.message || "Revisa los campos del formulario";
+    toast({
+      title: "Formulario incompleto",
+      description: String(message),
+      variant: "destructive",
+    });
   };
 
   const normalUsers = allUsers?.filter((u) => u.role !== "superuser") || [];
@@ -335,8 +367,8 @@ export default function AdminStudies() {
             <DialogTitle>{editStudy ? "Editar estudio" : "Nuevo estudio"}</DialogTitle>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-4">
-              <Tabs defaultValue="general" className="w-full">
+            <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-4">
+              <Tabs value={formTab} onValueChange={setFormTab} className="w-full">
                 <TabsList className="w-full grid grid-cols-3" data-testid="tabs-study-form">
                   <TabsTrigger value="general" data-testid="tab-general">General</TabsTrigger>
                   <TabsTrigger value="movebank" data-testid="tab-movebank">Movebank</TabsTrigger>
