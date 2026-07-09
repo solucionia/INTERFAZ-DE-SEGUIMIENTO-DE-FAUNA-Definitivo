@@ -53,7 +53,12 @@ export function AnimalSearch({
       const current = byLocalId.get(key);
       if (!current || score(ind) > score(current)) byLocalId.set(key, ind);
     }
-    return Array.from(byLocalId.values());
+    // Orden alfabético estable por etiqueta ("Nombre (ID)"). Es el orden canónico
+    // que también usa la navegación "Anterior/Siguiente" de la vista de pantalla
+    // completa, para que ambos coincidan.
+    return Array.from(byLocalId.values()).sort((a, b) =>
+      formatAnimalLabel(a).localeCompare(formatAnimalLabel(b), "es", { sensitivity: "base", numeric: true })
+    );
   }, [individuals]);
 
   const filtered = useMemo(() => {

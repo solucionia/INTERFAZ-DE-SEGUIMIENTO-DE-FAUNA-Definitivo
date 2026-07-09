@@ -16,9 +16,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, ChevronLeft, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
-import { formatAnimalLabelById } from "@/lib/animal-label";
+import { formatAnimalLabel, formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
 import { AccelerometerChart } from "@/components/accelerometer-chart";
 import { computeDateRange, type QuickRange } from "@/components/quick-date-range";
@@ -438,6 +438,44 @@ export default function StudyFullscreen() {
   const mainAccAnimalId = useMemo(
     () => focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null),
     [focusAnimal, selectedAnimals]
+  );
+
+  // Orden estable de animales para navegar en cadena con "Anterior/Siguiente".
+  // Deduplicado por localIdentifier (mismo criterio que el buscador: un emisor
+  // puede aparecer en varios estudios) y ordenado alfabéticamente por su
+  // etiqueta ("Nombre (ID)") para que la revisión sea predecible.
+  const navAnimals = useMemo(() => {
+    const withId = (individuals || []).filter((i) => i.localIdentifier && i.localIdentifier.trim() !== "");
+    const score = (i: Individual) =>
+      (i.ornitelaName?.trim() ? 2 : 0) + (i.nickName?.trim() ? 1 : 0) + (i.taxonCanonicalName?.trim() ? 1 : 0);
+    const byLocalId = new Map<string, Individual>();
+    for (const ind of withId) {
+      const key = ind.localIdentifier!.trim();
+      const cur = byLocalId.get(key);
+      if (!cur || score(ind) > score(cur)) byLocalId.set(key, ind);
+    }
+    return Array.from(byLocalId.values())
+      .sort((a, b) => formatAnimalLabel(a).localeCompare(formatAnimalLabel(b), "es", { sensitivity: "base", numeric: true }))
+      .map((i) => i.localIdentifier!.trim());
+  }, [individuals]);
+
+  // Animal "principal" de referencia para la navegación: el enfocado o, si no
+  // hay foco, el primero de la selección.
+  const currentPrincipal = focusAnimal || selectedAnimals[0] || "";
+  const currentNavIndex = useMemo(() => navAnimals.indexOf(currentPrincipal), [navAnimals, currentPrincipal]);
+
+  // Cambia el animal principal a otro de la lista manteniendo el rango de
+  // fechas. No toca el 2º acelerómetro comparativo (compareAnimal).
+  const navigateAnimal = useCallback(
+    (dir: -1 | 1) => {
+      if (currentNavIndex === -1) return;
+      const ni = currentNavIndex + dir;
+      if (ni < 0 || ni >= navAnimals.length) return;
+      const target = navAnimals[ni];
+      setSelectedAnimals([target]);
+      setFocusAnimal("");
+    },
+    [currentNavIndex, navAnimals]
   );
 
   const findClosestGpsPoint = useCallback(
@@ -885,6 +923,48 @@ export default function StudyFullscreen() {
                   multiple
                   placeholder="Añadir o quitar animal..."
                 />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Navegar animal (principal)</Label>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs flex-1"
+                    onClick={() => navigateAnimal(-1)}
+                    disabled={currentNavIndex <= 0}
+                    data-testid="button-prev-animal"
+                    title="Cambiar al animal anterior de la lista"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs flex-1"
+                    onClick={() => navigateAnimal(1)}
+                    disabled={currentNavIndex < 0 || currentNavIndex >= navAnimals.length - 1}
+                    data-testid="button-next-animal"
+                    title="Cambiar al animal siguiente de la lista"
+                  >
+                    Siguiente
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                  </Button>
+                </div>
+                {currentNavIndex >= 0 ? (
+                  <p className="text-[10px] text-muted-foreground text-center" data-testid="text-nav-position">
+                    {currentNavIndex + 1} de {navAnimals.length}
+                  </p>
+                ) : navAnimals.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground text-center">
+                    No hay animales para navegar
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground text-center">
+                    Selecciona un solo animal para navegar en cadena
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Visualización</Label>
