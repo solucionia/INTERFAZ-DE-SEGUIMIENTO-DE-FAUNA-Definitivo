@@ -444,20 +444,33 @@ export default function StudyVisualization() {
   const lastAppliedAnimal = useRef<string | null>(null);
   useEffect(() => {
     if (!individuals || individuals.length === 0) return;
-    const animal = new URLSearchParams(search).get("animal");
+    const sp = new URLSearchParams(search);
+    const animal = sp.get("animal");
     if (!animal) return;
-    if (animal === lastAppliedAnimal.current) return;
+    // Clave de aplicación: incluye start/end para que abrir el mismo animal en
+    // otra fecha (p.ej. desde otro punto del detector) vuelva a aplicar el rango.
+    const urlStart = sp.get("start");
+    const urlEnd = sp.get("end");
+    const applyKey = `${animal}|${urlStart ?? ""}|${urlEnd ?? ""}`;
+    if (applyKey === lastAppliedAnimal.current) return;
     if (!individuals.some((i) => i.localIdentifier === animal)) return;
-    lastAppliedAnimal.current = animal;
-    const now = new Date();
-    const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    lastAppliedAnimal.current = applyKey;
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     setSelectedAnimals([animal]);
     setActiveAnimalFilter(animal);
-    setDateStart(fmt(start));
-    setDateEnd(fmt(now));
-    setActiveQuickRange("7d");
+    if (urlStart && urlEnd && dateRe.test(urlStart) && dateRe.test(urlEnd)) {
+      setDateStart(urlStart);
+      setDateEnd(urlEnd);
+      setActiveQuickRange(null);
+    } else {
+      const now = new Date();
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setDateStart(fmt(start));
+      setDateEnd(fmt(now));
+      setActiveQuickRange("7d");
+    }
     pendingAutoLoad.current = true;
   }, [individuals, search]);
 

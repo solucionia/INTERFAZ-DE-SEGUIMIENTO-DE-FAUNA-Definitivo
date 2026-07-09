@@ -232,7 +232,7 @@ export default function ImmobilityMonitor() {
     },
   });
 
-  const mapPoints: { lat: number; lng: number; color: string; label: string; individual: string; species: string; detail: string }[] = [];
+  const mapPoints: { lat: number; lng: number; color: string; label: string; individual: string; species: string; detail: string; timestamp: number | null }[] = [];
 
   if (result) {
     for (const a of result.immobilityAlerts) {
@@ -244,6 +244,7 @@ export default function ImmobilityMonitor() {
         individual: a.individual,
         species: a.species,
         detail: `${a.hoursImmobile}h inmóvil`,
+        timestamp: a.alertEnd ?? a.alertStart ?? null,
       });
     }
     for (const a of result.noTransmissionAlerts) {
@@ -256,6 +257,7 @@ export default function ImmobilityMonitor() {
           individual: a.individual,
           species: a.species,
           detail: a.hoursSinceLast ? `${Math.round(a.hoursSinceLast)}h sin datos` : "Sin datos GPS",
+          timestamp: a.lastTransmission,
         });
       }
     }
@@ -268,6 +270,7 @@ export default function ImmobilityMonitor() {
         individual: a.individual,
         species: a.species,
         detail: `${a.kmOutside} km fuera (radio ${a.dynamicRadiusKm} km)`,
+        timestamp: a.lastTimestamp ?? null,
       });
     }
     for (const a of result.activeAnimals) {
@@ -279,9 +282,24 @@ export default function ImmobilityMonitor() {
         individual: a.individual,
         species: a.species,
         detail: a.lastSpeed != null ? `${a.lastSpeed.toFixed(2)} m/s` : "Activo",
+        timestamp: a.lastTransmission ?? null,
       });
     }
   }
+
+  // Construye el enlace al visualizador de acelerómetro para un animal en la
+  // fecha de un punto, centrando el rango en ±12 h alrededor del timestamp.
+  const accelerometerLink = (individual: string, timestamp: number | null): string | null => {
+    if (!analyzedStudyId || !timestamp) return null;
+    const fmt = (ms: number) => {
+      const d = new Date(ms);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const start = fmt(timestamp - 12 * 60 * 60 * 1000);
+    const end = fmt(timestamp + 12 * 60 * 60 * 1000);
+    const params = new URLSearchParams({ animal: individual, start, end });
+    return `/study/${analyzedStudyId}/visualize?${params.toString()}`;
+  };
 
   const breadcrumbs = [
     { label: "Detector de mortalidad" },
@@ -541,14 +559,21 @@ export default function ImmobilityMonitor() {
                         }}
                       >
                         <Popup>
+                          {(() => { const accLink = accelerometerLink(p.individual, p.timestamp); return (
                           <div className="text-sm">
                             <p className="font-bold">{formatAnimalLabelById(p.individual, individualMap)}</p>
                             <p className="text-xs text-gray-500">{p.species}</p>
                             <p style={{ color: p.color, fontWeight: "bold" }}>{p.label}</p>
                             <p>{p.detail}</p>
                             <p className="text-xs">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</p>
-                            <a href={googleMapsLink(p.lat, p.lng)} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", textDecoration: "underline", fontSize: "12px" }}>Ver en Google Maps</a>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "2px" }}>
+                              <a href={googleMapsLink(p.lat, p.lng)} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", textDecoration: "underline", fontSize: "12px" }}>Ver en Google Maps</a>
+                              {accLink && (
+                                <a href={accLink} target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6", textDecoration: "underline", fontSize: "12px" }} data-testid={`link-accelerometer-${p.individual}`}>Ver acelerómetro</a>
+                              )}
+                            </div>
                           </div>
+                          ); })()}
                         </Popup>
                       </CircleMarker>
                     ))}
