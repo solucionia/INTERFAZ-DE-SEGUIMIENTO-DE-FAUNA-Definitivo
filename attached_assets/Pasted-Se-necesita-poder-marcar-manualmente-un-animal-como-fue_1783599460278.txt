@@ -1,0 +1,43 @@
+Se necesita poder marcar manualmente un animal como "fuera de línea" 
+(muerto, emisor perdido, o cualquier motivo por el que ya no deba 
+generar alertas), para casos como el de Alquézar: un animal muerto hace 
+meses que sigue disparando alertas de mortalidad/inmovilidad 
+repetidamente porque el sistema no tiene forma de saber que ya no está 
+activo.
+
+Funcionamiento esperado:
+
+1. Añadir un campo de estado en individuals (ej. isActive booleano, o 
+   un status con valores como "activo"/"inactivo", más una fecha 
+   opcional de cuándo se marcó y quién lo hizo — igual que se registró 
+   createdBy/createdAt en device_deployments).
+
+2. Añadir en la ficha/fila del animal (donde ya está el botón de 
+   transferencia de emisor de la Fase 1) un control para marcarlo como 
+   "fuera de línea", con confirmación antes de aplicar (es una acción 
+   con consecuencias, no debe ser un toggle accidental).
+
+3. Restringir esta acción a superusuario, igual que la transferencia de 
+   emisor.
+
+4. Una vez marcado como inactivo, el animal debe:
+   - Dejar de generar alertas nuevas en el detector de inmovilidad/
+     mortalidad y en el detector de eventos (sin transmisión, 
+     desviación de zona, etc.) — no tiene sentido seguir monitorizando 
+     algo que ya se sabe que no está activo.
+   - Seguir siendo visible en el histórico: sus datos GPS/ACC pasados, 
+     el visualizador, pantalla completa y los exports deben seguir 
+     funcionando exactamente igual que hoy, solo deja de generar 
+     alertas nuevas.
+   - Aparecer diferenciado en los listados de animales (ej. una 
+     etiqueta o filtro "inactivo"), en vez de desaparecer sin dejar 
+     rastro.
+
+5. Añadir la opción de reactivarlo (por si se marcó por error, o si el 
+   emisor vuelve a transmitir tiempo después) — mismo control, mismo 
+   nivel de permiso.
+
+6. Verificar con una prueba real: marca un animal de prueba como 
+   inactivo, confirma que no aparecen alertas nuevas para él en el 
+   detector correspondiente, y que su histórico sigue siendo consultable 
+   con normalidad. Limpia el estado de prueba después.
