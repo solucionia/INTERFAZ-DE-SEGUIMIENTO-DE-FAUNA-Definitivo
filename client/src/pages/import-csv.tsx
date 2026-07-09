@@ -46,6 +46,12 @@ type ImportResult = {
   isV2?: boolean;
 };
 
+type FileImportState = {
+  status: "pending" | "processing" | "done" | "error";
+  result?: ImportResult;
+  error?: string;
+};
+
 type ParsedPreview = {
   headers: string[];
   rows: string[][];
@@ -116,6 +122,8 @@ export default function ImportCsv() {
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [fileStates, setFileStates] = useState<FileImportState[]>([]);
+  const [batchDone, setBatchDone] = useState(false);
 
   const { data: studies } = useQuery<Study[]>({
     queryKey: ["/api/studies"],
@@ -197,6 +205,8 @@ export default function ImportCsv() {
       return merged;
     });
     setResult(null);
+    setFileStates([]);
+    setBatchDone(false);
   }, [toast, parsePreview, validateFile]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -207,6 +217,8 @@ export default function ImportCsv() {
   }, [handleFilesSelect]);
 
   const removeFile = useCallback((index: number) => {
+    setFileStates([]);
+    setBatchDone(false);
     setFiles((prev) => {
       const next = prev.filter((_, i) => i !== index);
       if (next.length === 0) {
@@ -221,60 +233,102 @@ export default function ImportCsv() {
     });
   }, [parsePreview]);
 
+  const importOneFile = async (file: File): Promise<ImportResult> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("dataType", dataType);
+    formData.append("format", format);
+
+    const res = await fetch(`/api/studies/${activeStudyId}/import-csv`, {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      let msg = "Error al importar";
+      try {
+        const err = await res.json();
+        msg = err.message || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+
+    return (await res.json()) as ImportResult;
+  };
+
+  const invalidateStudyQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "individuals"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "gps-counts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId] });
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        typeof query.queryKey[0] === "string" &&
+        (query.queryKey[0] as string).includes(`/api/studies/${activeStudyId}/last-positions`),
+    });
+  };
+
   const handleUpload = async () => {
-    if (files.length !== 1 || !activeStudyId) return;
-    const file = files[0];
+    if (files.length === 0 || !activeStudyId) return;
 
     setUploading(true);
-    setProgress(10);
     setResult(null);
+    setBatchDone(false);
+    setProgress(files.length === 1 ? 10 : 0);
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("dataType", dataType);
-      formData.append("format", format);
+    const states: FileImportState[] = files.map(() => ({ status: "pending" }));
+    setFileStates([...states]);
 
-      setProgress(30);
+    let anyImported = false;
 
-      const res = await fetch(`/api/studies/${activeStudyId}/import-csv`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-
-      setProgress(90);
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || "Error al importar");
+    for (let i = 0; i < files.length; i++) {
+      states[i] = { status: "processing" };
+      setFileStates([...states]);
+      try {
+        const data = await importOneFile(files[i]);
+        states[i] = { status: "done", result: data };
+        if (data.imported > 0 || (data.accImported ?? 0) > 0 || (data.individuals_created ?? 0) > 0) {
+          anyImported = true;
+        }
+        if (files.length === 1) {
+          setResult(data);
+          const accInfo = data.format === "ornitella" && data.accImported !== undefined
+            ? ` + ${data.accImported} acelerómetro`
+            : "";
+          toast({
+            title: "Importación completada",
+            description: `${data.imported} GPS importados${accInfo}, ${data.duplicates} duplicados ignorados`,
+          });
+        }
+      } catch (e: any) {
+        states[i] = { status: "error", error: e.message };
+        if (files.length === 1) {
+          toast({ title: "Error al importar", description: e.message, variant: "destructive" });
+        }
       }
-
-      const data: ImportResult = await res.json();
-      setResult(data);
-      setProgress(100);
-
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "individuals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId, "gps-counts"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/studies", activeStudyId] });
-      queryClient.invalidateQueries({
-        predicate: (query) =>
-          typeof query.queryKey[0] === "string" &&
-          (query.queryKey[0] as string).includes(`/api/studies/${activeStudyId}/last-positions`),
-      });
-
-      const accInfo = data.format === "ornitella" && data.accImported !== undefined
-        ? ` + ${data.accImported} acelerómetro`
-        : "";
-      toast({
-        title: "Importación completada",
-        description: `${data.imported} GPS importados${accInfo}, ${data.duplicates} duplicados ignorados`,
-      });
-    } catch (e: any) {
-      toast({ title: "Error al importar", description: e.message, variant: "destructive" });
-    } finally {
-      setUploading(false);
+      setFileStates([...states]);
+      setProgress(Math.round(((i + 1) / files.length) * 100));
     }
+
+    if (anyImported || files.length === 1) {
+      invalidateStudyQueries();
+    }
+
+    if (files.length > 1) {
+      setBatchDone(true);
+      const ok = states.filter((s) => s.status === "done").length;
+      const failed = states.filter((s) => s.status === "error").length;
+      const totalImported = states.reduce((acc, s) => acc + (s.result?.imported ?? 0), 0);
+      const totalAcc = states.reduce((acc, s) => acc + (s.result?.accImported ?? 0), 0);
+      const totalDup = states.reduce((acc, s) => acc + (s.result?.duplicates ?? 0), 0);
+      toast({
+        title: failed === 0 ? "Importación completada" : `Importación completada con ${failed} error${failed === 1 ? "" : "es"}`,
+        description: `${ok}/${files.length} archivos procesados — ${totalImported.toLocaleString()} GPS${totalAcc > 0 ? ` + ${totalAcc.toLocaleString()} ACC` : ""} importados, ${totalDup.toLocaleString()} duplicados`,
+        variant: failed > 0 ? "destructive" : undefined,
+      });
+    }
+
+    setUploading(false);
   };
 
   const clearFiles = () => {
@@ -282,6 +336,8 @@ export default function ImportCsv() {
     setPreview(null);
     setResult(null);
     setProgress(0);
+    setFileStates([]);
+    setBatchDone(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -427,36 +483,58 @@ export default function ImportCsv() {
                 onDrop={handleDrop}
                 data-testid="list-files"
               >
-                {files.map((f, i) => (
-                  <div key={`${f.name}-${f.size}`} className="flex items-center gap-3 p-3 rounded-md bg-muted/50 border" data-testid={`row-file-${i}`}>
-                    <FileText className="w-5 h-5 text-primary shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate" data-testid={`text-filename-${i}`}>{f.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {(f.size / 1024).toFixed(1)} KB
-                        {i === 0 && preview && ` — ${preview.totalRows.toLocaleString()} filas`}
-                        {i === 0 && preview && ` — separador: "${preview.separator === ";" ? ";" : preview.separator === "\t" ? "TAB" : ","}"`}
-                      </p>
+                {files.map((f, i) => {
+                  const st = fileStates[i];
+                  return (
+                    <div key={`${f.name}-${f.size}`} className="flex items-center gap-3 p-3 rounded-md bg-muted/50 border" data-testid={`row-file-${i}`}>
+                      {st?.status === "processing" ? (
+                        <Loader2 className="w-5 h-5 text-primary shrink-0 animate-spin" />
+                      ) : st?.status === "done" ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                      ) : st?.status === "error" ? (
+                        <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
+                      ) : (
+                        <FileText className="w-5 h-5 text-primary shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" data-testid={`text-filename-${i}`}>{f.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(f.size / 1024).toFixed(1)} KB
+                          {!st && i === 0 && preview && ` — ${preview.totalRows.toLocaleString()} filas`}
+                          {!st && i === 0 && preview && ` — separador: "${preview.separator === ";" ? ";" : preview.separator === "\t" ? "TAB" : ","}"`}
+                          {st?.status === "done" && st.result && ` — ${st.result.imported.toLocaleString()} importados${(st.result.accImported ?? 0) > 0 ? ` + ${st.result.accImported!.toLocaleString()} ACC` : ""}, ${st.result.duplicates.toLocaleString()} duplicados`}
+                        </p>
+                        {st?.status === "error" && (
+                          <p className="text-xs text-destructive" data-testid={`text-file-error-${i}`}>{st.error}</p>
+                        )}
+                      </div>
+                      {st && (
+                        <Badge
+                          variant={st.status === "error" ? "destructive" : "outline"}
+                          className="shrink-0"
+                          data-testid={`badge-file-status-${i}`}
+                        >
+                          {st.status === "pending" && "Pendiente"}
+                          {st.status === "processing" && "Procesando..."}
+                          {st.status === "done" && "Completado"}
+                          {st.status === "error" && "Error"}
+                        </Badge>
+                      )}
+                      <Button size="icon" variant="ghost" onClick={() => removeFile(i)} disabled={uploading} data-testid={`button-remove-file-${i}`}>
+                        <X className="w-4 h-4" />
+                      </Button>
                     </div>
-                    <Button size="icon" variant="ghost" onClick={() => removeFile(i)} data-testid={`button-remove-file-${i}`}>
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Button type="button" size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} data-testid="button-add-files">
+                  <Button type="button" size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading} data-testid="button-add-files">
                     <Plus className="w-4 h-4 mr-1" />
                     Añadir más archivos
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={clearFiles} data-testid="button-clear-files">
+                  <Button type="button" size="sm" variant="ghost" onClick={clearFiles} disabled={uploading} data-testid="button-clear-files">
                     Quitar todos
                   </Button>
                 </div>
-                {files.length > 1 && (
-                  <p className="text-xs text-muted-foreground" data-testid="text-multi-hint">
-                    La vista previa corresponde al primer archivo. La importación de varios archivos a la vez estará disponible en el siguiente paso; de momento, deja solo un archivo en la lista para importar.
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -547,13 +625,18 @@ export default function ImportCsv() {
               </p>
               <Button
                 onClick={handleUpload}
-                disabled={uploading || !activeStudyId || files.length !== 1}
+                disabled={uploading || !activeStudyId || files.length === 0}
                 data-testid="button-import"
               >
                 {uploading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Importando...
+                  </>
+                ) : files.length > 1 ? (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Importar {files.length} archivos
                   </>
                 ) : (
                   <>
@@ -696,6 +779,93 @@ export default function ImportCsv() {
               <Button variant="outline" onClick={clearFiles} data-testid="button-import-another">
                 <Upload className="w-4 h-4 mr-2" />
                 Importar otro archivo
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {batchDone && files.length > 1 && (
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              {fileStates.some((s) => s.status === "error") ? (
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+              )}
+              <h3 className="text-base font-semibold text-foreground" data-testid="text-batch-summary-title">
+                Resumen de importación ({fileStates.filter((s) => s.status === "done").length}/{files.length} archivos completados)
+              </h3>
+            </div>
+
+            <div className="overflow-x-auto border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Archivo</TableHead>
+                    <TableHead className="text-xs text-right">Importados</TableHead>
+                    <TableHead className="text-xs text-right">ACC</TableHead>
+                    <TableHead className="text-xs text-right">Duplicados</TableHead>
+                    <TableHead className="text-xs">Estado</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {files.map((f, i) => {
+                    const st = fileStates[i];
+                    return (
+                      <TableRow key={`${f.name}-${f.size}`} data-testid={`row-summary-${i}`}>
+                        <TableCell className="text-xs max-w-[240px] truncate">{f.name}</TableCell>
+                        <TableCell className="text-xs text-right">{st?.result ? st.result.imported.toLocaleString() : "—"}</TableCell>
+                        <TableCell className="text-xs text-right">{st?.result?.accImported !== undefined ? st.result.accImported.toLocaleString() : "—"}</TableCell>
+                        <TableCell className="text-xs text-right">{st?.result ? st.result.duplicates.toLocaleString() : "—"}</TableCell>
+                        <TableCell className="text-xs">
+                          {st?.status === "done" ? (
+                            <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">Completado</Badge>
+                          ) : st?.status === "error" ? (
+                            <span className="text-destructive" data-testid={`text-summary-error-${i}`}>{st.error || "Error"}</span>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow className="font-medium bg-muted/30" data-testid="row-summary-total">
+                    <TableCell className="text-xs">Total</TableCell>
+                    <TableCell className="text-xs text-right">
+                      {fileStates.reduce((a, s) => a + (s.result?.imported ?? 0), 0).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-xs text-right">
+                      {fileStates.reduce((a, s) => a + (s.result?.accImported ?? 0), 0).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-xs text-right">
+                      {fileStates.reduce((a, s) => a + (s.result?.duplicates ?? 0), 0).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {fileStates.filter((s) => s.status === "error").length > 0
+                        ? `${fileStates.filter((s) => s.status === "error").length} con error`
+                        : "Todo correcto"}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              {activeStudyId && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/study/${activeStudyId}`)}
+                  data-testid="button-view-study-batch"
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Ver estudio
+                </Button>
+              )}
+              <Button variant="outline" onClick={clearFiles} data-testid="button-import-more">
+                <Upload className="w-4 h-4 mr-2" />
+                Importar más archivos
               </Button>
             </div>
           </CardContent>
