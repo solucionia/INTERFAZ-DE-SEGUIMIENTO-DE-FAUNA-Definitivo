@@ -24,7 +24,7 @@ import {
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info, MapPin } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Eye, Info, MapPin, Plus } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
 type ImportFormat = "auto" | "movebank" | "baselunar" | "ornitella";
@@ -110,7 +110,7 @@ export default function ImportCsv() {
     setFormatRaw(f);
     if (f === "baselunar" || f === "ornitella") setDataType("gps");
   }, []);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<ParsedPreview | null>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -159,29 +159,71 @@ export default function ImportCsv() {
     reader.readAsText(f.slice(0, 1024 * 200));
   }, [toast]);
 
-  const handleFileSelect = useCallback((f: File) => {
-    if (f.size > 200 * 1024 * 1024) {
-      toast({ title: "Archivo demasiado grande", description: "El tamano maximo permitido es 200MB", variant: "destructive" });
-      return;
+  const validateFile = useCallback((f: File): string | null => {
+    if (f.size > 200 * 1024 * 1024) return "supera el tamaño máximo de 200MB";
+    const name = f.name.toLowerCase();
+    if (!name.endsWith(".csv") && !name.endsWith(".tsv") && !name.endsWith(".txt")) {
+      return "solo se aceptan archivos CSV, TSV o TXT";
     }
-    if (!f.name.toLowerCase().endsWith(".csv") && !f.name.toLowerCase().endsWith(".tsv") && !f.name.toLowerCase().endsWith(".txt")) {
-      toast({ title: "Formato invalido", description: "Solo se aceptan archivos CSV, TSV o TXT", variant: "destructive" });
-      return;
+    return null;
+  }, []);
+
+  const handleFilesSelect = useCallback((incoming: File[]) => {
+    const rejected: string[] = [];
+    const accepted: File[] = [];
+    for (const f of incoming) {
+      const err = validateFile(f);
+      if (err) {
+        rejected.push(`${f.name}: ${err}`);
+      } else {
+        accepted.push(f);
+      }
     }
-    setFile(f);
+    if (rejected.length > 0) {
+      toast({
+        title: rejected.length === 1 ? "Archivo rechazado" : "Archivos rechazados",
+        description: rejected.join(" — "),
+        variant: "destructive",
+      });
+    }
+    if (accepted.length === 0) return;
+    setFiles((prev) => {
+      const merged = [...prev];
+      for (const f of accepted) {
+        const dup = merged.some((m) => m.name === f.name && m.size === f.size);
+        if (!dup) merged.push(f);
+      }
+      if (merged.length > 0) parsePreview(merged[0]);
+      return merged;
+    });
     setResult(null);
-    parsePreview(f);
-  }, [toast, parsePreview]);
+  }, [toast, parsePreview, validateFile]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) handleFileSelect(f);
-  }, [handleFileSelect]);
+    const dropped = Array.from(e.dataTransfer.files);
+    if (dropped.length > 0) handleFilesSelect(dropped);
+  }, [handleFilesSelect]);
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) {
+        setPreview(null);
+        setResult(null);
+        setProgress(0);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      } else if (index === 0) {
+        parsePreview(next[0]);
+      }
+      return next;
+    });
+  }, [parsePreview]);
 
   const handleUpload = async () => {
-    if (!file || !activeStudyId) return;
+    if (files.length !== 1 || !activeStudyId) return;
+    const file = files[0];
 
     setUploading(true);
     setProgress(10);
@@ -235,8 +277,8 @@ export default function ImportCsv() {
     }
   };
 
-  const clearFile = () => {
-    setFile(null);
+  const clearFiles = () => {
+    setFiles([]);
     setPreview(null);
     setResult(null);
     setProgress(0);
@@ -342,8 +384,23 @@ export default function ImportCsv() {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-foreground mb-1.5 block">Archivo CSV</label>
-            {!file ? (
+            <label className="text-sm font-medium text-foreground mb-1.5 block">
+              {files.length > 1 ? `Archivos CSV (${files.length})` : "Archivo CSV"}
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.tsv,.txt"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const selected = Array.from(e.target.files ?? []);
+                if (selected.length > 0) handleFilesSelect(selected);
+                e.target.value = "";
+              }}
+              data-testid="input-file"
+            />
+            {files.length === 0 ? (
               <div
                 className={`border-2 border-dashed rounded-md p-8 text-center cursor-pointer transition-colors ${
                   dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
@@ -356,37 +413,50 @@ export default function ImportCsv() {
               >
                 <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground mb-1">
-                  Arrastra un archivo CSV aqui o haz clic para seleccionar
+                  Arrastra uno o varios archivos CSV aqui o haz clic para seleccionar
                 </p>
                 <p className="text-xs text-muted-foreground/60">
-                  Maximo 200MB — Separador coma, punto y coma o tabulador
+                  Maximo 200MB por archivo — Separador coma, punto y coma o tabulador
                 </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,.tsv,.txt"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleFileSelect(f);
-                  }}
-                  data-testid="input-file"
-                />
               </div>
             ) : (
-              <div className="flex items-center gap-3 p-3 rounded-md bg-muted/50 border">
-                <FileText className="w-5 h-5 text-primary shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate" data-testid="text-filename">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {(file.size / 1024).toFixed(1)} KB
-                    {preview && ` — ${preview.totalRows.toLocaleString()} filas`}
-                    {preview && ` — separador: "${preview.separator === ";" ? ";" : preview.separator === "\t" ? "TAB" : ","}"`}
-                  </p>
+              <div
+                className={`space-y-2 rounded-md ${dragOver ? "ring-2 ring-primary/50" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                data-testid="list-files"
+              >
+                {files.map((f, i) => (
+                  <div key={`${f.name}-${f.size}`} className="flex items-center gap-3 p-3 rounded-md bg-muted/50 border" data-testid={`row-file-${i}`}>
+                    <FileText className="w-5 h-5 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate" data-testid={`text-filename-${i}`}>{f.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(f.size / 1024).toFixed(1)} KB
+                        {i === 0 && preview && ` — ${preview.totalRows.toLocaleString()} filas`}
+                        {i === 0 && preview && ` — separador: "${preview.separator === ";" ? ";" : preview.separator === "\t" ? "TAB" : ","}"`}
+                      </p>
+                    </div>
+                    <Button size="icon" variant="ghost" onClick={() => removeFile(i)} data-testid={`button-remove-file-${i}`}>
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button type="button" size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} data-testid="button-add-files">
+                    <Plus className="w-4 h-4 mr-1" />
+                    Añadir más archivos
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={clearFiles} data-testid="button-clear-files">
+                    Quitar todos
+                  </Button>
                 </div>
-                <Button size="icon" variant="ghost" onClick={clearFile} data-testid="button-clear-file">
-                  <X className="w-4 h-4" />
-                </Button>
+                {files.length > 1 && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-multi-hint">
+                    La vista previa corresponde al primer archivo. La importación de varios archivos a la vez estará disponible en el siguiente paso; de momento, deja solo un archivo en la lista para importar.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -477,7 +547,7 @@ export default function ImportCsv() {
               </p>
               <Button
                 onClick={handleUpload}
-                disabled={uploading || !activeStudyId}
+                disabled={uploading || !activeStudyId || files.length !== 1}
                 data-testid="button-import"
               >
                 {uploading ? (
@@ -623,7 +693,7 @@ export default function ImportCsv() {
                   </Button>
                 </>
               )}
-              <Button variant="outline" onClick={clearFile} data-testid="button-import-another">
+              <Button variant="outline" onClick={clearFiles} data-testid="button-import-another">
                 <Upload className="w-4 h-4 mr-2" />
                 Importar otro archivo
               </Button>
