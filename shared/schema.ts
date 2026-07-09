@@ -92,6 +92,7 @@ export const individuals = pgTable("individuals", {
   synced: boolean("synced").notNull().default(true),
   projectId: integer("project_id").references(() => projects.id),
   historyNumber: text("history_number"),
+  isActive: boolean("is_active").notNull().default(true),
 }, (table) => [
   uniqueIndex("individuals_study_movebank_unique").on(table.studyId, table.movebankId),
 ]);

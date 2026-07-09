@@ -624,7 +624,13 @@ export async function analyzeImmobility(
   // Filtrar animales sin historial: si nunca han transmitido (no hay rango GPS en BD), excluir.
   const filteredIndividuals: { localIdentifier: string; movebankId: number }[] = [];
   let excludedNoHistory = 0;
+  let excludedInactive = 0;
   for (const animal of activeIndividuals) {
+    // Animales marcados manualmente como inactivos: no generan alertas nuevas.
+    if (animal.isActive === false) {
+      excludedInactive++;
+      continue;
+    }
     // "Ha transmitido alguna vez" recortado a la ventana del titular actual: un
     // emisor recién transferido sin puntos propios NO hereda el histórico del
     // animal anterior. Sin filtrar por HDOP (cualquier fix cuenta como transmisión).
@@ -638,6 +644,9 @@ export async function analyzeImmobility(
 
   if (excludedNoHistory > 0) {
     log(`Immobility: Excluidos ${excludedNoHistory} animales sin historial GPS (lastTransmission=NULL)`, "analysis");
+  }
+  if (excludedInactive > 0) {
+    log(`Immobility: Excluidos ${excludedInactive} animales marcados como inactivos`, "analysis");
   }
 
   const allInds = await storage.getIndividuals(studyId);

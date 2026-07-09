@@ -1753,6 +1753,21 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/individuals/:id/active-status", requireSuperuser, async (req, res) => {
+    try {
+      const { isActive } = req.body;
+      if (typeof isActive !== "boolean") {
+        return res.status(400).json({ message: "isActive (boolean) es requerido" });
+      }
+      const updated = await storage.setIndividualActiveStatus(req.params.id as string, isActive);
+      if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
+      log(`Animal ${updated.localIdentifier ?? updated.id} marcado como ${isActive ? "activo" : "inactivo"} por ${(req.user as any)?.email}`, "events");
+      return res.json(updated);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.patch("/api/deployments/:id", requireSuperuser, async (req, res) => {
     try {
       const { deployOff } = req.body;
@@ -2240,10 +2255,18 @@ export async function registerRoutes(
       const tsStart = parseInt(timestamp_start as string, 10);
       const tsEnd = parseInt(timestamp_end as string, 10);
 
+      // Animales marcados como inactivos no generan alertas nuevas.
+      const studyInds = await storage.getIndividuals(study.id);
+      const inactiveIds = new Set(studyInds.filter((i) => i.isActive === false && i.localIdentifier).map((i) => i.localIdentifier!));
+
       let totalEvents = 0;
       let emailsSent = 0;
 
       for (const animalId of ids) {
+        if (inactiveIds.has(animalId)) {
+          log(`Detección omitida para ${animalId}: animal inactivo`, "events");
+          continue;
+        }
         try {
           const cachedGps = await clippedGpsFor(study.id, animalId, tsStart, tsEnd);
           const cachedAcc = await clippedAccFor(study.id, animalId, tsStart, tsEnd);

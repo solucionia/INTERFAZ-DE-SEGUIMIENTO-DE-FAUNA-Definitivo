@@ -49,6 +49,7 @@ export interface IStorage {
   getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
   updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage" | "projectId" | "historyNumber">>): Promise<Individual | undefined>;
+  setIndividualActiveStatus(id: string, isActive: boolean): Promise<Individual | undefined>;
   getDeployments(studyId: string): Promise<Deployment[]>;
   upsertDeployments(studyId: string, data: Omit<Deployment, "id">[]): Promise<void>;
   createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment>;
@@ -99,7 +100,7 @@ export interface IStorage {
   deleteEmissionAlert(id: string): Promise<void>;
   updateEmissionAlertLastSent(id: string): Promise<void>;
 
-  getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]>;
+  getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number; isActive: boolean }[] }[]>;
 
   createCronLog(taskType: string, status: string, details?: string): Promise<void>;
   getLastCronRunAt(taskType: string): Promise<Date | null>;
@@ -416,6 +417,11 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async setIndividualActiveStatus(id: string, isActive: boolean): Promise<Individual | undefined> {
+    const [updated] = await db.update(individuals).set({ isActive }).where(eq(individuals.id, id)).returning();
+    return updated;
+  }
+
   async createDeploymentForIndividual(data: { studyId: string; movebankId: number; individualId: number; deployOn: string; deployOff: string | null }): Promise<Deployment> {
     const [dep] = await db.insert(deployments).values({
       studyId: data.studyId,
@@ -702,9 +708,9 @@ export class DatabaseStorage implements IStorage {
     await db.update(emissionAlerts).set({ lastSentAt: new Date() }).where(eq(emissionAlerts.id, id));
   }
 
-  async getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[]> {
+  async getActiveStudiesWithDeployments(): Promise<{ study: Study; activeIndividuals: { localIdentifier: string; movebankId: number; isActive: boolean }[] }[]> {
     const allStudies = await db.select().from(studies).where(eq(studies.active, true));
-    const results: { study: Study; activeIndividuals: { localIdentifier: string; movebankId: number }[] }[] = [];
+    const results: { study: Study; activeIndividuals: { localIdentifier: string; movebankId: number; isActive: boolean }[] }[] = [];
 
     for (const study of allStudies) {
       const deps = await db.select().from(deployments).where(eq(deployments.studyId, study.id));
@@ -714,7 +720,7 @@ export class DatabaseStorage implements IStorage {
       const inds = await db.select().from(individuals).where(eq(individuals.studyId, study.id));
       const activeInds = inds
         .filter((ind) => activeIndividualIds.has(ind.movebankId) && ind.localIdentifier)
-        .map((ind) => ({ localIdentifier: ind.localIdentifier!, movebankId: ind.movebankId }));
+        .map((ind) => ({ localIdentifier: ind.localIdentifier!, movebankId: ind.movebankId, isActive: ind.isActive !== false }));
 
       if (activeInds.length > 0) {
         results.push({ study, activeIndividuals: activeInds });

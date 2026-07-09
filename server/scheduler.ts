@@ -241,7 +241,7 @@ async function runEventDetection() {
             await storage.recordFetchedRange(study.id, animal.localIdentifier, "acc", accBackfill.fromTs, accBackfill.toTs);
           }
 
-          if (accSamples.length > 0) {
+          if (accSamples.length > 0 && animal.isActive !== false) {
             const detected = detectEvents(accSamples, gpsSamples, thresholds, study.id, animal.localIdentifier, { ornitelaOnly: study.ornitelaEnabled === true });
 
             const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -393,6 +393,7 @@ async function runEmissionCheck() {
         }
 
         for (const animal of activeIndividuals) {
+          if (animal.isActive === false) continue;
           try {
             const recentWindow = now - cutoffMs * 2;
             const gpsEvents = await fetchMovebankEvents(
