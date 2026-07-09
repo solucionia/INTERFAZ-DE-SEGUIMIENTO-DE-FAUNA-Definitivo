@@ -177,6 +177,7 @@ export default function ImportCsv() {
   }, []);
 
   const handleFilesSelect = useCallback((incoming: File[]) => {
+    if (uploading) return;
     const rejected: string[] = [];
     const accepted: File[] = [];
     for (const f of incoming) {
@@ -207,14 +208,15 @@ export default function ImportCsv() {
     setResult(null);
     setFileStates([]);
     setBatchDone(false);
-  }, [toast, parsePreview, validateFile]);
+  }, [toast, parsePreview, validateFile, uploading]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    if (uploading) return;
     const dropped = Array.from(e.dataTransfer.files);
     if (dropped.length > 0) handleFilesSelect(dropped);
-  }, [handleFilesSelect]);
+  }, [handleFilesSelect, uploading]);
 
   const removeFile = useCallback((index: number) => {
     setFileStates([]);
