@@ -3,6 +3,39 @@ import type { CachedGpsEvent, CachedAccEvent } from "@shared/schema";
 import { HDOP_QUALITY_THRESHOLD } from "@shared/schema";
 import { log } from "./index";
 import * as turf from "@turf/turf";
+import { buildDeviceWindows, clipWindows } from "./deploymentWindows";
+
+// Clip a current holder's cached data to its deployment window(s), so an emitter
+// reassigned between animals never mixes another animal's data into this one.
+async function clippedGps(studyId: string, localIdentifier: string, start: number, end: number): Promise<CachedGpsEvent[]> {
+  const ind = await storage.getIndividualByLocalIdentifier(studyId, localIdentifier);
+  const deps = ind ? await storage.getDeviceDeploymentsForIndividual(ind.id) : [];
+  const windows = clipWindows(buildDeviceWindows(deps, localIdentifier), start, end);
+  return storage.getCachedGpsEventsForWindows(studyId, windows);
+}
+
+async function clippedAcc(studyId: string, localIdentifier: string, start: number, end: number): Promise<CachedAccEvent[]> {
+  const ind = await storage.getIndividualByLocalIdentifier(studyId, localIdentifier);
+  const deps = ind ? await storage.getDeviceDeploymentsForIndividual(ind.id) : [];
+  const windows = clipWindows(buildDeviceWindows(deps, localIdentifier), start, end);
+  return storage.getCachedAccEventsForWindows(studyId, windows);
+}
+
+// Latest cached GPS event of the CURRENT holder within its deployment window(s),
+// so a device reassigned between animals never attributes the previous holder's
+// last transmission to the new one. `qualityOnly` mirrors getLatestCachedGpsEvent
+// (HDOP-filtered) for "última posición válida"; pass false to detect "ha transmitido".
+async function latestClippedGps(
+  studyId: string,
+  localIdentifier: string,
+  now: number,
+  opts?: { qualityOnly?: boolean },
+): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined> {
+  const ind = await storage.getIndividualByLocalIdentifier(studyId, localIdentifier);
+  const deps = ind ? await storage.getDeviceDeploymentsForIndividual(ind.id) : [];
+  const windows = clipWindows(buildDeviceWindows(deps, localIdentifier), 0, now);
+  return storage.getLatestCachedGpsEventForWindows(studyId, windows, opts);
+}
 
 function filterHighQualityGps<T extends { hdop?: number | null }>(events: T[]): T[] {
   return events.filter((e) => e.hdop == null || e.hdop <= HDOP_QUALITY_THRESHOLD);
@@ -592,8 +625,11 @@ export async function analyzeImmobility(
   const filteredIndividuals: { localIdentifier: string; movebankId: number }[] = [];
   let excludedNoHistory = 0;
   for (const animal of activeIndividuals) {
-    const range = await storage.getCachedTimestampRange(studyId, animal.localIdentifier, "gps");
-    if (!range || !Number.isFinite(range.max) || range.max <= 0) {
+    // "Ha transmitido alguna vez" recortado a la ventana del titular actual: un
+    // emisor recién transferido sin puntos propios NO hereda el histórico del
+    // animal anterior. Sin filtrar por HDOP (cualquier fix cuenta como transmisión).
+    const last = await latestClippedGps(studyId, animal.localIdentifier, now, { qualityOnly: false });
+    if (!last || !Number.isFinite(last.timestamp) || last.timestamp <= 0) {
       excludedNoHistory++;
       continue;
     }
@@ -616,12 +652,12 @@ export async function analyzeImmobility(
   const gpsByAnimal = new Map<string, CachedGpsEvent[]>();
   const accByAnimal = new Map<string, CachedAccEvent[]>();
   for (const animal of filteredIndividuals) {
-    const rawEvents = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, startTime, now);
+    const rawEvents = await clippedGps(studyId, animal.localIdentifier, startTime, now);
     // Excluir GPS de baja calidad (HDOP > 5) del análisis de inmovilidad/mortalidad.
     const events = filterHighQualityGps(rawEvents);
     allGpsEvents.push(...events);
     gpsByAnimal.set(animal.localIdentifier, events);
-    const accEvents = await storage.getCachedAccEvents(studyId, animal.localIdentifier, startTime, now);
+    const accEvents = await clippedAcc(studyId, animal.localIdentifier, startTime, now);
     accByAnimal.set(animal.localIdentifier, accEvents);
   }
 
@@ -673,7 +709,7 @@ export async function analyzeImmobility(
   const ornitelaOnly = study.ornitelaEnabled === true;
 
   for (const animal of filteredIndividuals) {
-    const lastEvt = await storage.getLatestCachedGpsEvent(studyId, animal.localIdentifier);
+    const lastEvt = await latestClippedGps(studyId, animal.localIdentifier, now);
     if (!lastEvt) {
       // Defensivo (no debería ocurrir tras filtro previo): saltar.
       continue;
@@ -880,7 +916,7 @@ export async function analyzeImmobility(
 
     for (const animal of filteredIndividuals) {
       try {
-        const histPtsRaw = await storage.getCachedGpsEvents(studyId, animal.localIdentifier, zoneStart, now);
+        const histPtsRaw = await clippedGps(studyId, animal.localIdentifier, zoneStart, now);
         // Excluir GPS de baja calidad (HDOP > 5) del cálculo del radio dinámico y "última posición".
         const histPts = filterHighQualityGps(histPtsRaw);
         if (histPts.length < 2) continue;
@@ -909,7 +945,7 @@ export async function analyzeImmobility(
 
         const kmOutside = Math.round((lastDistKm - dynamicRadiusKm) * 100) / 100;
 
-        const accEvts = await storage.getCachedAccEvents(studyId, animal.localIdentifier, accStart, now);
+        const accEvts = await clippedAcc(studyId, animal.localIdentifier, accStart, now);
         let accActivity: number | null = null;
         if (accEvts.length > 0) {
           const sum = accEvts.reduce((s, e) => s + Math.abs(e.yAcceleration), 0);

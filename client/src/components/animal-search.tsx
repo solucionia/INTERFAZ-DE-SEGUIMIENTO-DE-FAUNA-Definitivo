@@ -20,6 +20,10 @@ export interface AnimalSearchProps {
   placeholder?: string;
   activeIds?: Set<number | string>;
   className?: string;
+  // Token de datos por animal. Por defecto es el localIdentifier (emisor actual);
+  // las páginas que muestran animales transferidos (sin localIdentifier) pueden
+  // devolver su id para que sigan siendo seleccionables. Devolver null los excluye.
+  getKey?: (ind: Individual) => string | null;
 }
 
 export function AnimalSearch({
@@ -30,17 +34,25 @@ export function AnimalSearch({
   placeholder = "Buscar animal...",
   activeIds,
   className = "",
+  getKey,
 }: AnimalSearchProps) {
+  const keyOf = useCallback(
+    (ind: Individual): string | null => {
+      if (getKey) return getKey(ind);
+      return ind.localIdentifier && ind.localIdentifier.trim() !== ""
+        ? ind.localIdentifier.trim()
+        : null;
+    },
+    [getKey]
+  );
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selectableAnimals = useMemo(() => {
-    const withId = individuals.filter(
-      (i) => i.localIdentifier && i.localIdentifier.trim() !== ""
-    );
-    // Dedupe por localIdentifier: el mismo emisor puede aparecer en varios
+    const withId = individuals.filter((i) => keyOf(i) != null);
+    // Dedupe por token: el mismo emisor puede aparecer en varios
     // estudios (p.ej. un stub sin metadatos + el registro real importado).
     // Nos quedamos con el registro más informativo para no mostrarlo dos veces.
     const score = (i: Individual) =>
@@ -49,7 +61,7 @@ export function AnimalSearch({
       (i.taxonCanonicalName?.trim() ? 1 : 0);
     const byLocalId = new Map<string, Individual>();
     for (const ind of withId) {
-      const key = ind.localIdentifier!.trim();
+      const key = keyOf(ind)!;
       const current = byLocalId.get(key);
       if (!current || score(ind) > score(current)) byLocalId.set(key, ind);
     }
@@ -59,7 +71,7 @@ export function AnimalSearch({
     return Array.from(byLocalId.values()).sort((a, b) =>
       formatAnimalLabel(a).localeCompare(formatAnimalLabel(b), "es", { sensitivity: "base", numeric: true })
     );
-  }, [individuals]);
+  }, [individuals, keyOf]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return selectableAnimals;
@@ -168,7 +180,7 @@ export function AnimalSearch({
             ) : (
               <div className="p-1">
                 {filtered.slice(0, 100).map((ind) => {
-                  const localId = ind.localIdentifier!;
+                  const localId = keyOf(ind)!;
                   const isSelected = selected.includes(localId);
                   const active = isActive(ind);
                   return (
@@ -230,7 +242,7 @@ export function AnimalSearch({
               <div className="flex gap-1">
                 <button
                   type="button"
-                  onClick={() => onChange(selectableAnimals.map((i) => i.localIdentifier!))}
+                  onClick={() => onChange(selectableAnimals.map((i) => keyOf(i)!))}
                   className="text-xs px-2 py-1 rounded hover-elevate text-foreground"
                   data-testid="button-select-all-animals"
                 >
@@ -253,7 +265,7 @@ export function AnimalSearch({
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5" data-testid="container-selected-animals">
           {selected.map((localId) => {
-            const ind = selectableAnimals.find((i) => i.localIdentifier === localId);
+            const ind = selectableAnimals.find((i) => keyOf(i) === localId);
             return (
             <Badge
               key={localId}

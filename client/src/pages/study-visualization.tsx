@@ -276,19 +276,42 @@ export default function StudyVisualization() {
     return new Set(individuals.map(ind => ind.projectId).filter((id): id is number => id != null));
   }, [individuals]);
 
+  const { data: deviceDeployments } = useQuery<{ individualId: string }[]>({
+    queryKey: ["/api/studies", studyId, "device-deployments"],
+    enabled: !!studyId,
+  });
+
+  // Animales que ya no portan el emisor (localIdentifier=NULL) pero tienen
+  // histórico de deployments → seleccionables por individualId para ver su periodo.
+  const historicalIndividualIds = useMemo(() => {
+    return new Set((deviceDeployments || []).map((d) => d.individualId));
+  }, [deviceDeployments]);
+
+  // Token de datos: emisor actual (localIdentifier) o, si fue transferido, el id del animal.
+  const tokenFor = (ind: Individual): string =>
+    ind.localIdentifier && ind.localIdentifier.trim() !== "" ? ind.localIdentifier : ind.id;
+
   const selectableAnimals = useMemo(() => {
-    const base = (individuals || []).filter((i) => i.localIdentifier && i.localIdentifier.trim() !== "");
+    const base = (individuals || []).filter(
+      (i) =>
+        (i.localIdentifier && i.localIdentifier.trim() !== "") ||
+        historicalIndividualIds.has(i.id)
+    );
     if (projectFilterId === "all") return base;
     return base.filter(ind => ind.projectId === Number(projectFilterId));
-  }, [individuals, projectFilterId]);
+  }, [individuals, projectFilterId, historicalIndividualIds]);
 
   const individualByLocalId = useMemo(() => {
     const map = new Map<string, Individual>();
     for (const ind of individuals || []) {
-      if (ind.localIdentifier) map.set(ind.localIdentifier, ind);
+      if (ind.localIdentifier && ind.localIdentifier.trim() !== "") {
+        map.set(ind.localIdentifier, ind);
+      } else if (historicalIndividualIds.has(ind.id)) {
+        map.set(ind.id, ind);
+      }
     }
     return map;
-  }, [individuals]);
+  }, [individuals, historicalIndividualIds]);
 
   const toggleAnimal = (localId: string) => {
     setSelectedAnimals((prev) =>
@@ -296,7 +319,7 @@ export default function StudyVisualization() {
     );
   };
 
-  const selectAll = () => setSelectedAnimals(selectableAnimals.map((i) => i.localIdentifier!));
+  const selectAll = () => setSelectedAnimals(selectableAnimals.map((i) => tokenFor(i)));
   const deselectAll = () => setSelectedAnimals([]);
 
   const detectMutation = useMutation({
@@ -453,7 +476,7 @@ export default function StudyVisualization() {
     const urlEnd = sp.get("end");
     const applyKey = `${animal}|${urlStart ?? ""}|${urlEnd ?? ""}`;
     if (applyKey === lastAppliedAnimal.current) return;
-    if (!individuals.some((i) => i.localIdentifier === animal)) return;
+    if (!individuals.some((i) => i.localIdentifier === animal || i.id === animal)) return;
     lastAppliedAnimal.current = applyKey;
     const fmt = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -1183,6 +1206,7 @@ export default function StudyVisualization() {
               selected={selectedAnimals}
               onChange={setSelectedAnimals}
               multiple
+              getKey={tokenFor}
               placeholder="Buscar animal por nombre, apodo o especie..."
             />
           ) : (

@@ -9,4 +9,5 @@
 - [Ornitela historical backfill](ornitela-historical-backfill.md) — panel keeps long history but sync only pulls a rolling window; backfill via script+workflow, dense devices hit Node's ~512MB string limit → window-split.
 - [drizzle-kit push interactive](drizzle-push-interactive.md) — push prompts can't be answered from the agent shell + a live-table truncate prompt; add new tables via matching raw SQL DDL instead.
 - [WildTrack "import limit" = display window](wildtrack-date-range-window.md) — "old data won't import"/"1-year limit" is the quick-range window, not the import path; widen to 3a/Todo before touching parser/storage.
+- [Device-transfer window clipping](device-transfer-window-clipping.md) — reassigned emitters: every per-animal GPS/ACC read (incl. "latest" & "has-history" prefilters) must clip by device_deployments windows, not query by device.
 - [hover-elevate specificity trap](hover-elevate-specificity-trap.md) — `hover-elevate` (:not selector, 0,2,0) overrides same-element `absolute`/`z-[N]` to position:relative+z-0; positioning/z-index must go on a wrapper.

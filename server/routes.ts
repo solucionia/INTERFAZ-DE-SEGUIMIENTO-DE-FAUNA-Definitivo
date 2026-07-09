@@ -16,6 +16,7 @@ import { decrypt, encrypt } from "./encryption";
 import { log } from "./index";
 import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
+import { buildDeviceWindows, clipWindows, type DataWindow } from "./deploymentWindows";
 import { ornitelaSync, OrnitelaSyncError, type OrnitelaDevice } from "./ornitelaSync";
 import { runEventDetection, runEmissionCheck, runOrnitelaSync } from "./scheduler";
 import { sftpWatcher, reprocessUnassignedForDevice } from "./services/sftpWatcher";
@@ -195,6 +196,29 @@ async function requireStudyAccess(req: Request, res: Response, next: NextFunctio
     return res.status(403).json({ message: "Acceso denegado a este estudio" });
   }
   next();
+}
+
+// Resolve the device/time windows a given animal actually carried, so an emitter
+// reassigned between animals never leaks GPS/ACC data across periods. `token` may
+// be a current localIdentifier (current holder) or an individualId (an animal
+// transferred away and no longer holding a device).
+async function resolveDataWindows(studyId: string, token: string, tsStart: number, tsEnd: number): Promise<DataWindow[]> {
+  let ind = await storage.getIndividualByLocalIdentifier(studyId, token);
+  let historical = false;
+  if (!ind) {
+    const byId = await storage.getIndividualById(token);
+    if (byId && byId.studyId === studyId) { ind = byId; historical = true; }
+  }
+  const deps = ind ? await storage.getDeviceDeploymentsForIndividual(ind.id) : [];
+  return clipWindows(buildDeviceWindows(deps, historical ? null : token), tsStart, tsEnd);
+}
+
+async function clippedGpsFor(studyId: string, token: string, tsStart: number, tsEnd: number): Promise<CachedGpsEvent[]> {
+  return storage.getCachedGpsEventsForWindows(studyId, await resolveDataWindows(studyId, token, tsStart, tsEnd));
+}
+
+async function clippedAccFor(studyId: string, token: string, tsStart: number, tsEnd: number): Promise<CachedAccEvent[]> {
+  return storage.getCachedAccEventsForWindows(studyId, await resolveDataWindows(studyId, token, tsStart, tsEnd));
 }
 
 export async function registerRoutes(
@@ -660,7 +684,7 @@ export async function registerRoutes(
       let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${study.name}</name>\n`;
 
       for (const animalId of ids) {
-        const cached = await storage.getCachedGpsEvents(study.id, animalId.trim(), tsStart, tsEnd);
+        const cached = await clippedGpsFor(study.id, animalId.trim(), tsStart, tsEnd);
         const coords = cached
           .map((c) => `${c.longitude},${c.latitude},0`)
           .join("\n");
@@ -698,7 +722,7 @@ export async function registerRoutes(
 
       const allPoints: { individual: string; timestamp: number; lat: number; lng: number; speed: number | null; heading: number | null; altitude: number | null }[] = [];
       for (const animalId of individualIds) {
-        const events = await storage.getCachedGpsEvents(req.params.id as string, animalId, startDate, endDate);
+        const events = await clippedGpsFor(req.params.id as string, animalId, startDate, endDate);
         for (const e of events) {
           allPoints.push({
             individual: e.individualLocalIdentifier,
@@ -940,7 +964,7 @@ export async function registerRoutes(
       const { runAnalysis } = await import("./geoAnalysis");
       const allPoints: { lat: number; lng: number; timestamp: number; individual: string; speed: number | null; altitude: number | null }[] = [];
       for (const animalId of individualIds) {
-        const events = await storage.getCachedGpsEvents(req.params.id as string, animalId, startDate, endDate);
+        const events = await clippedGpsFor(req.params.id as string, animalId, startDate, endDate);
         for (const e of events) {
           allPoints.push({
             individual: e.individualLocalIdentifier,
@@ -1414,16 +1438,30 @@ export async function registerRoutes(
         { nickName: ind.nickName || null, ornitelaName: ind.ornitelaName || null, taxon: ind.taxonCanonicalName || null, projectId: ind.projectId || null }
       ]));
 
+      // Devices that have been involved in a manual transfer must be split per
+      // animal by deployment window, so a reassigned emitter never shows one
+      // animal's last position under another. Legacy devices (no transfer
+      // history) keep the original study-wide query untouched.
+      const studyDeployments = await storage.getDeviceDeploymentsForStudy(studyId);
+      const managedDevices = new Set(studyDeployments.map(d => d.deviceLocalIdentifier));
+
+      const legacyParams: any[] = [studyId, points];
+      let excludeClause = "";
+      if (managedDevices.size > 0) {
+        excludeClause = ` AND individual_local_identifier <> ALL($3::text[])`;
+        legacyParams.push(Array.from(managedDevices));
+      }
+
       const { rows: gpsRows } = await pool.query(
         `SELECT individual_local_identifier, timestamp, latitude, longitude, ground_speed, heading, height_above_ellipsoid, hdop
          FROM (
            SELECT *, ROW_NUMBER() OVER (PARTITION BY individual_local_identifier ORDER BY timestamp DESC) AS rn
            FROM cached_gps_events
-           WHERE study_id = $1
+           WHERE study_id = $1${excludeClause}
          ) sub
          WHERE rn <= $2
          ORDER BY individual_local_identifier, timestamp DESC`,
-        [studyId, points]
+        legacyParams
       );
 
       const grouped = new Map<string, any[]>();
@@ -1439,6 +1477,57 @@ export async function registerRoutes(
           altitude: r.height_above_ellipsoid != null ? parseFloat(r.height_above_ellipsoid) : null,
           hdop: r.hdop != null ? parseFloat(r.hdop) : null,
         });
+      }
+
+      // Managed (transferred) animals: query the latest points per animal within
+      // its own deployment window(s), keyed by localIdentifier for the current
+      // holder or by individualId for animals transferred away (null localId).
+      if (managedDevices.size > 0) {
+        const byIndividual = new Map<string, { ind: typeof individuals[number] | undefined; rows: typeof studyDeployments }>();
+        for (const d of studyDeployments) {
+          const entry = byIndividual.get(d.individualId) || { ind: individuals.find(i => i.id === d.individualId), rows: [] as typeof studyDeployments };
+          entry.rows.push(d);
+          byIndividual.set(d.individualId, entry);
+        }
+        const nowMs = Date.now();
+        for (const [individualId, { ind, rows }] of Array.from(byIndividual)) {
+          const fallbackDevice = ind?.localIdentifier ?? null;
+          const windows = clipWindows(buildDeviceWindows(rows as any, fallbackDevice), 0, nowMs);
+          const key = fallbackDevice ?? individualId;
+          const pts: any[] = [];
+          for (const w of windows) {
+            const { rows: wr } = await pool.query(
+              `SELECT timestamp, latitude, longitude, ground_speed, heading, height_above_ellipsoid, hdop
+               FROM cached_gps_events
+               WHERE study_id = $1 AND individual_local_identifier = $2 AND timestamp >= $3 AND timestamp <= $4
+               ORDER BY timestamp DESC LIMIT $5`,
+              [studyId, w.device, Math.floor(w.startMs), Math.ceil(w.endMs), points]
+            );
+            for (const r of wr) {
+              pts.push({
+                timestamp: Number(r.timestamp),
+                latitude: parseFloat(r.latitude),
+                longitude: parseFloat(r.longitude),
+                groundSpeed: r.ground_speed != null ? parseFloat(r.ground_speed) : null,
+                heading: r.heading != null ? parseFloat(r.heading) : null,
+                altitude: r.height_above_ellipsoid != null ? parseFloat(r.height_above_ellipsoid) : null,
+                hdop: r.hdop != null ? parseFloat(r.hdop) : null,
+              });
+            }
+          }
+          if (pts.length > 0) {
+            pts.sort((a, b) => b.timestamp - a.timestamp);
+            grouped.set(key, pts.slice(0, points));
+            if (!indMap.has(key)) {
+              indMap.set(key, {
+                nickName: ind?.nickName || null,
+                ornitelaName: ind?.ornitelaName || null,
+                taxon: ind?.taxonCanonicalName || null,
+                projectId: ind?.projectId || null,
+              });
+            }
+          }
+        }
       }
 
       const result: any[] = [];
@@ -1601,6 +1690,11 @@ export async function registerRoutes(
       }
     }
     const rows = await storage.getDeviceDeploymentsForIndividual(req.params.id);
+    return res.json(rows);
+  });
+
+  app.get("/api/studies/:id/device-deployments", requireStudyAccess, async (req, res) => {
+    const rows = await storage.getDeviceDeploymentsForStudy(req.params.id as string);
     return res.json(rows);
   });
 
@@ -1790,8 +1884,41 @@ export async function registerRoutes(
       for (const animalId of ids) {
           const trimmed = animalId.trim();
           const sensorKey = isGps ? "gps" as const : "acc" as const;
+
+          // Resolve which device(s) and time window(s) this animal actually
+          // carried, so an emitter reassigned between animals doesn't leak data
+          // across periods. `trimmed` may be a current localIdentifier (current
+          // holder) or an individualId (an animal that was transferred away and
+          // no longer has a device assigned).
+          let resolvedInd = await storage.getIndividualByLocalIdentifier(study.id, trimmed);
+          let isHistorical = false;
+          if (!resolvedInd) {
+            const byId = await storage.getIndividualById(trimmed);
+            if (byId && byId.studyId === study.id) { resolvedInd = byId; isHistorical = true; }
+          }
+          const deps = resolvedInd ? await storage.getDeviceDeploymentsForIndividual(resolvedInd.id) : [];
+          const rawWindows = buildDeviceWindows(deps, isHistorical ? null : trimmed);
+          const windows = clipWindows(rawWindows, tsStart, tsEnd);
+          const canFetchMovebank = hasMovebank && !isHistorical;
+
+          const readClippedGps = () => storage.getCachedGpsEventsForWindows(study.id, windows);
+          const readClippedAcc = () => storage.getCachedAccEventsForWindows(study.id, windows);
+
           try {
-            if (forceReload && hasMovebank) {
+            if (isHistorical) {
+              // Historical animal: device data is cached under the device's
+              // localIdentifier (currently held by another animal and synced
+              // there). Just read the clipped cache; never fetch by UUID.
+              if (isGps) {
+                results[trimmed] = formatGpsCache(await readClippedGps(), trimmed);
+              } else {
+                results[trimmed] = formatAccCache(await readClippedAcc(), trimmed);
+              }
+              log(`Historical read for ${trimmed} (${sensorKey}) - ${results[trimmed].length} records`, "cache");
+              continue;
+            }
+
+            if (forceReload && canFetchMovebank) {
               const events = await fetchMovebankEvents(
                 study.movebankStudyId!, study.movebankUsername!, study.movebankPassword!,
                 trimmed, sensorTypeId, tsStart, tsEnd
@@ -1806,11 +1933,9 @@ export async function registerRoutes(
               await storage.recordFetchedRange(study.id, trimmed, sensorKey, tsStart, tsEnd);
 
               if (isGps) {
-                const allCached = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
-                results[trimmed] = formatGpsCache(allCached, trimmed);
+                results[trimmed] = formatGpsCache(await readClippedGps(), trimmed);
               } else {
-                const allCached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
-                results[trimmed] = formatAccCache(allCached, trimmed);
+                results[trimmed] = formatAccCache(await readClippedAcc(), trimmed);
               }
               continue;
             }
@@ -1819,17 +1944,15 @@ export async function registerRoutes(
 
             if (gaps.length === 0) {
               if (isGps) {
-                const cached = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
-                results[trimmed] = formatGpsCache(cached, trimmed);
+                results[trimmed] = formatGpsCache(await readClippedGps(), trimmed);
               } else {
-                const cached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
-                results[trimmed] = formatAccCache(cached, trimmed);
+                results[trimmed] = formatAccCache(await readClippedAcc(), trimmed);
               }
               log(`Cache HIT for ${trimmed} (${sensorKey}) - ${results[trimmed].length} records`, "cache");
               continue;
             }
 
-            if (hasMovebank) {
+            if (canFetchMovebank) {
               let movebankRows: Record<string, string>[] = [];
               for (const gap of gaps) {
                 const rows = await fetchMovebankEvents(
@@ -1855,21 +1978,17 @@ export async function registerRoutes(
             }
 
             if (isGps) {
-              const allCached = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
-              results[trimmed] = formatGpsCache(allCached, trimmed);
+              results[trimmed] = formatGpsCache(await readClippedGps(), trimmed);
             } else {
-              const allCached = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
-              results[trimmed] = formatAccCache(allCached, trimmed);
+              results[trimmed] = formatAccCache(await readClippedAcc(), trimmed);
             }
             log(`Returning ${results[trimmed].length} ${sensorKey} records for ${trimmed} (gaps: ${gaps.length}, movebank: ${hasMovebank})`, "cache");
           } catch (e: any) {
             log(`Events fetch error for ${trimmed}: ${e.message}`, "movebank");
             if (isGps) {
-              const fallback = await storage.getCachedGpsEvents(study.id, trimmed, tsStart, tsEnd);
-              results[trimmed] = formatGpsCache(fallback, trimmed);
+              results[trimmed] = formatGpsCache(await readClippedGps(), trimmed);
             } else {
-              const fallback = await storage.getCachedAccEvents(study.id, trimmed, tsStart, tsEnd);
-              results[trimmed] = formatAccCache(fallback, trimmed);
+              results[trimmed] = formatAccCache(await readClippedAcc(), trimmed);
             }
             log(`Fallback to cache for ${trimmed}: ${results[trimmed].length} records`, "cache");
           }
@@ -2126,8 +2245,8 @@ export async function registerRoutes(
 
       for (const animalId of ids) {
         try {
-          const cachedGps = await storage.getCachedGpsEvents(study.id, animalId, tsStart, tsEnd);
-          const cachedAcc = await storage.getCachedAccEvents(study.id, animalId, tsStart, tsEnd);
+          const cachedGps = await clippedGpsFor(study.id, animalId, tsStart, tsEnd);
+          const cachedAcc = await clippedAccFor(study.id, animalId, tsStart, tsEnd);
 
           const gpsSamples = cachedGps.map((c) => ({
             timestamp: c.timestamp,
@@ -3093,7 +3212,7 @@ export async function registerRoutes(
       const allGpsRows: { individual_id: string; timestamp: number; latitude: number; longitude: number }[] = [];
 
       for (const animalId of animalIds) {
-        const cachedEvents = await storage.getCachedGpsEvents(
+        const cachedEvents = await clippedGpsFor(
           study.id,
           animalId,
           timestampStart,
@@ -3259,7 +3378,7 @@ export async function registerRoutes(
       const allGpsRows: { individual_id: string; timestamp: number; latitude: number; longitude: number }[] = [];
 
       for (const animalId of animalIds) {
-        const cachedEvents = await storage.getCachedGpsEvents(study.id, animalId, timestampStart, timestampEnd);
+        const cachedEvents = await clippedGpsFor(study.id, animalId, timestampStart, timestampEnd);
 
         if (cachedEvents.length > 0) {
           for (const ev of cachedEvents) {

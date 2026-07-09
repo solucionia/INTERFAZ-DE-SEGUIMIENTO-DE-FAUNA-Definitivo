@@ -1,4 +1,4 @@
-import { eq, and, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
+import { eq, and, or, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
 import { db } from "./db";
 import { encrypt, decrypt } from "./encryption";
 import {
@@ -143,6 +143,11 @@ export interface IStorage {
   insertCachedGpsEvents(events: Omit<CachedGpsEvent, "id">[]): Promise<void>;
   getCachedAccEvents(studyId: string, individual: string, tsStart: number, tsEnd: number): Promise<CachedAccEvent[]>;
   insertCachedAccEvents(events: Omit<CachedAccEvent, "id">[]): Promise<void>;
+  getCachedGpsEventsForWindows(studyId: string, windows: { device: string; startMs: number; endMs: number }[]): Promise<CachedGpsEvent[]>;
+  getLatestCachedGpsEventForWindows(studyId: string, windows: { device: string; startMs: number; endMs: number }[], opts?: { qualityOnly?: boolean }): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined>;
+  getCachedAccEventsForWindows(studyId: string, windows: { device: string; startMs: number; endMs: number }[]): Promise<CachedAccEvent[]>;
+  getIndividualByLocalIdentifier(studyId: string, localId: string): Promise<Individual | undefined>;
+  getDeviceDeploymentsForStudy(studyId: string): Promise<(DeviceDeployment & { localIdentifier: string | null; nickName: string | null; ornitelaName: string | null })[]>;
   getCachedTimestampRange(studyId: string, individual: string, sensorType: "gps" | "acc"): Promise<{ min: number; max: number } | null>;
   getCacheStats(): Promise<{ totalGps: number; totalAcc: number; byStudy: { studyId: string; studyName: string; gpsCount: number; accCount: number; lastGpsTimestamp: number | null; lastAccTimestamp: number | null }[] }>;
   clearCacheForStudy(studyId: string): Promise<void>;
@@ -953,6 +958,96 @@ export class DatabaseStorage implements IStorage {
       const batch = events.slice(i, i + batchSize);
       await db.insert(cachedAccEvents).values(batch).onConflictDoNothing();
     }
+  }
+
+  async getCachedGpsEventsForWindows(studyId: string, windows: { device: string; startMs: number; endMs: number }[]): Promise<CachedGpsEvent[]> {
+    if (windows.length === 0) return [];
+    const clauses = windows.map((w) => and(
+      eq(cachedGpsEvents.individualLocalIdentifier, w.device),
+      gte(cachedGpsEvents.timestamp, Math.floor(w.startMs)),
+      lte(cachedGpsEvents.timestamp, Math.ceil(w.endMs)),
+    ));
+    return db.select().from(cachedGpsEvents)
+      .where(and(
+        eq(cachedGpsEvents.studyId, studyId),
+        clauses.length === 1 ? clauses[0] : or(...clauses),
+      ))
+      .orderBy(cachedGpsEvents.timestamp);
+  }
+
+  async getCachedAccEventsForWindows(studyId: string, windows: { device: string; startMs: number; endMs: number }[]): Promise<CachedAccEvent[]> {
+    if (windows.length === 0) return [];
+    const clauses = windows.map((w) => and(
+      eq(cachedAccEvents.individualLocalIdentifier, w.device),
+      gte(cachedAccEvents.timestamp, Math.floor(w.startMs)),
+      lte(cachedAccEvents.timestamp, Math.ceil(w.endMs)),
+    ));
+    return db.select().from(cachedAccEvents)
+      .where(and(
+        eq(cachedAccEvents.studyId, studyId),
+        clauses.length === 1 ? clauses[0] : or(...clauses),
+      ))
+      .orderBy(cachedAccEvents.timestamp);
+  }
+
+  async getLatestCachedGpsEventForWindows(
+    studyId: string,
+    windows: { device: string; startMs: number; endMs: number }[],
+    opts?: { qualityOnly?: boolean },
+  ): Promise<{ timestamp: number; latitude: number; longitude: number; hdop: number | null } | undefined> {
+    if (windows.length === 0) return undefined;
+    const qualityOnly = opts?.qualityOnly ?? true;
+    const clauses = windows.map((w) => and(
+      eq(cachedGpsEvents.individualLocalIdentifier, w.device),
+      gte(cachedGpsEvents.timestamp, Math.floor(w.startMs)),
+      lte(cachedGpsEvents.timestamp, Math.ceil(w.endMs)),
+    ));
+    const conds = [
+      eq(cachedGpsEvents.studyId, studyId),
+      clauses.length === 1 ? clauses[0] : or(...clauses),
+    ];
+    if (qualityOnly) {
+      conds.push(sql`(${cachedGpsEvents.hdop} IS NULL OR ${cachedGpsEvents.hdop} <= ${HDOP_QUALITY_THRESHOLD})`);
+    }
+    const [row] = await db.select({
+      timestamp: cachedGpsEvents.timestamp,
+      latitude: cachedGpsEvents.latitude,
+      longitude: cachedGpsEvents.longitude,
+      hdop: cachedGpsEvents.hdop,
+    })
+      .from(cachedGpsEvents)
+      .where(and(...conds))
+      .orderBy(desc(cachedGpsEvents.timestamp))
+      .limit(1);
+    return row;
+  }
+
+  async getIndividualByLocalIdentifier(studyId: string, localId: string): Promise<Individual | undefined> {
+    const [row] = await db.select().from(individuals)
+      .where(and(eq(individuals.studyId, studyId), eq(individuals.localIdentifier, localId)))
+      .limit(1);
+    return row;
+  }
+
+  async getDeviceDeploymentsForStudy(studyId: string): Promise<(DeviceDeployment & { localIdentifier: string | null; nickName: string | null; ornitelaName: string | null })[]> {
+    const rows = await db.select({
+      id: deviceDeployments.id,
+      individualId: deviceDeployments.individualId,
+      deviceLocalIdentifier: deviceDeployments.deviceLocalIdentifier,
+      startDate: deviceDeployments.startDate,
+      endDate: deviceDeployments.endDate,
+      notes: deviceDeployments.notes,
+      createdAt: deviceDeployments.createdAt,
+      createdBy: deviceDeployments.createdBy,
+      localIdentifier: individuals.localIdentifier,
+      nickName: individuals.nickName,
+      ornitelaName: individuals.ornitelaName,
+    })
+      .from(deviceDeployments)
+      .innerJoin(individuals, eq(deviceDeployments.individualId, individuals.id))
+      .where(eq(individuals.studyId, studyId))
+      .orderBy(desc(deviceDeployments.startDate));
+    return rows as any;
   }
 
   async getCachedTimestampRange(studyId: string, individual: string, sensorType: "gps" | "acc"): Promise<{ min: number; max: number } | null> {
