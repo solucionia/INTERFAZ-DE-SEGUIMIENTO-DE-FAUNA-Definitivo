@@ -1744,7 +1744,7 @@ export async function registerRoutes(
         ...(sex !== undefined && { sex }),
         ...(animalLifeStage !== undefined && { animalLifeStage }),
         ...(resolvedProjectId !== undefined && { projectId: resolvedProjectId === null || resolvedProjectId === "" ? null : Number(resolvedProjectId) }),
-        ...(resolvedHistoryNumber !== undefined && { historyNumber: resolvedHistoryNumber || null }),
+        ...(resolvedHistoryNumber !== undefined && { historyNumber: (typeof resolvedHistoryNumber === "string" ? resolvedHistoryNumber.trim() : resolvedHistoryNumber) || null }),
       });
       if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
       return res.json(updated);
