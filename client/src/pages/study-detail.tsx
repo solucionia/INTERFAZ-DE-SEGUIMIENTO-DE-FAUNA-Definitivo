@@ -626,7 +626,7 @@ export default function StudyDetail() {
         sex: editForm.sex || null,
         animalLifeStage: editForm.animalLifeStage || null,
         projectId: editForm.projectId ? Number(editForm.projectId) : null,
-        historyNumber: editForm.historyNumber || null,
+        historyNumber: editForm.historyNumber.trim() || null,
       });
 
       const hasActive = activeDeploymentIndividualIds.has(String(editingIndividual.movebankId));
@@ -977,15 +977,15 @@ export default function StudyDetail() {
                           {ind.projectId ? (projectMap.get(ind.projectId) || "—") : "—"}
                         </TableCell>
                         <TableCell>
-                          {ind.historyNumber ? (
+                          {ind.historyNumber?.trim() ? (
                             <a
-                              href={`http://192.168.2.1/buho/formulario_historiales.php?editar_exp=${encodeURIComponent(ind.historyNumber)}`}
+                              href={`http://192.168.2.1/buho/formulario_historiales.php?editar_exp=${encodeURIComponent(ind.historyNumber.trim())}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 text-blue-500 hover:text-blue-400 hover:underline text-sm"
                               data-testid={`link-history-${ind.movebankId}`}
                             >
-                              {ind.historyNumber}
+                              {ind.historyNumber.trim()}
                               <ExternalLink className="w-3 h-3" />
                             </a>
                           ) : (
