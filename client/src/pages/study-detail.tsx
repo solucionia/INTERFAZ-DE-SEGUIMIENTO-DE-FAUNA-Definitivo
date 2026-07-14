@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft, Power, PowerOff } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft, Power, PowerOff, Trash2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -71,6 +71,7 @@ export default function StudyDetail() {
   const [ornitelaProgress, setOrnitelaProgress] = useState<{ processed: number; total: number; gps: number; acc: number; current?: string } | null>(null);
   const [ornitelaPanelOpen, setOrnitelaPanelOpen] = useState(false);
   const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { data: study, isLoading: studyLoading } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -616,6 +617,27 @@ export default function StudyDetail() {
     }
   };
 
+  const handleDeleteIndividual = async (ind: Individual) => {
+    const label = ind.nickName || ind.localIdentifier || String(ind.movebankId);
+    const msg = `¿Eliminar por completo a "${label}"?\n\nSe borrarán el individuo y TODOS sus datos asociados (posiciones GPS, acelerómetro, eventos detectados, etiquetas y despliegues). Esta acción NO se puede deshacer.`;
+    if (!window.confirm(msg)) return;
+    setDeletingId(ind.id);
+    try {
+      await apiRequest("DELETE", `/api/individuals/${ind.id}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/individuals/all"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "gps-counts"] });
+      toast({
+        title: "Individuo eliminado",
+        description: `${label} y sus datos han sido eliminados por completo.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Error al eliminar", description: e.message || "Error desconocido", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!editingIndividual || !studyId) return;
     setSaving(true);
@@ -1089,6 +1111,22 @@ export default function StudyDetail() {
                                     <Power className="w-3.5 h-3.5 text-emerald-500" />
                                   ) : (
                                     <PowerOff className="w-3.5 h-3.5 text-muted-foreground" />
+                                  )}
+                                </Button>
+                              )}
+                              {isSuperuser && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Eliminar individuo por completo (borra todos sus datos)"
+                                  disabled={deletingId === ind.id}
+                                  onClick={() => handleDeleteIndividual(ind)}
+                                  data-testid={`button-delete-individual-${ind.movebankId}`}
+                                >
+                                  {deletingId === ind.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
                                   )}
                                 </Button>
                               )}

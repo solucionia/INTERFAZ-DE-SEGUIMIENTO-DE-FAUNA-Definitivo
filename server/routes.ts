@@ -1768,6 +1768,17 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/individuals/:id", requireSuperuser, async (req, res) => {
+    try {
+      const deleted = await storage.deleteIndividual(req.params.id as string);
+      if (!deleted) return res.status(404).json({ message: "Individuo no encontrado" });
+      log(`Individuo ${req.params.id} eliminado por completo por ${(req.user as any)?.email}`, "events");
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  });
+
   app.patch("/api/deployments/:id", requireSuperuser, async (req, res) => {
     try {
       const { deployOff } = req.body;

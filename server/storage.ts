@@ -1,6 +1,7 @@
 import { eq, and, or, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
 import { db } from "./db";
 import { encrypt, decrypt } from "./encryption";
+import { buildDeviceWindows, clipWindows } from "./deploymentWindows";
 import {
   users, studies, userStudies, individuals, deployments,
   speciesProfiles, detectedEvents, alertLogs, emissionAlerts, cronLogs, savedAnalyses, activityLogs,
@@ -38,6 +39,7 @@ export interface IStorage {
   createStudy(study: InsertStudy): Promise<Study>;
   updateStudy(id: string, study: Partial<InsertStudy>): Promise<Study | undefined>;
   deleteStudy(id: string): Promise<void>;
+  deleteIndividual(id: string): Promise<boolean>;
 
   getStudiesForUser(userId: string): Promise<Study[]>;
   getUsersForStudy(studyId: string): Promise<string[]>;
@@ -271,6 +273,69 @@ export class DatabaseStorage implements IStorage {
 
   async deleteStudy(id: string): Promise<void> {
     await db.delete(studies).where(eq(studies.id, id));
+  }
+
+  async deleteIndividual(id: string): Promise<boolean> {
+    const [ind] = await db.select().from(individuals).where(eq(individuals.id, id));
+    if (!ind) return false;
+    const studyId = ind.studyId;
+    const localId = ind.localIdentifier;
+    const rawDeployments = await db.select().from(deviceDeployments).where(eq(deviceDeployments.individualId, id));
+    const wasTransferred = rawDeployments.length > 0;
+
+    await db.transaction(async (tx) => {
+      if (wasTransferred) {
+        // Device was transferred: delete only telemetry within this individual's
+        // ownership windows so we never touch another animal's segment.
+        const windows = clipWindows(buildDeviceWindows(rawDeployments, localId), 0, Number.MAX_SAFE_INTEGER);
+        for (const w of windows) {
+          await tx.delete(cachedGpsEvents).where(and(
+            eq(cachedGpsEvents.studyId, studyId),
+            eq(cachedGpsEvents.individualLocalIdentifier, w.device),
+            gte(cachedGpsEvents.timestamp, w.startMs),
+            lte(cachedGpsEvents.timestamp, w.endMs),
+          ));
+          await tx.delete(cachedAccEvents).where(and(
+            eq(cachedAccEvents.studyId, studyId),
+            eq(cachedAccEvents.individualLocalIdentifier, w.device),
+            gte(cachedAccEvents.timestamp, w.startMs),
+            lte(cachedAccEvents.timestamp, w.endMs),
+          ));
+          await tx.delete(accelerometerLabels).where(and(
+            eq(accelerometerLabels.deviceId, w.device),
+            lte(accelerometerLabels.startTimestamp, w.endMs),
+            gte(accelerometerLabels.endTimestamp, w.startMs),
+          ));
+        }
+      } else if (localId) {
+        // Never transferred: this individual solely owned its device, so all
+        // telemetry keyed by its local identifier belongs to it.
+        await tx.delete(cachedGpsEvents).where(
+          and(eq(cachedGpsEvents.studyId, studyId), eq(cachedGpsEvents.individualLocalIdentifier, localId)),
+        );
+        await tx.delete(cachedAccEvents).where(
+          and(eq(cachedAccEvents.studyId, studyId), eq(cachedAccEvents.individualLocalIdentifier, localId)),
+        );
+        await tx.delete(cachedFetchRanges).where(
+          and(eq(cachedFetchRanges.studyId, studyId), eq(cachedFetchRanges.individualLocalIdentifier, localId)),
+        );
+        await tx.delete(accelerometerLabels).where(eq(accelerometerLabels.deviceId, localId));
+        await tx.delete(deployments).where(
+          and(eq(deployments.studyId, studyId), eq(deployments.localIdentifier, localId)),
+        );
+        await tx.delete(detectedEvents).where(
+          and(eq(detectedEvents.studyId, studyId), eq(detectedEvents.individualLocalId, localId)),
+        );
+      }
+      // detected_events attributable to this specific individual via its UUID
+      // token (used for immobility / historical transferred animals).
+      await tx.delete(detectedEvents).where(
+        and(eq(detectedEvents.studyId, studyId), eq(detectedEvents.individualLocalId, id)),
+      );
+      // device_deployments rows cascade via FK on individual_id when the row is deleted.
+      await tx.delete(individuals).where(eq(individuals.id, id));
+    });
+    return true;
   }
 
   async getStudiesForUser(userId: string): Promise<Study[]> {
