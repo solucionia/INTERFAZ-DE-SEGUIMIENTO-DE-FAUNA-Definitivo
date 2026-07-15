@@ -47,3 +47,6 @@ waitForPort = 5000
 
 [userenv.shared]
 SYNC_SECRET = "2e264c159cbd9da9f21458e97c1a623ee89f8afdecd7973d1176b894dde990f4"
+
+[userenv.development]
+ORNITELA_SFTP_DISABLED = "1"

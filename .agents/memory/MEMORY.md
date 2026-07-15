@@ -11,4 +11,5 @@
 - [WildTrack "import limit" = display window](wildtrack-date-range-window.md) — "old data won't import"/"1-year limit" is the quick-range window, not the import path; widen to 3a/Todo before touching parser/storage.
 - [Device-transfer window clipping](device-transfer-window-clipping.md) — reassigned emitters: every per-animal GPS/ACC read (incl. "latest" & "has-history" prefilters) must clip by device_deployments windows, not query by device.
 - [Delete-individual transfer-aware](delete-individual-transfer-aware.md) — deleting an animal's telemetry must scope by device_deployments windows if transferred, else it wipes other animals' segments.
+- [SFTP dev/prod race](sftp-dev-prod-race.md) — watcher moves files after import; keep ORNITELA_SFTP_DISABLED=1 in dev so only prod consumes the feed.
 - [hover-elevate specificity trap](hover-elevate-specificity-trap.md) — `hover-elevate` (:not selector, 0,2,0) overrides same-element `absolute`/`z-[N]` to position:relative+z-0; positioning/z-index must go on a wrapper.
