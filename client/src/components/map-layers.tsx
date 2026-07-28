@@ -1,26 +1,27 @@
 import { useMap } from "react-leaflet";
 import { useEffect } from "react";
 import L from "leaflet";
+import { OSM_TILE_URL_TEMPLATE, googleTileUrlTemplate } from "@shared/tileProviders";
 
 const TILE_LAYERS = {
   street: {
     name: "Callejero",
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    url: OSM_TILE_URL_TEMPLATE,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
   satellite: {
     name: "Satélite",
-    url: "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+    url: googleTileUrlTemplate("satellite"),
     attribution: "Google Satellite",
   },
   hybrid: {
     name: "Satélite + Etiquetas",
-    url: "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+    url: googleTileUrlTemplate("hybrid"),
     attribution: "Google Hybrid",
   },
   terrain: {
     name: "Terreno",
-    url: "https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}",
+    url: googleTileUrlTemplate("terrain"),
     attribution: "Google Terrain",
   },
 };

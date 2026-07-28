@@ -56,8 +56,8 @@ import {
   FileCode,
   Table2,
 } from "lucide-react";
-import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { captureMap, captureChart, downloadCanvasAsPng } from "@/lib/mapExport";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import { MapLayerControl, GoogleMapsClick } from "@/components/map-layers";
 import {
@@ -503,79 +503,12 @@ export default function GeoAnalysis() {
     }
   };
 
-  // Evita que una captura (html2canvas) se quede colgada indefinidamente: si
-  // tarda más de `ms`, rechaza para que el botón no quede bloqueado y el usuario
-  // reciba un error explícito.
-  const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
-    Promise.race([
-      p,
-      new Promise<T>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Tiempo de espera agotado al ${label}. Inténtalo de nuevo o reduce el rango de datos.`)),
-          ms
-        )
-      ),
-    ]);
-
-  const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
-    // Extrae el desplazamiento (tx, ty) de cualquier transform CSS de Leaflet
-    // (translate / translate3d / matrix / matrix3d). Devuelve null si no hay.
-    const parseTranslate = (t: string): { tx: number; ty: number } | null => {
-      if (!t || t === "none") return null;
-      let m: RegExpMatchArray | null;
-      if ((m = t.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
-        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
-      }
-      if ((m = t.match(/translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
-        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
-      }
-      if ((m = t.match(/matrix3d\(([^)]+)\)/))) {
-        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
-        if (v.length === 16) return { tx: v[12], ty: v[13] };
-      }
-      if ((m = t.match(/matrix\(([^)]+)\)/))) {
-        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
-        if (v.length === 6) return { tx: v[4], ty: v[5] };
-      }
-      return null;
-    };
-
-    return html2canvas(el, {
-      backgroundColor,
-      scale: 2,
-      useCORS: true,
-      onclone: (_doc, clonedEl) => {
-        const panes = clonedEl.querySelectorAll<HTMLElement>(
-          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
-        );
-        panes.forEach((p) => {
-          const parsed = parseTranslate(p.style.transform);
-          if (!parsed) return;
-          // html2canvas IGNORA el transform CSS propio de un <svg> al rasterizarlo
-          // (pero sí respeta su viewBox), por lo que las capas vectoriales KDE/MCP
-          // se desplazaban hacia el oeste. Para el SVG movemos el desplazamiento al
-          // posicionamiento de layout (left/top), que html2canvas sí respeta.
-          if (p.tagName.toLowerCase() === "svg") {
-            p.style.transform = "none";
-            p.style.left = `${parsed.tx}px`;
-            p.style.top = `${parsed.ty}px`;
-          } else {
-            p.style.transform = `translate(${parsed.tx}px, ${parsed.ty}px)`;
-          }
-        });
-      },
-    });
-  };
-
   const exportChartPng = async () => {
     const el = chartContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay gráfica visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await withTimeout(html2canvas(el, { backgroundColor: null, scale: 2 }), 30000, "capturar la gráfica");
-      const link = document.createElement("a");
-      link.download = `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      const canvas = await captureChart(el, null, 2);
+      downloadCanvasAsPng(canvas, `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Gráfica exportada como PNG" });
     } catch { toast({ title: "Error", description: "No se pudo exportar la gráfica", variant: "destructive" }); }
   };
@@ -584,11 +517,8 @@ export default function GeoAnalysis() {
     const el = mapContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay mapa visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await withTimeout(captureMap(el, null), 30000, "capturar el mapa");
-      const link = document.createElement("a");
-      link.download = `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      const canvas = await captureMap(el, null, 2);
+      downloadCanvasAsPng(canvas, `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Mapa exportado como PNG" });
     } catch { toast({ title: "Error", description: "No se pudo exportar el mapa", variant: "destructive" }); }
   };
@@ -612,7 +542,7 @@ export default function GeoAnalysis() {
 
       const chartEl = chartContainerRef.current;
       if (chartEl) {
-        const chartCanvas = await withTimeout(html2canvas(chartEl, { backgroundColor: "#ffffff", scale: 2 }), 30000, "capturar la gráfica");
+        const chartCanvas = await captureChart(chartEl, "#ffffff", 2);
         const chartImg = chartCanvas.toDataURL("image/png");
         const aspect = chartCanvas.width / chartCanvas.height;
         const imgW = pageW - margin * 2;
@@ -624,7 +554,7 @@ export default function GeoAnalysis() {
       const mapEl = mapContainerRef.current;
       if (mapEl) {
         if (yOffset + 60 > pageH) { pdf.addPage(); yOffset = margin; }
-        const mapCanvas = await withTimeout(captureMap(mapEl, "#ffffff"), 30000, "capturar el mapa");
+        const mapCanvas = await captureMap(mapEl, "#ffffff", 2);
         const mapImg = mapCanvas.toDataURL("image/png");
         const aspect = mapCanvas.width / mapCanvas.height;
         const imgW = pageW - margin * 2;

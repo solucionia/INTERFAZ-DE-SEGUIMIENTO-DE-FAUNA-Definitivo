@@ -14,7 +14,8 @@ import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
 import { decrypt, encrypt } from "./encryption";
 import { log } from "./index";
-import { authLimiter, apiLimiter, movebankLimiter } from "./rateLimiter";
+import { authLimiter, apiLimiter, movebankLimiter, tileProxyLimiter } from "./rateLimiter";
+import { tileProxyHandler } from "./tileProxy";
 import { parseOrnitelaCsv } from "./ornitelaCsvParser";
 import { buildDeviceWindows, clipWindows, type DataWindow } from "./deploymentWindows";
 import { ornitelaSync, OrnitelaSyncError, type OrnitelaDevice } from "./ornitelaSync";
@@ -343,6 +344,11 @@ export async function registerRoutes(
   });
 
   app.use("/api", apiLimiter);
+
+  // Proxy de tiles de mapa para exportación PNG/PDF (html2canvas): evita
+  // "tainted canvas" sirviendo los tiles same-origin. checkRole excluye a
+  // "observer" a propósito (solo user/superuser generan exports).
+  app.get("/api/tile-proxy", tileProxyLimiter, checkRole("user", "superuser"), tileProxyHandler);
 
   app.post("/api/auth/register", authLimiter, async (req, res, next) => {
     try {

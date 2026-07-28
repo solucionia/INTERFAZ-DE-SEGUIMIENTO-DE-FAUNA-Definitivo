@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute, useSearch } from "wouter";
-import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { captureMap, captureChart, downloadCanvasAsPng, sanitizeFilename, withTimeout } from "@/lib/mapExport";
 import { useQuery } from "@tanstack/react-query";
 import type { Study, Individual } from "@shared/schema";
 import {
@@ -560,69 +560,7 @@ export default function StudyFullscreen() {
     return `${selectedAnimals.length} animales`;
   }, [selectedAnimals, individualByLocalId]);
 
-  const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
   const todayStr = format(new Date(), "yyyy-MM-dd");
-
-  // Evita que una captura (html2canvas) o petición se quede colgada
-  // indefinidamente: si tarda más de `ms`, rechaza para que el botón no quede
-  // bloqueado y el usuario reciba un error explícito.
-  const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
-    Promise.race([
-      p,
-      new Promise<T>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Tiempo de espera agotado al ${label}. Inténtalo de nuevo o reduce el rango de datos.`)),
-          ms
-        )
-      ),
-    ]);
-
-  // Captura un mapa Leaflet con html2canvas corrigiendo el desplazamiento de las
-  // capas vectoriales SVG: html2canvas ignora el transform CSS propio del <svg> al
-  // rasterizarlo (pero respeta su viewBox), por lo que se desplazan hacia el oeste.
-  // Movemos el offset al layout (left/top).
-  const captureMap = async (el: HTMLElement, backgroundColor: string | null) => {
-    const parseTranslate = (t: string): { tx: number; ty: number } | null => {
-      if (!t || t === "none") return null;
-      let m: RegExpMatchArray | null;
-      if ((m = t.match(/translate3d\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
-        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
-      }
-      if ((m = t.match(/translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/))) {
-        return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
-      }
-      if ((m = t.match(/matrix3d\(([^)]+)\)/))) {
-        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
-        if (v.length === 16) return { tx: v[12], ty: v[13] };
-      }
-      if ((m = t.match(/matrix\(([^)]+)\)/))) {
-        const v = m[1].split(",").map((n) => parseFloat(n.trim()));
-        if (v.length === 6) return { tx: v[4], ty: v[5] };
-      }
-      return null;
-    };
-
-    return html2canvas(el, {
-      backgroundColor,
-      useCORS: true,
-      onclone: (_doc, clonedEl) => {
-        const panes = clonedEl.querySelectorAll<HTMLElement>(
-          ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
-        );
-        panes.forEach((p) => {
-          const parsed = parseTranslate(p.style.transform);
-          if (!parsed) return;
-          if (p.tagName.toLowerCase() === "svg") {
-            p.style.transform = "none";
-            p.style.left = `${parsed.tx}px`;
-            p.style.top = `${parsed.ty}px`;
-          } else {
-            p.style.transform = `translate(${parsed.tx}px, ${parsed.ty}px)`;
-          }
-        });
-      },
-    });
-  };
 
   const exportChartPng = async () => {
     if (!chartContainerRef.current) {
@@ -631,17 +569,10 @@ export default function StudyFullscreen() {
     }
     setExporting(true);
     try {
-      const canvas = await withTimeout(
-        html2canvas(chartContainerRef.current, { backgroundColor: null, useCORS: true }),
-        30000,
-        "capturar la gráfica"
-      );
-      const link = document.createElement("a");
+      const canvas = await captureChart(chartContainerRef.current, null);
       const studyName = sanitizeFilename(study?.name || "estudio");
       const animals = sanitizeFilename(selectedAnimals.join("_") || "todos");
-      link.download = `${studyName}_${animals}_${todayStr}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      downloadCanvasAsPng(canvas, `${studyName}_${animals}_${todayStr}.png`);
       toast({ title: "Exportación completada", description: "Gráfica exportada como PNG" });
     } catch (e: any) {
       toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
@@ -657,12 +588,9 @@ export default function StudyFullscreen() {
     }
     setExporting(true);
     try {
-      const canvas = await withTimeout(captureMap(mapContainerRef.current, null), 30000, "capturar el mapa");
-      const link = document.createElement("a");
+      const canvas = await captureMap(mapContainerRef.current, null);
       const studyName = sanitizeFilename(study?.name || "estudio");
-      link.download = `mapa_${studyName}_${todayStr}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      downloadCanvasAsPng(canvas, `mapa_${studyName}_${todayStr}.png`);
       toast({ title: "Exportación completada", description: "Mapa exportado como PNG" });
     } catch (e: any) {
       toast({ title: "Error al exportar", description: e.message, variant: "destructive" });
@@ -698,11 +626,7 @@ export default function StudyFullscreen() {
       let sectionFailed = false;
       if (chartContainerRef.current) {
         try {
-          const chartCanvas = await withTimeout(
-            html2canvas(chartContainerRef.current, { backgroundColor: "#ffffff", useCORS: true }),
-            30000,
-            "capturar la gráfica"
-          );
+          const chartCanvas = await captureChart(chartContainerRef.current, "#ffffff");
           if (chartCanvas.width > 0 && chartCanvas.height > 0) {
             const chartImg = chartCanvas.toDataURL("image/png");
             const chartAspect = chartCanvas.width / chartCanvas.height;
@@ -724,7 +648,7 @@ export default function StudyFullscreen() {
 
       if (mapContainerRef.current && cursorY + 40 < pageH - margin) {
         try {
-          const mapCanvas = await withTimeout(captureMap(mapContainerRef.current, "#ffffff"), 30000, "capturar el mapa");
+          const mapCanvas = await captureMap(mapContainerRef.current, "#ffffff");
           if (mapCanvas.width > 0 && mapCanvas.height > 0) {
             const mapImg = mapCanvas.toDataURL("image/png");
             const mapAspect = mapCanvas.width / mapCanvas.height;
