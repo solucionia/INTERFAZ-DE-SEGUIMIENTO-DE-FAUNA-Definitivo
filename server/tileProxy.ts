@@ -6,6 +6,16 @@ const UPSTREAM_TIMEOUT_MS = 8000;
 const CACHE_MAX_ENTRIES = 500;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// La política de uso de tiles de OSM (osm.wiki/Blocked) exige un User-Agent
+// identificable para tráfico automatizado; sin él, sus servidores devuelven
+// 403 "Access blocked". Se aplica igual a Google (mt1.google.com/vt, endpoint
+// no oficial sin política pública) por consistencia. Referer añadido también
+// porque la política de OSM pide "User-Agent y/o Referer" identificable.
+const TILE_REQUEST_HEADERS: Record<string, string> = {
+  "User-Agent": "WildTrack/1.0 (GREFA bird tracking platform; contacto: jjiglesias@grefa.org)",
+  Referer: "https://grefa.org/",
+};
+
 interface CacheEntry {
   body: Buffer;
   contentType: string;
@@ -64,6 +74,7 @@ export async function tileProxyHandler(req: Request, res: Response): Promise<voi
     // server de GCP) no se sigue automáticamente, se rechaza directamente.
     const upstream = await fetch(rawUrl, {
       redirect: "manual",
+      headers: TILE_REQUEST_HEADERS,
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
