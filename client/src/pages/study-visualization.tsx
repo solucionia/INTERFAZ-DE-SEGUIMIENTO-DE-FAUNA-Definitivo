@@ -100,6 +100,10 @@ const SENSOR_GPS = 653;
 const SENSOR_ACC = 2365683;
 const MAX_GPS_MARKERS = 500;
 const MAX_CHART_POINTS = 2000;
+// Límite de vértices de la línea de trayectoria (Polyline). Sin este tope,
+// un rango de fechas largo puede generar miles de puntos y colgar el
+// renderizado (especialmente al exportar el mapa con html2canvas).
+const MAX_TRACK_POINTS = 1000;
 
 const ANIMAL_COLORS = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6",
@@ -1346,7 +1350,7 @@ export default function StudyVisualization() {
                         const points = gpsData[animalId] || [];
                         if (points.length === 0) return null;
                         const color = animalColorMap[animalId];
-                        const positions: [number, number][] = points.map((p) => [p.lat, p.lng]);
+                        const positions: [number, number][] = downsample(points, MAX_TRACK_POINTS).map((p) => [p.lat, p.lng]);
                         const markersToShow = downsample(points, MAX_GPS_MARKERS);
                         return (
                           <span key={animalId}>
