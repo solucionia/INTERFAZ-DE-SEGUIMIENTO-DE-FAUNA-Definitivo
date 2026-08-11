@@ -1741,9 +1741,11 @@ export async function registerRoutes(
 
   app.patch("/api/individuals/:id", checkRole("superuser", "user"), async (req, res) => {
     try {
-      const { nickName, taxonCanonicalName, sex, animalLifeStage, projectId, historyNumber, project_id, history_number } = req.body;
+      const { nickName, taxonCanonicalName, sex, animalLifeStage, projectId, historyNumber, officialRingId, pvcRingId, project_id, history_number, official_ring_id, pvc_ring_id } = req.body;
       const resolvedProjectId = projectId !== undefined ? projectId : project_id;
       const resolvedHistoryNumber = historyNumber !== undefined ? historyNumber : history_number;
+      const resolvedOfficialRingId = officialRingId !== undefined ? officialRingId : official_ring_id;
+      const resolvedPvcRingId = pvcRingId !== undefined ? pvcRingId : pvc_ring_id;
       const updated = await storage.updateIndividual(req.params.id, {
         ...(nickName !== undefined && { nickName }),
         ...(taxonCanonicalName !== undefined && { taxonCanonicalName }),
@@ -1751,6 +1753,8 @@ export async function registerRoutes(
         ...(animalLifeStage !== undefined && { animalLifeStage }),
         ...(resolvedProjectId !== undefined && { projectId: resolvedProjectId === null || resolvedProjectId === "" ? null : Number(resolvedProjectId) }),
         ...(resolvedHistoryNumber !== undefined && { historyNumber: (typeof resolvedHistoryNumber === "string" ? resolvedHistoryNumber.trim() : resolvedHistoryNumber) || null }),
+        ...(resolvedOfficialRingId !== undefined && { officialRingId: (typeof resolvedOfficialRingId === "string" ? resolvedOfficialRingId.trim() : resolvedOfficialRingId) || null }),
+        ...(resolvedPvcRingId !== undefined && { pvcRingId: (typeof resolvedPvcRingId === "string" ? resolvedPvcRingId.trim() : resolvedPvcRingId) || null }),
       });
       if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
       return res.json(updated);
