@@ -1108,7 +1108,7 @@ export default function StudyDetail() {
                                   <ArrowRightLeft className="w-3.5 h-3.5" />
                                 </Button>
                               )}
-                              {isSuperuser && (
+                              {canEditIndividuals && (
                                 <Button
                                   size="icon"
                                   variant="ghost"

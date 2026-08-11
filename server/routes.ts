@@ -1763,11 +1763,20 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/individuals/:id/active-status", requireSuperuser, async (req, res) => {
+  app.patch("/api/individuals/:id/active-status", checkRole("superuser", "user"), async (req, res) => {
     try {
       const { isActive } = req.body;
       if (typeof isActive !== "boolean") {
         return res.status(400).json({ message: "isActive (boolean) es requerido" });
+      }
+      const individual = await storage.getIndividualById(req.params.id as string);
+      if (!individual) return res.status(404).json({ message: "Individuo no encontrado" });
+      const user = req.user as any;
+      if (user.role !== "superuser") {
+        const userStudyIds = (await storage.getStudiesForUser(user.id)).map((s) => s.id);
+        if (!userStudyIds.includes(individual.studyId)) {
+          return res.status(403).json({ message: "Acceso denegado a este estudio" });
+        }
       }
       const updated = await storage.setIndividualActiveStatus(req.params.id as string, isActive);
       if (!updated) return res.status(404).json({ message: "Individuo no encontrado" });
