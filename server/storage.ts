@@ -1,4 +1,4 @@
-import { eq, and, or, desc, gte, lte, inArray, count, sql } from "drizzle-orm";
+import { eq, and, or, desc, gte, lte, inArray, count, sql, isNull } from "drizzle-orm";
 import { db } from "./db";
 import { encrypt, decrypt } from "./encryption";
 import { buildDeviceWindows, clipWindows } from "./deploymentWindows";
@@ -1684,6 +1684,7 @@ export class DatabaseStorage implements IStorage {
     const [dep] = await db.select({ studyId: deployments.studyId })
       .from(deployments)
       .where(eq(deployments.localIdentifier, deviceId))
+      .orderBy(desc(deployments.deployOn))
       .limit(1);
     if (dep) return dep.studyId;
     // 2. Asociación explícita dispositivo→estudio (allowlist configurada por el admin).
@@ -1714,6 +1715,18 @@ export class DatabaseStorage implements IStorage {
         .where(eq(studies.id, existing.studyId)).limit(1);
       throw new Error(
         `El dispositivo "${trimmed}" ya está asignado a otro estudio${other?.name ? ` ("${other.name}")` : ""}. Quítalo de allí primero.`,
+      );
+    }
+    const [activeDep] = await db.select({ studyId: deployments.studyId })
+      .from(deployments)
+      .where(and(eq(deployments.localIdentifier, trimmed), isNull(deployments.deployOff)))
+      .orderBy(desc(deployments.deployOn))
+      .limit(1);
+    if (activeDep && activeDep.studyId !== studyId) {
+      const [other] = await db.select({ name: studies.name }).from(studies)
+        .where(eq(studies.id, activeDep.studyId)).limit(1);
+      throw new Error(
+        `El dispositivo "${trimmed}" ya tiene un deployment activo en otro estudio${other?.name ? ` ("${other.name}")` : ""}. Añadirlo aquí no lo moverá: usa "Transferir dispositivo" si quieres reasignarlo intencionalmente.`,
       );
     }
     const [row] = await db.insert(ornitelaDeviceStudies)

@@ -57,7 +57,7 @@ export default function StudyDetail() {
   const [transferDate, setTransferDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [transferNotes, setTransferNotes] = useState<string>("");
   const [transferring, setTransferring] = useState(false);
-  const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "", projectId: "" as string, historyNumber: "" });
+  const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "", projectId: "" as string, historyNumber: "", officialRingId: "", pvcRingId: "" });
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
   const [saving, setSaving] = useState(false);
@@ -587,6 +587,8 @@ export default function StudyDetail() {
       animalLifeStage: ind.animalLifeStage || "",
       projectId: ind.projectId ? String(ind.projectId) : "",
       historyNumber: ind.historyNumber || "",
+      officialRingId: ind.officialRingId || "",
+      pvcRingId: ind.pvcRingId || "",
     });
     setDeploymentStatus(hasActive ? "active" : "inactive");
     setDeployOffDate(activeDep?.deployOff || "");
@@ -649,6 +651,8 @@ export default function StudyDetail() {
         animalLifeStage: editForm.animalLifeStage || null,
         projectId: editForm.projectId ? Number(editForm.projectId) : null,
         historyNumber: editForm.historyNumber.trim() || null,
+        officialRingId: editForm.officialRingId.trim() || null,
+        pvcRingId: editForm.pvcRingId.trim() || null,
       });
 
       const hasActive = activeDeploymentIndividualIds.has(String(editingIndividual.movebankId));
@@ -953,6 +957,8 @@ export default function StudyDetail() {
                     <TableHead>Etapa</TableHead>
                     <TableHead>Proyecto</TableHead>
                     <TableHead>Nº Historial</TableHead>
+                    <TableHead>Anilla oficial</TableHead>
+                    <TableHead>Anilla PVC</TableHead>
                     <TableHead>GPS local</TableHead>
                     <TableHead>Estado</TableHead>
                     {canEditIndividuals && <TableHead className="w-10"></TableHead>}
@@ -1013,6 +1019,12 @@ export default function StudyDetail() {
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {ind.officialRingId || "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {ind.pvcRingId || "—"}
                         </TableCell>
                         <TableCell data-testid={`text-gps-count-${ind.movebankId}`}>
                           {(() => {
@@ -1096,7 +1108,7 @@ export default function StudyDetail() {
                                   <ArrowRightLeft className="w-3.5 h-3.5" />
                                 </Button>
                               )}
-                              {isSuperuser && (
+                              {canEditIndividuals && (
                                 <Button
                                   size="icon"
                                   variant="ghost"
@@ -1468,6 +1480,26 @@ export default function StudyDetail() {
                 onChange={(e) => setEditForm({ ...editForm, historyNumber: e.target.value })}
                 placeholder="Número de expediente"
                 data-testid="input-edit-history-number"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-official-ring">Anilla oficial</Label>
+              <Input
+                id="edit-official-ring"
+                value={editForm.officialRingId}
+                onChange={(e) => setEditForm({ ...editForm, officialRingId: e.target.value })}
+                placeholder="Número de anilla oficial"
+                data-testid="input-edit-official-ring"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-pvc-ring">Anilla PVC</Label>
+              <Input
+                id="edit-pvc-ring"
+                value={editForm.pvcRingId}
+                onChange={(e) => setEditForm({ ...editForm, pvcRingId: e.target.value })}
+                placeholder="Número de anilla PVC"
+                data-testid="input-edit-pvc-ring"
               />
             </div>
             <div className="space-y-2">

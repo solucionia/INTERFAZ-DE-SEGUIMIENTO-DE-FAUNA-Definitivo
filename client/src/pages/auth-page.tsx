@@ -85,7 +85,7 @@ export default function AuthPage() {
                 onClick={() => { setMode("login"); setErrors({}); }}
                 data-testid="button-switch-login"
               >
-                Iniciar sesión
+                Ya tengo cuenta
               </Button>
               <Button
                 variant={mode === "register" ? "default" : "ghost"}
@@ -93,7 +93,7 @@ export default function AuthPage() {
                 onClick={() => { setMode("register"); setErrors({}); }}
                 data-testid="button-switch-register"
               >
-                Registrarse
+                Crear cuenta
               </Button>
             </div>
           </CardHeader>
