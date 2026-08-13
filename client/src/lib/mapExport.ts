@@ -35,15 +35,41 @@ export function downloadCanvasAsPng(canvas: HTMLCanvasElement, filename: string)
   link.click();
 }
 
-// El tema (oscuro/claro) se controla con la clase "dark"/"light" en <html>
-// (ver client/src/components/theme-provider.tsx), que conmuta las variables
-// CSS de las que dependen bg-card/text-foreground/etc. (client/src/index.css).
-// html2canvas-pro clona el documento a un iframe oculto antes de rasterizar;
-// forzamos el clon a claro ahí para que la exportación no herede el tema
-// oscuro de la app en pantalla, sin tocar el DOM real ni que el usuario lo note.
+// El tema depende de las variables CSS de :root que la clase "dark" en <html>
+// sobreescribe (ver theme-provider.tsx / index.css). Cambiar esa clase en el
+// documento clonado que arma html2canvas-pro antes de rasterizar rompía el
+// layout de la captura (Cards sin borde/fondo, tiles de Leaflet desalineados)
+// sin que exista ninguna regla de layout (display/position/grid) atada a
+// ".dark" en este proyecto — así que en vez de tocar classList, se
+// sobreescriben solo los valores de color: se leen en vivo los del :root real
+// (para no duplicarlos a mano y que se desincronicen de index.css) y se
+// aplican como estilo inline en el <html> del clon.
+function getRootLightDeclarations(): string {
+  const declarations: string[] = [];
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue; // hoja de otro origen (CORS): no puede ser la de nuestro tema
+    }
+    for (const rule of Array.from(rules)) {
+      if (
+        rule instanceof CSSStyleRule &&
+        rule.selectorText.split(",").map((s) => s.trim()).includes(":root")
+      ) {
+        declarations.push(rule.style.cssText);
+      }
+    }
+  }
+  return declarations.join(" ");
+}
+
 function forceLightMode(clonedDoc: Document): void {
-  clonedDoc.documentElement.classList.remove("dark");
-  clonedDoc.documentElement.classList.add("light");
+  const lightDeclarations = getRootLightDeclarations();
+  if (lightDeclarations) {
+    clonedDoc.documentElement.style.cssText += ` ${lightDeclarations}`;
+  }
 }
 
 function parseTranslate(t: string): { tx: number; ty: number } | null {
