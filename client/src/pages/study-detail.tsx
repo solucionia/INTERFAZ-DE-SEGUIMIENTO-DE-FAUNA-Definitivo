@@ -983,6 +983,15 @@ export default function StudyDetail() {
                             {ind.ornitelaName
                               ? `${ind.ornitelaName} (${ind.localIdentifier || `ID-${ind.movebankId}`})`
                               : (ind.localIdentifier || `ID-${ind.movebankId}`)}
+                            {!ind.ornitelaName?.trim() && !ind.nickName?.trim() && (
+                              <span
+                                title='Sin nombre asignado (ni Ornitela ni apodo) — aparecerá como ID en mapas y alertas. Usa "Sincronizar Ornitela" o edítalo manualmente.'
+                                className="inline-flex shrink-0"
+                                data-testid={`icon-no-name-${ind.movebankId}`}
+                              >
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                              </span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
