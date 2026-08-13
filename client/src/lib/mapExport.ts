@@ -1,9 +1,13 @@
-import html2canvas from "html2canvas-pro";
+import html2canvas, { createDefaultValidator } from "html2canvas-pro";
 
 export const MAP_CAPTURE_TIMEOUT_MS = 60_000;
 export const CHART_CAPTURE_TIMEOUT_MS = 30_000;
 const TILE_IMAGE_TIMEOUT_MS = 20_000;
 const TILE_PROXY_PATH = "/api/tile-proxy";
+// html2canvas-pro valida `proxy` con `new URL(url)` sin base y exige http/https;
+// una ruta relativa hace que el constructor lance y la opción sea rechazada
+// ("Invalid URL format"). Se resuelve a absoluta same-origin en tiempo de carga.
+const TILE_PROXY_URL = new URL(TILE_PROXY_PATH, window.location.origin).toString();
 
 // Evita que una captura (html2canvas) se quede colgada indefinidamente: si
 // tarda más de `ms`, rechaza para que el botón no quede bloqueado y el
@@ -58,9 +62,13 @@ function parseTranslate(t: string): { tx: number; ty: number } | null {
 const html2canvasBaseOptions = {
   useCORS: false,
   allowTaint: false,
-  proxy: TILE_PROXY_PATH,
+  proxy: TILE_PROXY_URL,
   imageTimeout: TILE_IMAGE_TIMEOUT_MS,
-} as const;
+  // El validador de html2canvas-pro rechaza por defecto proxies en
+  // localhost/IP privada (contexto "proxy"); en dev, TILE_PROXY_URL
+  // resuelve a http://localhost:<puerto> y caería en esa restricción.
+  validator: createDefaultValidator({ allowLocalhostProxy: true }),
+};
 
 export async function captureChart(
   el: HTMLElement,
