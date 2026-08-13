@@ -1619,8 +1619,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Cierre manual sin reasignar (p. ej. ave muerta, dispositivo recuperado sin
-  // destino todavía). Libera individuals.localIdentifier solo si seguía
-  // apuntando exactamente a este dispositivo (por si ya cambió entre medias).
+  // destino todavía). Libera individuals.localIdentifier del dueño de esta
+  // fila incondicionalmente por id (igual que transferDevice hace para su
+  // lado "from") — no comprobamos que localIdentifier siga coincidiendo con
+  // el device antes de limpiarlo: esa comprobación extra podía no matchear
+  // (p. ej. por cualquier diferencia entre el valor guardado y el de la fila)
+  // y entonces el UPDATE afectaba 0 filas sin lanzar ningún error, dejando el
+  // deployment cerrado pero al individuo con el dispositivo "activo" todavía.
   async closeDeviceDeploymentById(id: string, endDate: Date): Promise<DeviceDeployment> {
     return await db.transaction(async (tx) => {
       const [dep] = await tx.select().from(deviceDeployments).where(eq(deviceDeployments.id, id)).for("update");
@@ -1637,10 +1642,7 @@ export class DatabaseStorage implements IStorage {
 
       await tx.update(individuals)
         .set({ localIdentifier: null })
-        .where(and(
-          eq(individuals.id, dep.individualId),
-          eq(individuals.localIdentifier, dep.deviceLocalIdentifier),
-        ));
+        .where(eq(individuals.id, dep.individualId));
 
       return updated;
     });
