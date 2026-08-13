@@ -442,7 +442,8 @@ export default function GeoAnalysis() {
       a.download = `VALORES_${format(new Date(), "yyyyMMdd")}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
+    } catch (e) {
+      console.error("Error exportando CSV:", e);
       toast({ title: "Error", description: "No se pudo exportar el CSV", variant: "destructive" });
     }
   };
@@ -477,6 +478,7 @@ export default function GeoAnalysis() {
       URL.revokeObjectURL(url);
       toast({ title: "Exportación completada", description: "VALORES.csv generado con todas las métricas" });
     } catch (e: any) {
+      console.error("Error exportando VALORES.csv:", e);
       toast({ title: "Error", description: e.message || "No se pudo exportar el CSV", variant: "destructive" });
     } finally {
       setExportingValores(false);
@@ -498,7 +500,8 @@ export default function GeoAnalysis() {
       a.download = `${name}.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
+    } catch (e) {
+      console.error("Error exportando:", e);
       toast({ title: "Error", description: "No se pudo exportar", variant: "destructive" });
     }
   };
@@ -510,7 +513,10 @@ export default function GeoAnalysis() {
       const canvas = await captureChart(el, null, 2);
       downloadCanvasAsPng(canvas, `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Gráfica exportada como PNG" });
-    } catch { toast({ title: "Error", description: "No se pudo exportar la gráfica", variant: "destructive" }); }
+    } catch (e) {
+      console.error("Error exportando gráfica:", e);
+      toast({ title: "Error", description: "No se pudo exportar la gráfica", variant: "destructive" });
+    }
   };
 
   const exportMapPng = async () => {
@@ -520,7 +526,10 @@ export default function GeoAnalysis() {
       const canvas = await captureMap(el, null, 2);
       downloadCanvasAsPng(canvas, `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Mapa exportado como PNG" });
-    } catch { toast({ title: "Error", description: "No se pudo exportar el mapa", variant: "destructive" }); }
+    } catch (e) {
+      console.error("Error exportando mapa:", e);
+      toast({ title: "Error", description: "No se pudo exportar el mapa", variant: "destructive" });
+    }
   };
 
   const exportPdf = async () => {
@@ -564,7 +573,10 @@ export default function GeoAnalysis() {
 
       pdf.save(`analisis_geoespacial_${new Date().toISOString().slice(0, 10)}.pdf`);
       toast({ title: "Exportado", description: "Informe PDF generado" });
-    } catch { toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" }); }
+    } catch (e) {
+      console.error("Error generando PDF:", e);
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" });
+    }
   };
 
   const exportGeoData = async (format: "csv" | "kmz" | "shp" | "geojson") => {
