@@ -35,6 +35,17 @@ export function downloadCanvasAsPng(canvas: HTMLCanvasElement, filename: string)
   link.click();
 }
 
+// El tema (oscuro/claro) se controla con la clase "dark"/"light" en <html>
+// (ver client/src/components/theme-provider.tsx), que conmuta las variables
+// CSS de las que dependen bg-card/text-foreground/etc. (client/src/index.css).
+// html2canvas-pro clona el documento a un iframe oculto antes de rasterizar;
+// forzamos el clon a claro ahí para que la exportación no herede el tema
+// oscuro de la app en pantalla, sin tocar el DOM real ni que el usuario lo note.
+function forceLightMode(clonedDoc: Document): void {
+  clonedDoc.documentElement.classList.remove("dark");
+  clonedDoc.documentElement.classList.add("light");
+}
+
 function parseTranslate(t: string): { tx: number; ty: number } | null {
   if (!t || t === "none") return null;
   let m: RegExpMatchArray | null;
@@ -76,7 +87,12 @@ export async function captureChart(
   scale?: number
 ): Promise<HTMLCanvasElement> {
   return withTimeout(
-    html2canvas(el, { backgroundColor, scale, ...html2canvasBaseOptions }),
+    html2canvas(el, {
+      backgroundColor,
+      scale,
+      ...html2canvasBaseOptions,
+      onclone: (clonedDoc) => forceLightMode(clonedDoc),
+    }),
     CHART_CAPTURE_TIMEOUT_MS,
     "capturar la gráfica"
   );
@@ -96,7 +112,8 @@ export async function captureMap(
       backgroundColor,
       scale,
       ...html2canvasBaseOptions,
-      onclone: (_doc, clonedEl) => {
+      onclone: (clonedDoc, clonedEl) => {
+        forceLightMode(clonedDoc);
         const panes = clonedEl.querySelectorAll<HTMLElement>(
           ".leaflet-pane, .leaflet-tile, .leaflet-zoom-animated, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-overlay-pane svg"
         );

@@ -510,7 +510,7 @@ export default function GeoAnalysis() {
     const el = chartContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay gráfica visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await captureChart(el, null, 2);
+      const canvas = await captureChart(el, "#ffffff", 2);
       downloadCanvasAsPng(canvas, `analisis_grafica_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Gráfica exportada como PNG" });
     } catch (e) {
@@ -523,7 +523,7 @@ export default function GeoAnalysis() {
     const el = mapContainerRef.current;
     if (!el) { toast({ title: "Error", description: "No hay mapa visible para exportar", variant: "destructive" }); return; }
     try {
-      const canvas = await captureMap(el, null, 2);
+      const canvas = await captureMap(el, "#ffffff", 2);
       downloadCanvasAsPng(canvas, `analisis_mapa_${new Date().toISOString().slice(0, 10)}.png`);
       toast({ title: "Exportado", description: "Mapa exportado como PNG" });
     } catch (e) {
