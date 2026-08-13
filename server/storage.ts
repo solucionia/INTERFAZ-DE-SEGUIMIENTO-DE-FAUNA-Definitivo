@@ -1655,13 +1655,21 @@ export class DatabaseStorage implements IStorage {
       // huérfana para siempre si no la cerramos aquí explícitamente.
       // deployOff es texto "YYYY-MM-DD" (fecha, no datetime) — no un Date sin
       // formatear como endDate en device_deployments.
+      //
+      // OJO: NO filtramos por deployments.individualId = ind.movebankId.
+      // movebank_id solo es único por (studyId, movebankId) (ver el índice en
+      // shared/schema.ts), y deployments.individualId puede quedar apuntando
+      // a un dueño anterior si nadie volvió a sincronizar esa fila desde que
+      // cambió de manos por este sistema nuevo — es un dato obsoleto en esa
+      // fila, no una referencia fiable al dueño actual. deviceLocalIdentifier
+      // (el IMEI en sí) no cambia con el tiempo, así que study_id + ese valor
+      // identifica la fila abierta real sin depender de individualId.
       if (ind) {
         const deployOffDate = endDate.toISOString().slice(0, 10);
         await tx.update(deployments)
           .set({ deployOff: deployOffDate })
           .where(and(
             eq(deployments.studyId, ind.studyId),
-            eq(deployments.individualId, ind.movebankId),
             eq(deployments.localIdentifier, dep.deviceLocalIdentifier),
             isNull(deployments.deployOff),
           ));
