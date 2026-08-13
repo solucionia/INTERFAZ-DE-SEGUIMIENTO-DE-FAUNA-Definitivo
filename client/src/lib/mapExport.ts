@@ -35,6 +35,81 @@ export function downloadCanvasAsPng(canvas: HTMLCanvasElement, filename: string)
   link.click();
 }
 
+export interface YRange {
+  top: number;
+  bottom: number;
+}
+
+// Mide, en px CSS relativos a `container`, el rango vertical de cada elemento
+// que no debe partirse entre dos páginas al paginar una captura muy alta
+// (usado por exportPdf en geo-analysis.tsx para no cortar Cards por la mitad).
+export function findProtectedRanges(container: HTMLElement, selector: string): YRange[] {
+  const containerTop = container.getBoundingClientRect().top;
+  return Array.from(container.querySelectorAll<HTMLElement>(selector)).map((el) => {
+    const r = el.getBoundingClientRect();
+    return { top: r.top - containerTop, bottom: r.bottom - containerTop };
+  });
+}
+
+// Fusiona rangos solapados/adyacentes (p. ej. dos Cards en la misma fila de un
+// grid comparten casi el mismo rango vertical) en zonas únicas "no cortables".
+export function mergeRanges(ranges: YRange[]): YRange[] {
+  const sorted = [...ranges].sort((a, b) => a.top - b.top);
+  const merged: YRange[] = [];
+  for (const r of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && r.top <= last.bottom) {
+      last.bottom = Math.max(last.bottom, r.bottom);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  return merged;
+}
+
+// Calcula los puntos de corte acumulados (en px del canvas) para paginar un
+// canvas alto en bloques de hasta `maxHeightForPage(pageIndex)` de alto,
+// retrasando cada corte hasta el borde superior de la zona protegida que lo
+// cubriría. Si una sola zona es más alta que una página entera, se acepta un
+// corte duro ahí (no hay forma de evitarlo sin encoger el contenido).
+export function computePageBreaks(
+  totalHeight: number,
+  protectedRanges: YRange[],
+  maxHeightForPage: (pageIndex: number) => number
+): number[] {
+  const breaks = [0];
+  let cursor = 0;
+  let pageIndex = 0;
+  while (cursor < totalHeight) {
+    let candidate = cursor + maxHeightForPage(pageIndex);
+    if (candidate >= totalHeight) {
+      breaks.push(totalHeight);
+      break;
+    }
+    const blocking = protectedRanges.find((r) => r.top < candidate && r.bottom > candidate);
+    if (blocking && blocking.top > cursor) {
+      candidate = blocking.top;
+    }
+    breaks.push(candidate);
+    cursor = candidate;
+    pageIndex++;
+  }
+  return breaks;
+}
+
+// Recorta la franja horizontal [top, top + height) de `source` a un canvas
+// nuevo del mismo ancho, para insertarla como una página independiente.
+export function cropCanvasVertical(source: HTMLCanvasElement, top: number, height: number): HTMLCanvasElement {
+  const y = Math.round(top);
+  const h = Math.max(1, Math.round(height));
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(source, 0, y, source.width, h, 0, 0, source.width, h);
+  return canvas;
+}
+
 // El tema depende de las variables CSS de :root que la clase "dark" en <html>
 // sobreescribe (ver theme-provider.tsx / index.css). Cambiar esa clase en el
 // documento clonado que arma html2canvas-pro antes de rasterizar rompía el

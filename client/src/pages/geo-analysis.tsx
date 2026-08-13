@@ -57,7 +57,15 @@ import {
   Table2,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { captureMap, captureChart, downloadCanvasAsPng } from "@/lib/mapExport";
+import {
+  captureMap,
+  captureChart,
+  downloadCanvasAsPng,
+  findProtectedRanges,
+  mergeRanges,
+  computePageBreaks,
+  cropCanvasVertical,
+} from "@/lib/mapExport";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import { MapLayerControl, GoogleMapsClick } from "@/components/map-layers";
 import {
@@ -551,13 +559,41 @@ export default function GeoAnalysis() {
 
       const chartEl = chartContainerRef.current;
       if (chartEl) {
-        const chartCanvas = await captureChart(chartEl, "#ffffff", 2);
-        const chartImg = chartCanvas.toDataURL("image/png");
-        const aspect = chartCanvas.width / chartCanvas.height;
+        // El bloque de datos/gráficas puede ser mucho más alto que ancho (muchas
+        // Cards apiladas): forzarlo a una sola página a ancho completo lo
+        // distorsionaba (Math.min recortaba el alto sin recortar el ancho). Se
+        // pagina en franjas del alto de una página, evitando cortar por la mitad
+        // cualquier Card o bloque marcado con [data-pdf-keep-together] (aviso de
+        // muestreo, nombre + gráficas de cada individuo).
+        const CHART_SCALE = 2;
+        const protectedRangesCss = findProtectedRanges(chartEl, ".shadcn-card, [data-pdf-keep-together]");
+        const chartCanvas = await captureChart(chartEl, "#ffffff", CHART_SCALE);
         const imgW = pageW - margin * 2;
-        const imgH = Math.min(imgW / aspect, pageH - yOffset - margin);
-        pdf.addImage(chartImg, "PNG", margin, yOffset, imgW, imgH);
-        yOffset += imgH + 5;
+        const scaleMmPerPx = imgW / chartCanvas.width;
+        const protectedRanges = mergeRanges(
+          protectedRangesCss.map((r) => ({ top: r.top * CHART_SCALE, bottom: r.bottom * CHART_SCALE }))
+        );
+        const firstPageMaxPx = (pageH - yOffset - margin) / scaleMmPerPx;
+        const otherPageMaxPx = (pageH - margin * 2) / scaleMmPerPx;
+        const breaks = computePageBreaks(
+          chartCanvas.height,
+          protectedRanges,
+          (pageIndex) => (pageIndex === 0 ? firstPageMaxPx : otherPageMaxPx)
+        );
+
+        for (let i = 0; i < breaks.length - 1; i++) {
+          const sliceHeightPx = breaks[i + 1] - breaks[i];
+          const sliceCanvas = cropCanvasVertical(chartCanvas, breaks[i], sliceHeightPx);
+          const sliceImg = sliceCanvas.toDataURL("image/png");
+          const sliceHeightMm = sliceHeightPx * scaleMmPerPx;
+          if (i > 0) {
+            pdf.addPage();
+            yOffset = margin;
+          }
+          pdf.addImage(sliceImg, "PNG", margin, yOffset, imgW, sliceHeightMm);
+          yOffset += sliceHeightMm;
+        }
+        yOffset += 5;
       }
 
       const mapEl = mapContainerRef.current;
@@ -1279,7 +1315,7 @@ function ComprehensiveResults({
   return (
     <div className="space-y-4">
       {data.sampled && (
-        <div className="flex items-center gap-2 p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-sm text-amber-400">
+        <div data-pdf-keep-together className="flex items-center gap-2 p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-sm text-amber-400">
           <Info className="w-4 h-4 shrink-0" />
           Se han muestreado {data.sampleSize.toLocaleString()} de {data.totalPoints.toLocaleString()} puntos para optimizar el calculo
         </div>
@@ -1289,7 +1325,7 @@ function ComprehensiveResults({
         <>
           <ComparisonTable data={data} />
           {perInd.map((ind: any, idx: number) => (
-            <div key={ind.individual} className="space-y-4">
+            <div key={ind.individual} data-pdf-keep-together className="space-y-4">
               <h3 className="text-sm font-semibold text-foreground mt-2" style={{ color: ANIMAL_COLORS[idx % ANIMAL_COLORS.length] }}>
                 {ind.individual}
               </h3>
