@@ -67,7 +67,7 @@ export interface IStorage {
   getDeviceDeploymentsForIndividual(individualId: string): Promise<DeviceDeployment[]>;
   getDeviceDeploymentsForDevice(deviceLocalIdentifier: string): Promise<DeviceDeployment[]>;
   createDeviceDeployment(data: InsertDeviceDeployment & { createdBy?: string | null }): Promise<DeviceDeployment>;
-  closeOpenDeviceDeployments(individualId: string, deviceLocalIdentifier: string, endDate: Date): Promise<number>;
+  closeDeviceDeploymentById(id: string, endDate: Date): Promise<DeviceDeployment>;
   transferDevice(input: {
     fromIndividualId: string;
     toIndividualId: string;
@@ -1570,28 +1570,80 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(deviceDeployments.startDate));
   }
 
+  // Creación manual "de arranque": no forma parte de una transferencia (ver
+  // transferDevice más abajo, que cierra+abre en pareja). Misma invariante que
+  // transferDevice protege con lock: un dispositivo no puede tener dos
+  // deployments abiertos a la vez. Si se crea uno abierto (sin endDate), pasa
+  // a ser "el dispositivo actual" del animal (individuals.localIdentifier);
+  // si se crea ya cerrado (con endDate, para rellenar historial antiguo), no
+  // se toca localIdentifier porque el animal no lo porta ahora mismo.
   async createDeviceDeployment(data: InsertDeviceDeployment & { createdBy?: string | null }): Promise<DeviceDeployment> {
-    const [row] = await db.insert(deviceDeployments).values({
-      individualId: data.individualId,
-      deviceLocalIdentifier: data.deviceLocalIdentifier,
-      startDate: data.startDate ?? null,
-      endDate: data.endDate ?? null,
-      notes: data.notes ?? null,
-      createdBy: data.createdBy ?? null,
-    }).returning();
-    return row;
+    return await db.transaction(async (tx) => {
+      const [ind] = await tx.select().from(individuals).where(eq(individuals.id, data.individualId)).for("update");
+      if (!ind) throw new Error("Animal no encontrado");
+
+      if (!data.endDate) {
+        const openForDevice = await tx.select().from(deviceDeployments)
+          .where(and(
+            eq(deviceDeployments.deviceLocalIdentifier, data.deviceLocalIdentifier),
+            sql`${deviceDeployments.endDate} IS NULL`,
+          ))
+          .for("update");
+        if (openForDevice.length > 0) {
+          throw new Error(
+            `Ya existe un deployment abierto para el dispositivo "${data.deviceLocalIdentifier}". Ciérralo primero o usa "Transferir dispositivo".`
+          );
+        }
+        if (ind.localIdentifier && ind.localIdentifier !== data.deviceLocalIdentifier) {
+          throw new Error(
+            `Este animal ya tiene asignado el dispositivo "${ind.localIdentifier}". Ciérralo o transfiérelo antes de asignar uno nuevo.`
+          );
+        }
+      }
+
+      const [created] = await tx.insert(deviceDeployments).values({
+        individualId: data.individualId,
+        deviceLocalIdentifier: data.deviceLocalIdentifier,
+        startDate: data.startDate ?? null,
+        endDate: data.endDate ?? null,
+        notes: data.notes ?? null,
+        createdBy: data.createdBy ?? null,
+      }).returning();
+
+      if (!data.endDate) {
+        await tx.update(individuals).set({ localIdentifier: data.deviceLocalIdentifier }).where(eq(individuals.id, data.individualId));
+      }
+
+      return created;
+    });
   }
 
-  async closeOpenDeviceDeployments(individualId: string, deviceLocalIdentifier: string, endDate: Date): Promise<number> {
-    const result = await db.update(deviceDeployments)
-      .set({ endDate })
-      .where(and(
-        eq(deviceDeployments.individualId, individualId),
-        eq(deviceDeployments.deviceLocalIdentifier, deviceLocalIdentifier),
-        sql`${deviceDeployments.endDate} IS NULL`,
-      ))
-      .returning({ id: deviceDeployments.id });
-    return result.length;
+  // Cierre manual sin reasignar (p. ej. ave muerta, dispositivo recuperado sin
+  // destino todavía). Libera individuals.localIdentifier solo si seguía
+  // apuntando exactamente a este dispositivo (por si ya cambió entre medias).
+  async closeDeviceDeploymentById(id: string, endDate: Date): Promise<DeviceDeployment> {
+    return await db.transaction(async (tx) => {
+      const [dep] = await tx.select().from(deviceDeployments).where(eq(deviceDeployments.id, id)).for("update");
+      if (!dep) throw new Error("Deployment no encontrado");
+      if (dep.endDate) throw new Error("Este deployment ya está cerrado");
+      if (dep.startDate && dep.startDate > endDate) {
+        throw new Error("La fecha de cierre es anterior a la fecha de inicio del deployment");
+      }
+
+      const [updated] = await tx.update(deviceDeployments)
+        .set({ endDate })
+        .where(eq(deviceDeployments.id, id))
+        .returning();
+
+      await tx.update(individuals)
+        .set({ localIdentifier: null })
+        .where(and(
+          eq(individuals.id, dep.individualId),
+          eq(individuals.localIdentifier, dep.deviceLocalIdentifier),
+        ));
+
+      return updated;
+    });
   }
 
   async transferDevice(input: {

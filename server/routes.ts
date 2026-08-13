@@ -8,7 +8,7 @@ import { pool } from "./db";
 import { setupAuth, requireAuth, requireSuperuser, checkRole } from "./auth";
 import { fetchMovebankIndividuals, fetchMovebankDeployments, fetchMovebankEvents, fetchMovebankDeploymentIndividualMap, MovebankError } from "./movebank";
 import { movebankRateLimiter, movebankDelay } from "./movebankRateLimit";
-import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study, insertAccelerometerLabelSchema, deviceTransferSchema } from "@shared/schema";
+import { registerSchema, insertStudySchema, insertSpeciesProfileSchema, insertEmissionAlertSchema, insertSpeciesSchema, insertProjectSchema, DEFAULT_THRESHOLDS, normalizeThresholds, type EventThresholds, ANALYSIS_TYPES, type AnalysisType, EVENT_TYPES, type CachedGpsEvent, type CachedAccEvent, type Study, insertAccelerometerLabelSchema, deviceTransferSchema, createDeviceDeploymentSchema } from "@shared/schema";
 import { detectEvents } from "./eventDetection";
 import { sendEventAlert } from "./emailService";
 import { runAnalysis, KERNEL_PERCENTAGES, MCP_PERCENTAGES, type AnalysisResult } from "./geoAnalysis";
@@ -1723,6 +1723,64 @@ export async function registerRoutes(
     } catch (e: any) {
       return res.status(400).json({ message: e?.message || "Datos inválidos" });
     }
+  });
+
+  // Creación/cierre manual de un device_deployment fuera de una transferencia
+  // 1-a-1 (ver /api/device-transfers arriba): cubre cerrar sin reasignar
+  // (ave muerta, dispositivo recuperado sin destino todavía) y crear uno de
+  // arranque (dispositivo nuevo, o rellenar historial de uno antiguo).
+  app.post("/api/deployments", checkRole("superuser"), async (req, res) => {
+    try {
+      const parsed = createDeviceDeploymentSchema.parse(req.body);
+      const startDate = parsed.startDate ? new Date(parsed.startDate) : null;
+      if (startDate && Number.isNaN(startDate.getTime())) {
+        return res.status(400).json({ message: "Fecha de inicio inválida" });
+      }
+      const endDate = parsed.endDate ? new Date(parsed.endDate) : null;
+      if (endDate && Number.isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: "Fecha de fin inválida" });
+      }
+      const created = await storage.createDeviceDeployment({
+        individualId: parsed.individualId,
+        deviceLocalIdentifier: parsed.deviceLocalIdentifier,
+        startDate,
+        endDate,
+        notes: parsed.notes ?? null,
+        createdBy: req.user!.id,
+      });
+      return res.json(created);
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Datos inválidos" });
+    }
+  });
+
+  app.patch("/api/deployments/:id/close", checkRole("superuser"), async (req, res) => {
+    try {
+      const endDate = req.body.endDate ? new Date(req.body.endDate) : new Date();
+      if (Number.isNaN(endDate.getTime())) {
+        return res.status(400).json({ message: "Fecha de cierre inválida" });
+      }
+      const closed = await storage.closeDeviceDeploymentById(req.params.id, endDate);
+      return res.json(closed);
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Datos inválidos" });
+    }
+  });
+
+  app.get("/api/devices/:localIdentifier/deployments", requireAuth, async (req, res) => {
+    const deviceLocalIdentifier = req.params.localIdentifier;
+    const rows = await storage.getDeviceDeploymentsForDevice(deviceLocalIdentifier);
+    const user = req.user!;
+    if (user.role !== "superuser" && rows.length > 0) {
+      const userStudyIds = new Set((await storage.getStudiesForUser(user.id)).map((s) => s.id));
+      const individualIds = Array.from(new Set(rows.map((r) => r.individualId)));
+      const owners = await Promise.all(individualIds.map((id) => storage.getIndividualById(id)));
+      const hasAccessToAll = owners.every((ind) => ind && userStudyIds.has(ind.studyId));
+      if (!hasAccessToAll) {
+        return res.status(403).json({ message: "Sin acceso a este dispositivo" });
+      }
+    }
+    return res.json(rows);
   });
 
   app.delete("/api/acc-labels/:id", checkRole("superuser", "user"), async (req, res) => {

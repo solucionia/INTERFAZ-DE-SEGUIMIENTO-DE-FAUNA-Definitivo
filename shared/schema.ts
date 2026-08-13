@@ -565,3 +565,13 @@ export const deviceTransferSchema = z.object({
 });
 
 export type DeviceTransferInput = z.infer<typeof deviceTransferSchema>;
+
+export const createDeviceDeploymentSchema = z.object({
+  individualId: z.string().min(1),
+  deviceLocalIdentifier: z.string().min(1).max(200),
+  startDate: z.string().min(1).optional().nullable(),
+  endDate: z.string().min(1).optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export type CreateDeviceDeploymentInput = z.infer<typeof createDeviceDeploymentSchema>;

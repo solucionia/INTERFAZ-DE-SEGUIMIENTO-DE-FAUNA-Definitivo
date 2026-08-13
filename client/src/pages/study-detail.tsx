@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
-import type { Study, Individual, Deployment, Project } from "@shared/schema";
+import type { Study, Individual, Deployment, Project, DeviceDeployment } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft, Power, PowerOff, Trash2 } from "lucide-react";
+import { RefreshCw, PawPrint, AlertCircle, BarChart3, RadioTower, WifiOff, Globe, Database, AlertTriangle, Upload, Search, Pencil, Plus, Wrench, Link2, MapPin, ChevronDown, ChevronUp, Loader2, ExternalLink, ArrowRightLeft, Power, PowerOff, Trash2, History } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -57,6 +57,13 @@ export default function StudyDetail() {
   const [transferDate, setTransferDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [transferNotes, setTransferNotes] = useState<string>("");
   const [transferring, setTransferring] = useState(false);
+  const [historyIndividual, setHistoryIndividual] = useState<Individual | null>(null);
+  const [closingDeploymentId, setClosingDeploymentId] = useState<string | null>(null);
+  const [newDeployIndividualId, setNewDeployIndividualId] = useState<string>("");
+  const [newDeployStart, setNewDeployStart] = useState<string>("");
+  const [newDeployEnd, setNewDeployEnd] = useState<string>("");
+  const [newDeployNotes, setNewDeployNotes] = useState<string>("");
+  const [creatingDeployment, setCreatingDeployment] = useState(false);
   const [editForm, setEditForm] = useState({ nickName: "", taxon: "", sex: "", animalLifeStage: "", projectId: "" as string, historyNumber: "", officialRingId: "", pvcRingId: "" });
   const [deploymentStatus, setDeploymentStatus] = useState<"active" | "inactive">("active");
   const [deployOffDate, setDeployOffDate] = useState("");
@@ -94,6 +101,14 @@ export default function StudyDetail() {
     enabled: !!studyId,
     staleTime: 30000,
     refetchInterval: 60000,
+  });
+
+  // Historial completo de un IMEI a través de todos los individuos que lo han
+  // portado (no solo el individuo actual) — ver server/deploymentWindows.ts.
+  const historyDeviceId = historyIndividual?.localIdentifier || "";
+  const { data: deviceHistory, isLoading: deviceHistoryLoading } = useQuery<DeviceDeployment[]>({
+    queryKey: ["/api/devices", historyDeviceId, "deployments"],
+    enabled: !!historyDeviceId,
   });
 
   const { data: gpsCounts } = useQuery<Record<string, { count: number; lastTimestamp: number | null }>>({
@@ -1117,6 +1132,23 @@ export default function StudyDetail() {
                                   <ArrowRightLeft className="w-3.5 h-3.5" />
                                 </Button>
                               )}
+                              {canEditIndividuals && ind.localIdentifier && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Ver historial de deployments de este dispositivo"
+                                  onClick={() => {
+                                    setHistoryIndividual(ind);
+                                    setNewDeployIndividualId(ind.id);
+                                    setNewDeployStart("");
+                                    setNewDeployEnd("");
+                                    setNewDeployNotes("");
+                                  }}
+                                  data-testid={`button-device-history-${ind.movebankId}`}
+                                >
+                                  <History className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
                               {canEditIndividuals && (
                                 <Button
                                   size="icon"
@@ -1405,6 +1437,176 @@ export default function StudyDetail() {
             >
               {transferring ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Transferir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!historyIndividual}
+        onOpenChange={(open) => { if (!open) setHistoryIndividual(null); }}
+      >
+        <DialogContent className="max-w-2xl" data-testid="dialog-device-history">
+          <DialogHeader>
+            <DialogTitle>Historial del dispositivo {historyIndividual?.localIdentifier}</DialogTitle>
+          </DialogHeader>
+          {historyIndividual && (
+            <div className="space-y-4">
+              {deviceHistoryLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full rounded" />)}
+                </div>
+              ) : !deviceHistory || deviceHistory.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="text-no-device-history">
+                  Sin historial de transferencias — este dispositivo no ha cambiado de individuo.
+                </p>
+              ) : (
+                <div className="overflow-auto max-h-64">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Animal</TableHead>
+                        <TableHead>Inicio</TableHead>
+                        <TableHead>Fin</TableHead>
+                        <TableHead>Notas</TableHead>
+                        <TableHead className="w-16"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {deviceHistory.map((dep) => {
+                        const owner = (individuals || []).find((i) => i.id === dep.individualId);
+                        const ownerLabel = owner ? (owner.nickName || owner.ornitelaName || `ID-${owner.movebankId}`) : dep.individualId;
+                        return (
+                          <TableRow key={dep.id} data-testid={`row-deployment-${dep.id}`}>
+                            <TableCell className="font-medium">{ownerLabel}</TableCell>
+                            <TableCell className="text-muted-foreground text-xs">
+                              {dep.startDate ? new Date(dep.startDate).toLocaleString("es-ES") : "—"}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs">
+                              {dep.endDate
+                                ? new Date(dep.endDate).toLocaleString("es-ES")
+                                : <Badge variant="outline" className="text-emerald-600 border-emerald-600/30">Activo</Badge>}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs max-w-[160px] truncate">{dep.notes || "—"}</TableCell>
+                            <TableCell>
+                              {!dep.endDate && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={closingDeploymentId === dep.id}
+                                  onClick={async () => {
+                                    setClosingDeploymentId(dep.id);
+                                    try {
+                                      await apiRequest("PATCH", `/api/deployments/${dep.id}/close`, { endDate: new Date().toISOString() });
+                                      toast({ title: "Deployment cerrado", description: "El dispositivo queda sin animal asignado." });
+                                      queryClient.invalidateQueries({ queryKey: ["/api/devices", historyDeviceId, "deployments"] });
+                                      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+                                    } catch (e: any) {
+                                      toast({ title: "No se pudo cerrar", description: e?.message || "Error inesperado", variant: "destructive" });
+                                    } finally {
+                                      setClosingDeploymentId(null);
+                                    }
+                                  }}
+                                  data-testid={`button-close-deployment-${dep.id}`}
+                                >
+                                  {closingDeploymentId === dep.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Cerrar"}
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              <div className="border-t pt-3 space-y-3">
+                <p className="text-sm font-medium">Nuevo deployment para {historyIndividual.localIdentifier}</p>
+                <div className="space-y-1">
+                  <Label>Animal</Label>
+                  <Select value={newDeployIndividualId} onValueChange={setNewDeployIndividualId}>
+                    <SelectTrigger data-testid="select-new-deployment-individual">
+                      <SelectValue placeholder="Selecciona un animal" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(individuals || []).map((i) => (
+                        <SelectItem key={i.id} value={i.id} data-testid={`option-new-deployment-${i.movebankId}`}>
+                          {i.nickName || i.ornitelaName || `ID-${i.movebankId}`}
+                          {i.taxonCanonicalName ? ` — ${i.taxonCanonicalName}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label>Fecha inicio (opcional)</Label>
+                    <Input
+                      type="datetime-local"
+                      value={newDeployStart}
+                      onChange={(e) => setNewDeployStart(e.target.value)}
+                      data-testid="input-new-deployment-start"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Fecha fin (opcional, vacío = activo)</Label>
+                    <Input
+                      type="datetime-local"
+                      value={newDeployEnd}
+                      onChange={(e) => setNewDeployEnd(e.target.value)}
+                      data-testid="input-new-deployment-end"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Notas (opcional)</Label>
+                  <Textarea
+                    rows={2}
+                    value={newDeployNotes}
+                    onChange={(e) => setNewDeployNotes(e.target.value)}
+                    data-testid="input-new-deployment-notes"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Deja la fecha de fin vacía para asignar el dispositivo como activo a ese animal; rellénala para dejar constancia histórica sin activarlo.
+                </p>
+                <Button
+                  disabled={!newDeployIndividualId || creatingDeployment}
+                  onClick={async () => {
+                    if (!historyIndividual.localIdentifier) return;
+                    setCreatingDeployment(true);
+                    try {
+                      await apiRequest("POST", "/api/deployments", {
+                        individualId: newDeployIndividualId,
+                        deviceLocalIdentifier: historyIndividual.localIdentifier,
+                        startDate: newDeployStart ? new Date(newDeployStart).toISOString() : null,
+                        endDate: newDeployEnd ? new Date(newDeployEnd).toISOString() : null,
+                        notes: newDeployNotes || null,
+                      });
+                      toast({ title: "Deployment creado" });
+                      queryClient.invalidateQueries({ queryKey: ["/api/devices", historyDeviceId, "deployments"] });
+                      queryClient.invalidateQueries({ queryKey: ["/api/studies", studyId, "individuals"] });
+                      setNewDeployStart("");
+                      setNewDeployEnd("");
+                      setNewDeployNotes("");
+                    } catch (e: any) {
+                      toast({ title: "No se pudo crear", description: e?.message || "Error inesperado", variant: "destructive" });
+                    } finally {
+                      setCreatingDeployment(false);
+                    }
+                  }}
+                  data-testid="button-create-deployment"
+                >
+                  {creatingDeployment ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Crear deployment
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistoryIndividual(null)} data-testid="button-close-history-dialog">
+              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>
