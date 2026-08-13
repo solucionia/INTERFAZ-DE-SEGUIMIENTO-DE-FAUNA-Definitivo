@@ -1,4 +1,4 @@
-import html2canvas from "html2canvas";
+import html2canvas from "html2canvas-pro";
 
 export const MAP_CAPTURE_TIMEOUT_MS = 60_000;
 export const CHART_CAPTURE_TIMEOUT_MS = 30_000;
