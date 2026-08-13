@@ -1635,6 +1635,8 @@ export class DatabaseStorage implements IStorage {
         throw new Error("La fecha de cierre es anterior a la fecha de inicio del deployment");
       }
 
+      const [ind] = await tx.select().from(individuals).where(eq(individuals.id, dep.individualId)).for("update");
+
       const [updated] = await tx.update(deviceDeployments)
         .set({ endDate })
         .where(eq(deviceDeployments.id, id))
@@ -1643,6 +1645,27 @@ export class DatabaseStorage implements IStorage {
       await tx.update(individuals)
         .set({ localIdentifier: null })
         .where(eq(individuals.id, dep.individualId));
+
+      // La tabla legacy `deployments` (estilo Movebank, independiente de
+      // device_deployments) es la que alimenta "Rastreando"/los contadores de
+      // study-detail.tsx (activeDeploymentIndividualIds = deployOff IS NULL
+      // ahí). upsertOrnitelaDeploymentsForIndividuals solo repunta esa fila en
+      // el siguiente sync si ALGÚN individuo tiene este IMEI como
+      // localIdentifier; como acabamos de dejarlo en null, esa fila quedaría
+      // huérfana para siempre si no la cerramos aquí explícitamente.
+      // deployOff es texto "YYYY-MM-DD" (fecha, no datetime) — no un Date sin
+      // formatear como endDate en device_deployments.
+      if (ind) {
+        const deployOffDate = endDate.toISOString().slice(0, 10);
+        await tx.update(deployments)
+          .set({ deployOff: deployOffDate })
+          .where(and(
+            eq(deployments.studyId, ind.studyId),
+            eq(deployments.individualId, ind.movebankId),
+            eq(deployments.localIdentifier, dep.deviceLocalIdentifier),
+            isNull(deployments.deployOff),
+          ));
+      }
 
       return updated;
     });
