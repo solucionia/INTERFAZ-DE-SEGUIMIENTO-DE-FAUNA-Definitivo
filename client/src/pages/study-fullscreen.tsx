@@ -16,7 +16,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, ChevronLeft, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, ChevronLeft, SlidersHorizontal, Minimize2, Maximize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabel, formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
@@ -188,6 +188,7 @@ export default function StudyFullscreen() {
   const [focusAnimal, setFocusAnimal] = useState<string>(initial.focus);
   const [compareAnimal, setCompareAnimal] = useState<string>("");
   const [panelOpen, setPanelOpen] = useState(true);
+  const [infoBoxOpen, setInfoBoxOpen] = useState(true);
   const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
   const [hideLowQuality, setHideLowQuality] = useState(false);
   const [showTrackLine, setShowTrackLine] = useState(true);
@@ -759,30 +760,52 @@ export default function StudyFullscreen() {
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
       {/* Mapa: dos tercios superiores (se reduce para ampliar el acelerómetro) */}
       <div ref={dragParentRef} className="h-2/3 relative">
-        <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
-            <MapPin className="w-4 h-4 text-primary shrink-0" />
-            <span className="truncate">{headerLabel}</span>
-          </div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {study?.name ? `${study.name} · ` : ""}{dateStart} → {dateEnd}
-          </div>
-          {!loading && !error && (
-            <div className="text-[11px] text-muted-foreground mt-0.5" data-testid="text-fullscreen-counts">
-              {totalGps} GPS · {totalAcc} muestras ACC
+        {infoBoxOpen ? (
+          <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]" data-testid="info-box-fullscreen">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
+              <MapPin className="w-4 h-4 text-primary shrink-0" />
+              <span className="truncate flex-1 min-w-0">{headerLabel}</span>
+              <button
+                onClick={() => setInfoBoxOpen(false)}
+                className="text-muted-foreground hover:text-foreground shrink-0"
+                data-testid="button-collapse-info-box"
+                title="Minimizar"
+              >
+                <Minimize2 className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
-          {selectedAnimals.length > 1 && (
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {selectedAnimals.map((a) => (
-                <span key={a} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: animalColorMap[a] }} />
-                  {formatAnimalLabelById(a, individualByLocalId)}
-                </span>
-              ))}
+            <div className="text-xs text-muted-foreground mt-0.5">
+              {study?.name ? `${study.name} · ` : ""}{dateStart} → {dateEnd}
             </div>
-          )}
-        </div>
+            {!loading && !error && (
+              <div className="text-[11px] text-muted-foreground mt-0.5" data-testid="text-fullscreen-counts">
+                {totalGps} GPS · {totalAcc} muestras ACC
+              </div>
+            )}
+            {selectedAnimals.length > 1 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {selectedAnimals.map((a) => (
+                  <span key={a} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: animalColorMap[a] }} />
+                    {formatAnimalLabelById(a, individualByLocalId)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="absolute top-2 left-2 z-[1000]">
+            <button
+              onClick={() => setInfoBoxOpen(true)}
+              className="flex items-center gap-1.5 bg-background/95 backdrop-blur-sm border border-border rounded-md px-2.5 py-1.5 shadow-md text-xs font-medium hover-elevate"
+              data-testid="button-expand-info-box"
+              title="Mostrar información"
+            >
+              <MapPin className="w-4 h-4 text-primary" />
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Panel de control flotante minimizable (esquina superior derecha) */}
         {panelOpen ? (
