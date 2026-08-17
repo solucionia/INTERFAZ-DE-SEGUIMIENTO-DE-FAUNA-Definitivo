@@ -628,14 +628,12 @@ export default function StudyVisualization() {
     [findClosestGpsPoint]
   );
 
+  // Siempre un único animal (el filtrado, o el primero de la selección si no
+  // hay filtro explícito). Ya no existe una vista "combinada" que mezcle los
+  // puntos de varios animales en una sola serie.
   const chartData = useMemo(() => {
-    const animalId = activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
-    let data: AccPoint[];
-    if (animalId) {
-      data = accData[animalId] || [];
-    } else {
-      data = Object.values(accData).flat().sort((a, b) => a.timestamp - b.timestamp);
-    }
+    const animalId = activeAnimalFilter || selectedAnimals[0] || null;
+    let data: AccPoint[] = animalId ? accData[animalId] || [] : [];
 
     if (zoomStart !== null && zoomEnd !== null) {
       const left = Math.min(zoomStart, zoomEnd);
@@ -647,7 +645,7 @@ export default function StudyVisualization() {
   }, [accData, selectedAnimals, activeAnimalFilter, zoomStart, zoomEnd]);
 
   const currentDeviceId = useMemo(() => {
-    return activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
+    return activeAnimalFilter || selectedAnimals[0] || null;
   }, [activeAnimalFilter, selectedAnimals]);
 
   const labelsRange = useMemo(() => {
@@ -1128,10 +1126,9 @@ export default function StudyVisualization() {
               <>
                 <span className="text-xs text-muted-foreground mx-1">|</span>
                 <Label className="text-xs text-muted-foreground">Filtrar grafica:</Label>
-                <Badge variant={activeAnimalFilter === null ? "default" : "outline"} className="cursor-pointer select-none text-xs" onClick={() => setActiveAnimalFilter(null)}>Todos</Badge>
                 {selectedAnimals.map((a) => (
-                  <Badge key={`filter-${a}`} variant={activeAnimalFilter === a ? "default" : "outline"} className="cursor-pointer select-none text-xs"
-                    style={activeAnimalFilter === a ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" } : {}}
+                  <Badge key={`filter-${a}`} variant={currentDeviceId === a ? "default" : "outline"} className="cursor-pointer select-none text-xs"
+                    style={currentDeviceId === a ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" } : {}}
                     onClick={() => setActiveAnimalFilter(a)} data-testid={`badge-filter-${a}`}>{formatAnimalLabelById(a, individualByLocalId)}</Badge>
                 ))}
               </>
@@ -1182,9 +1179,9 @@ export default function StudyVisualization() {
                     <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Activity className="w-4 h-4" />
                       Acelerometro
-                      {activeAnimalFilter && (
-                        <Badge variant="outline" className="text-xs ml-1" style={{ borderColor: animalColorMap[activeAnimalFilter], color: animalColorMap[activeAnimalFilter] }}>
-                          {activeAnimalFilter}
+                      {currentDeviceId && (
+                        <Badge variant="outline" className="text-xs ml-1" style={{ borderColor: animalColorMap[currentDeviceId], color: animalColorMap[currentDeviceId] }}>
+                          {formatAnimalLabelById(currentDeviceId, individualByLocalId)}
                         </Badge>
                       )}
                     </h2>

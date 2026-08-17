@@ -428,20 +428,20 @@ export default function StudyFullscreen() {
   const totalGps = useMemo(() => Object.values(gpsData).reduce((s, a) => s + a.length, 0), [gpsData]);
   const totalAcc = useMemo(() => Object.values(accData).reduce((s, a) => s + a.length, 0), [accData]);
 
-  // Datos de la gráfica ACC: un animal si hay foco/uno solo, si no la mezcla ordenada.
+  // Datos de la gráfica ACC: siempre un único animal (el enfocado, o el primero
+  // de la selección si no hay foco explícito). Ya no existe una vista
+  // "combinada" que mezcle los puntos de varios animales en una sola serie.
   const chartData = useMemo(() => {
-    const animalId = focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
-    let data: AccPoint[];
-    if (animalId) data = accData[animalId] || [];
-    else data = Object.values(accData).flat().sort((a, b) => a.timestamp - b.timestamp);
+    const animalId = focusAnimal || selectedAnimals[0] || null;
+    const data = animalId ? accData[animalId] || [] : [];
     return downsample(data, MAX_CHART_POINTS);
   }, [accData, focusAnimal, selectedAnimals]);
 
   const compareChartData = useMemo(() => downsample(compareAccData, MAX_CHART_POINTS), [compareAccData]);
 
-  // Animal cuyo ACC se muestra en el panel principal (foco o único seleccionado).
+  // Animal cuyo ACC se muestra en el panel principal (foco o primero de la selección).
   const mainAccAnimalId = useMemo(
-    () => focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null),
+    () => focusAnimal || selectedAnimals[0] || null,
     [focusAnimal, selectedAnimals]
   );
 
@@ -959,19 +959,12 @@ export default function StudyFullscreen() {
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Acelerómetro: enfocar animal</Label>
                   <div className="flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => setFocusAnimal("")}
-                      className={`text-[11px] px-2 py-1 rounded border ${focusAnimal === "" ? "bg-primary text-primary-foreground border-primary" : "border-input text-foreground hover-elevate"}`}
-                      data-testid="button-focus-all"
-                    >
-                      Todos
-                    </button>
                     {selectedAnimals.map((a) => (
                       <button
                         key={a}
                         onClick={() => setFocusAnimal(a)}
                         className="text-[11px] px-2 py-1 rounded border"
-                        style={focusAnimal === a
+                        style={mainAccAnimalId === a
                           ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" }
                           : { borderColor: animalColorMap[a], color: animalColorMap[a] }}
                         data-testid={`button-focus-${a}`}
@@ -1180,20 +1173,16 @@ export default function StudyFullscreen() {
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1 shrink-0">
           <Activity className="w-3.5 h-3.5" />
           Acelerómetro
-          {focusAnimal
-            ? <span className="text-muted-foreground font-normal">· {formatAnimalLabelById(focusAnimal, individualByLocalId)}</span>
-            : selectedAnimals.length > 1
-              ? <span className="text-muted-foreground font-normal">· {selectedAnimals.length} animales (combinado)</span>
-              : null}
+          {mainAccAnimalId && (
+            <span className="text-muted-foreground font-normal">· {formatAnimalLabelById(mainAccAnimalId, individualByLocalId)}</span>
+          )}
           <span className="text-muted-foreground font-normal ml-auto text-[10px]">Pincha un punto para resaltarlo en el mapa</span>
         </div>
         <div className="flex-1 min-h-0 flex gap-3">
           <div className="flex-1 min-w-0 flex flex-col">
             {compareAnimal && (
               <div className="text-[11px] font-medium text-foreground shrink-0 mb-0.5 truncate" data-testid="label-acc-main">
-                {mainAccAnimalId
-                  ? formatAnimalLabelById(mainAccAnimalId, individualByLocalId)
-                  : `${selectedAnimals.length} animales (combinado)`}
+                {mainAccAnimalId ? formatAnimalLabelById(mainAccAnimalId, individualByLocalId) : "—"}
               </div>
             )}
             <div className="flex-1 min-h-0" ref={chartContainerRef}>
