@@ -30,10 +30,23 @@ function defaultRange() {
 }
 
 interface AnimalResult {
+  key: string; // studyId::localIdentifier — único incluso si dos estudios comparten emisor
   localId: string;
+  studyId: string;
   data: AccPoint[];
   loading: boolean;
   error: string | null;
+}
+
+// Dos individuos de estudios distintos pueden compartir local_identifier
+// (mismo emisor GPS/ACC usado en dos proyectos, confirmado por GREFA), así que
+// el token de selección no puede ser solo el local_identifier.
+function makeKey(studyId: string, localId: string): string {
+  return `${studyId}::${localId}`;
+}
+function parseKey(key: string): { studyId: string; localId: string } {
+  const idx = key.indexOf("::");
+  return { studyId: key.slice(0, idx), localId: key.slice(idx + 2) };
 }
 
 export default function AccelerometerComparison() {
@@ -53,21 +66,11 @@ export default function AccelerometerComparison() {
   // usuario vuelve a lanzar una comparación antes de que termine la anterior.
   const loadIdRef = useRef(0);
 
-  // Búsqueda de metadatos por localIdentifier para etiquetas "Nombre (ID)".
-  const individualByLocalId = useMemo(() => {
-    const map = new Map<string, Individual>();
+  // Búsqueda de metadatos por key (studyId::localIdentifier) para etiquetas "Nombre (ID)".
+  const individualByKey = useMemo(() => {
+    const map = new Map<string, Individual & { studyName: string }>();
     for (const ind of individuals || []) {
-      if (ind.localIdentifier) map.set(ind.localIdentifier, ind);
-    }
-    return map;
-  }, [individuals]);
-
-  // studyId por localIdentifier: necesario porque el endpoint de eventos exige
-  // el estudio y los animales seleccionados pueden pertenecer a estudios distintos.
-  const studyIdByLocalId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const ind of individuals || []) {
-      if (ind.localIdentifier) map.set(ind.localIdentifier, ind.studyId);
+      if (ind.localIdentifier) map.set(makeKey(ind.studyId, ind.localIdentifier), ind);
     }
     return map;
   }, [individuals]);
@@ -91,25 +94,27 @@ export default function AccelerometerComparison() {
     const myLoadId = ++loadIdRef.current;
     setIsLoading(true);
     // Sembramos las tarjetas en estado "cargando" para feedback inmediato.
-    setResults(selected.map((localId) => ({ localId, data: [], loading: true, error: null })));
+    setResults(
+      selected.map((key) => {
+        const { studyId, localId } = parseKey(key);
+        return { key, localId, studyId, data: [], loading: true, error: null };
+      })
+    );
 
     // Agrupamos por estudio para minimizar el número de peticiones (una por
-    // estudio con todos sus animales), priorizando carga rápida.
-    const byStudy = new Map<string, string[]>();
-    for (const localId of selected) {
-      const studyId = studyIdByLocalId.get(localId);
-      if (!studyId) continue;
+    // estudio con todos sus animales), priorizando carga rápida. studyId viene
+    // ya codificado en la key, no hace falta resolverlo por localIdentifier.
+    const byStudy = new Map<string, { key: string; localId: string }[]>();
+    for (const key of selected) {
+      const { studyId, localId } = parseKey(key);
       if (!byStudy.has(studyId)) byStudy.set(studyId, []);
-      byStudy.get(studyId)!.push(localId);
+      byStudy.get(studyId)!.push({ key, localId });
     }
-
-    // Animales sin estudio resuelto (no debería ocurrir): marcamos error.
-    const noStudy = selected.filter((id) => !studyIdByLocalId.get(id));
 
     await Promise.all(
       Array.from(byStudy.entries()).map(async ([studyId, animals]) => {
         const params = new URLSearchParams({
-          individuals: animals.join(","),
+          individuals: animals.map((a) => a.localId).join(","),
           timestamp_start: String(tsStart),
           timestamp_end: String(tsEnd),
           sensor_type: String(SENSOR_ACC),
@@ -123,7 +128,7 @@ export default function AccelerometerComparison() {
           if (loadIdRef.current !== myLoadId) return;
           setResults((prev) =>
             prev.map((r) => {
-              if (!animals.includes(r.localId)) return r;
+              if (r.studyId !== studyId) return r;
               const parsed = downsample(parseAccEvents(r.localId, raw[r.localId] || []), MAX_CHART_POINTS);
               return { ...r, data: parsed, loading: false, error: null };
             })
@@ -132,26 +137,13 @@ export default function AccelerometerComparison() {
           if (loadIdRef.current !== myLoadId) return;
           const message = err instanceof Error ? err.message : "Error al cargar datos";
           setResults((prev) =>
-            prev.map((r) =>
-              animals.includes(r.localId) ? { ...r, loading: false, error: message } : r
-            )
+            prev.map((r) => (r.studyId === studyId ? { ...r, loading: false, error: message } : r))
           );
         }
       })
     );
 
-    if (loadIdRef.current === myLoadId) {
-      if (noStudy.length > 0) {
-        setResults((prev) =>
-          prev.map((r) =>
-            noStudy.includes(r.localId)
-              ? { ...r, loading: false, error: "No se pudo resolver el estudio del animal" }
-              : r
-          )
-        );
-      }
-      setIsLoading(false);
-    }
+    if (loadIdRef.current === myLoadId) setIsLoading(false);
   };
 
   const rangeInvalid = useMemo(() => {
@@ -192,6 +184,9 @@ export default function AccelerometerComparison() {
               onChange={handleSelectionChange}
               multiple
               placeholder="Buscar animal por nombre o ID..."
+              getKey={(ind) =>
+                ind.localIdentifier?.trim() ? makeKey(ind.studyId, ind.localIdentifier.trim()) : null
+              }
             />
             {selected.length >= MAX_ANIMALS && (
               <p className="text-xs text-amber-500">
@@ -257,13 +252,16 @@ export default function AccelerometerComparison() {
             <span>Rango:</span>
             <Badge variant="outline" data-testid="badge-active-range">{rangeLabel}</Badge>
           </div>
-          {results.map((r) => (
-            <Card key={r.localId} data-testid={`card-acc-${r.localId}`}>
+          {results.map((r) => {
+            const meta = individualByKey.get(r.key);
+            const label = formatAnimalLabelById(r.key, individualByKey) + (meta?.studyName ? ` — ${meta.studyName}` : "");
+            return (
+            <Card key={r.key} data-testid={`card-acc-${r.key}`}>
               <CardHeader className="py-3">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Activity className="w-4 h-4 text-muted-foreground" />
-                  <span data-testid={`text-animal-${r.localId}`}>
-                    {formatAnimalLabelById(r.localId, individualByLocalId)}
+                  <span data-testid={`text-animal-${r.key}`}>
+                    {label}
                   </span>
                   {!r.loading && !r.error && (
                     <span className="text-xs text-muted-foreground font-normal ml-auto">
@@ -295,7 +293,8 @@ export default function AccelerometerComparison() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

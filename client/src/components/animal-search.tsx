@@ -12,8 +12,13 @@ function normalizeText(text: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+// studyName opcional: presente cuando individuals viene de /api/individuals/all
+// (todos los estudios), para distinguir en el label animales que comparten
+// local_identifier entre estudios distintos (mismo emisor, dos proyectos).
+type IndividualWithStudy = Individual & { studyName?: string };
+
 export interface AnimalSearchProps {
-  individuals: Individual[];
+  individuals: IndividualWithStudy[];
   selected: string[];
   onChange: (selected: string[]) => void;
   multiple?: boolean;
@@ -52,16 +57,19 @@ export function AnimalSearch({
 
   const selectableAnimals = useMemo(() => {
     const withId = individuals.filter((i) => keyOf(i) != null);
-    // Dedupe por token: el mismo emisor puede aparecer en varios
-    // estudios (p.ej. un stub sin metadatos + el registro real importado).
+    // Dedupe por token dentro del mismo estudio: el mismo emisor puede aparecer
+    // duplicado ahí (p.ej. un stub sin metadatos + el registro real importado).
     // Nos quedamos con el registro más informativo para no mostrarlo dos veces.
+    // Si dos individuos distintos comparten local_identifier pero pertenecen a
+    // estudios distintos (emisor reutilizado en dos proyectos, caso confirmado
+    // por GREFA), NO se fusionan: study_id forma parte de la key.
     const score = (i: Individual) =>
       (i.ornitelaName?.trim() ? 2 : 0) +
       (i.nickName?.trim() ? 1 : 0) +
       (i.taxonCanonicalName?.trim() ? 1 : 0);
-    const byLocalId = new Map<string, Individual>();
+    const byLocalId = new Map<string, IndividualWithStudy>();
     for (const ind of withId) {
-      const key = keyOf(ind)!;
+      const key = `${keyOf(ind)!}|${ind.studyId}`;
       const current = byLocalId.get(key);
       if (!current || score(ind) > score(current)) byLocalId.set(key, ind);
     }
@@ -210,7 +218,10 @@ export function AnimalSearch({
                         />
                       )}
                       <div className="flex-1 min-w-0">
-                        <span className="font-medium truncate block">{formatAnimalLabel(ind)}</span>
+                        <span className="font-medium truncate block">
+                          {formatAnimalLabel(ind)}
+                          {ind.studyName ? ` — ${ind.studyName}` : ""}
+                        </span>
                         {(ind.nickName || ind.taxonCanonicalName) && (
                           <span className="text-xs text-muted-foreground truncate block">
                             {[
@@ -273,7 +284,7 @@ export function AnimalSearch({
               className="gap-1 text-xs"
               data-testid={`chip-animal-${localId}`}
             >
-              {ind ? formatAnimalLabel(ind) : localId}
+              {ind ? `${formatAnimalLabel(ind)}${ind.studyName ? ` — ${ind.studyName}` : ""}` : localId}
               <button
                 type="button"
                 onClick={(e) => {
