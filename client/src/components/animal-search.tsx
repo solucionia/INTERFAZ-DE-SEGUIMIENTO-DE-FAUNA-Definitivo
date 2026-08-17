@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { Individual } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +50,32 @@ export function AnimalSearch({
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  // Posición del dropdown calculada a mano: se renderiza vía portal a
+  // document.body (ver más abajo) para no quedar recortado quando el
+  // componente está anidado dentro de un ancestro con overflow/scroll propio
+  // (p.ej. el panel flotante de controles en study-fullscreen.tsx) — un
+  // dropdown "position: absolute" normal se recorta ahí y su pie con
+  // "Todos"/"Ninguno" queda inalcanzable con scroll.
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    function updatePosition() {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    }
+    updatePosition();
+    // capture:true para enterarse del scroll de CUALQUIER ancestro con scroll
+    // propio (los eventos "scroll" no burbujean, pero sí se capturan).
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [open]);
 
   const selectableAnimals = useMemo(() => {
     const withId = individuals.filter((i) => keyOf(i) != null);
@@ -113,9 +140,13 @@ export function AnimalSearch({
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      // El dropdown se porta a document.body (ver dropdownRef más abajo), así
+      // que ya no es descendiente de containerRef: hay que comprobar los dos
+      // para no cerrarlo al hacer clic dentro de sus propias opciones.
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -170,8 +201,13 @@ export function AnimalSearch({
         )}
       </div>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md" data-testid="dropdown-animal-results">
+      {open && dropdownPos && createPortal(
+        <div
+          ref={dropdownRef}
+          className="fixed z-50 rounded-md border bg-popover shadow-md"
+          style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width }}
+          data-testid="dropdown-animal-results"
+        >
           <div className="max-h-[300px] overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: "touch" }}>
             {filtered.length === 0 ? (
               <div className="p-3 text-center text-sm text-muted-foreground">
@@ -259,7 +295,8 @@ export function AnimalSearch({
               </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {selected.length > 0 && (
