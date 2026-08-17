@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import type { Study, User, SpeciesProfile, OrnitelaDeviceStudy, UnassignedSftpFile } from "@shared/schema";
+import { getAnimalDisplayName } from "@/lib/animal-label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -56,7 +57,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings, X, FileWarning } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Loader2, Radio, Settings, X, FileWarning, AlertTriangle } from "lucide-react";
 
 const createStudyFormSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
@@ -796,11 +797,21 @@ function OrnitelaDeviceAllowlist({
   );
 }
 
+// Individuo histórico encontrado con el mismo local_identifier (emisor) en
+// cualquier estudio — puede haber varios (transferencias, o el mismo emisor
+// reutilizado en dos proyectos a la vez).
+interface KnownAnimalHint {
+  ornitelaName: string | null;
+  nickName: string | null;
+  studyName: string;
+}
+type UnassignedSftpFileWithHint = UnassignedSftpFile & { knownAnimals: KnownAnimalHint[] };
+
 function UnassignedFilesCard({ studies }: { studies: Study[] }) {
   const { toast } = useToast();
   const [selected, setSelected] = useState<Record<string, string>>({});
 
-  const { data: files, isLoading } = useQuery<UnassignedSftpFile[]>({
+  const { data: files, isLoading } = useQuery<UnassignedSftpFileWithHint[]>({
     queryKey: ["/api/sftp/unassigned"],
   });
 
@@ -847,6 +858,7 @@ function UnassignedFilesCard({ studies }: { studies: Study[] }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Device ID</TableHead>
+                <TableHead>Ejemplar</TableHead>
                 <TableHead>Archivo</TableHead>
                 <TableHead>Fecha archivo</TableHead>
                 <TableHead>Último intento</TableHead>
@@ -858,6 +870,33 @@ function UnassignedFilesCard({ studies }: { studies: Study[] }) {
               {(files ?? []).map((f) => (
                 <TableRow key={f.id} data-testid={`row-unassigned-${f.id}`}>
                   <TableCell className="font-mono text-xs">{f.deviceId ?? "—"}</TableCell>
+                  <TableCell className="text-xs max-w-[220px]" data-testid={`cell-known-animal-${f.id}`}>
+                    {f.knownAnimals.length === 0 ? (
+                      "—"
+                    ) : (
+                      <div className="flex flex-col gap-0.5">
+                        {f.knownAnimals.map((a, i) => {
+                          const name = getAnimalDisplayName(a);
+                          return (
+                            <div key={i} className="flex items-center gap-1">
+                              {!name && (
+                                <span
+                                  title='Este emisor ya perteneció a un individuo sin nombre asignado (ni Ornitela ni apodo) en otro estudio.'
+                                  className="inline-flex shrink-0"
+                                  data-testid={`icon-no-name-hint-${f.id}-${i}`}
+                                >
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                                </span>
+                              )}
+                              <span className="truncate">
+                                {name ?? "(sin nombre)"} <span className="text-muted-foreground">({a.studyName})</span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-xs max-w-[180px] truncate" title={f.filename}>
                     {f.filename}
                   </TableCell>

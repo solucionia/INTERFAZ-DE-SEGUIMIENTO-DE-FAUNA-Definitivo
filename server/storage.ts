@@ -49,6 +49,13 @@ export interface IStorage {
   getIndividuals(studyId: string): Promise<Individual[]>;
   getIndividualById(id: string): Promise<Individual | undefined>;
   getAllIndividualsForUser(userId: string): Promise<(Individual & { studyName: string })[]>;
+  // Busca individuos por local_identifier en CUALQUIER estudio (no solo el
+  // actual) — un emisor puede haber pertenecido a otro animal en otro estudio
+  // (transferencias, o reutilización del mismo emisor en dos proyectos).
+  // Usado para mostrar la pista en "Archivos SFTP sin asignar".
+  getIndividualsByLocalIdentifiers(localIdentifiers: string[]): Promise<
+    { localIdentifier: string | null; ornitelaName: string | null; nickName: string | null; studyName: string }[]
+  >;
   upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void>;
   updateIndividual(id: string, data: Partial<Pick<Individual, "nickName" | "taxonCanonicalName" | "sex" | "animalLifeStage" | "projectId" | "historyNumber" | "officialRingId" | "pvcRingId">>): Promise<Individual | undefined>;
   setIndividualActiveStatus(id: string, isActive: boolean): Promise<Individual | undefined>;
@@ -419,6 +426,22 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(userStudies, eq(studies.id, userStudies.studyId))
       .where(eq(userStudies.userId, userId));
     return rows as (Individual & { studyName: string })[];
+  }
+
+  async getIndividualsByLocalIdentifiers(localIdentifiers: string[]): Promise<
+    { localIdentifier: string | null; ornitelaName: string | null; nickName: string | null; studyName: string }[]
+  > {
+    if (localIdentifiers.length === 0) return [];
+    return db
+      .select({
+        localIdentifier: individuals.localIdentifier,
+        ornitelaName: individuals.ornitelaName,
+        nickName: individuals.nickName,
+        studyName: studies.name,
+      })
+      .from(individuals)
+      .innerJoin(studies, eq(individuals.studyId, studies.id))
+      .where(inArray(individuals.localIdentifier, localIdentifiers));
   }
 
   async upsertIndividuals(studyId: string, data: Omit<Individual, "id">[]): Promise<void> {

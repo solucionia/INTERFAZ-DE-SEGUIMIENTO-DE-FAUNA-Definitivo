@@ -520,7 +520,28 @@ export async function registerRoutes(
   app.get("/api/sftp/unassigned", requireSuperuser, async (_req, res) => {
     try {
       const files = await storage.listUnassignedSftpFiles({ limit: 200 });
-      return res.json(files);
+
+      // Pista de "ejemplar conocido": el mismo emisor (device_id/local_identifier)
+      // puede haber pertenecido a un individuo en OTRO estudio (transferencias,
+      // o el mismo emisor reutilizado en dos proyectos a la vez). Una sola
+      // consulta batch, no una por fila.
+      const deviceIds = Array.from(
+        new Set(files.map((f) => f.deviceId).filter((id): id is string => !!id))
+      );
+      const matches = await storage.getIndividualsByLocalIdentifiers(deviceIds);
+      const knownAnimalsByDeviceId = new Map<string, typeof matches>();
+      for (const m of matches) {
+        if (!m.localIdentifier) continue;
+        const list = knownAnimalsByDeviceId.get(m.localIdentifier) ?? [];
+        list.push(m);
+        knownAnimalsByDeviceId.set(m.localIdentifier, list);
+      }
+
+      const enriched = files.map((f) => ({
+        ...f,
+        knownAnimals: f.deviceId ? knownAnimalsByDeviceId.get(f.deviceId) ?? [] : [],
+      }));
+      return res.json(enriched);
     } catch (e: any) {
       return res.status(500).json({ message: `Error listando archivos sin asignar: ${e.message}` });
     }
