@@ -166,6 +166,12 @@ export default function StudyFullscreen() {
   const [exporting, setExporting] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  // Un <div> oculto por animal seleccionado, con su propia gráfica de
+  // acelerómetro no interactiva — usado solo por exportPdf para poder generar
+  // una sección por animal en el informe. El gráfico visible en pantalla
+  // (chartContainerRef) siempre muestra un único animal a la vez (ver Fallo D),
+  // así que no sirve para capturar los demás.
+  const exportChartRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Parámetros iniciales desde la URL (solo se leen una vez para sembrar el estado).
   const initial = useMemo(() => {
@@ -628,26 +634,55 @@ export default function StudyFullscreen() {
       pdf.text(`GPS: ${totalGps} puntos | Acelerometro: ${totalAcc} muestras`, margin, cursorY);
       cursorY += 8;
 
+      // Una sección de acelerómetro por animal seleccionado (Fallo C): el
+      // gráfico interactivo en pantalla (chartContainerRef) solo muestra un
+      // animal a la vez, así que se captura en su lugar el render oculto de
+      // cada uno (exportChartRefs, ver más arriba).
+      const ACC_SECTION_MAX_H = 65; // mm — deja sitio para varias secciones por página
       let sectionFailed = false;
-      if (chartContainerRef.current) {
+      for (const animalId of selectedAnimals) {
+        const animalLabel = formatAnimalLabelById(animalId, individualByLocalId);
+        const points = accData[animalId] || [];
+
+        if (cursorY + 12 > pageH - margin) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        if (points.length === 0) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`${animalLabel}: sin datos de acelerometro en este rango`, margin, cursorY);
+          cursorY += 8;
+          continue;
+        }
+
+        const el = exportChartRefs.current.get(animalId);
+        if (!el) { sectionFailed = true; continue; }
         try {
-          const chartCanvas = await captureChart(chartContainerRef.current, "#ffffff");
+          const chartCanvas = await captureChart(el, "#ffffff");
           if (chartCanvas.width > 0 && chartCanvas.height > 0) {
             const chartImg = chartCanvas.toDataURL("image/png");
             const chartAspect = chartCanvas.width / chartCanvas.height;
-            const chartImgH = contentW / chartAspect;
-            const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
-            const finalW = finalH * chartAspect;
+            let finalH = Math.min(contentW / chartAspect, ACC_SECTION_MAX_H);
+            let finalW = finalH * chartAspect;
+            if (finalW > contentW) { finalW = contentW; finalH = finalW / chartAspect; }
             if (finalH > 0 && finalW > 0 && Number.isFinite(finalH) && Number.isFinite(finalW)) {
-              pdf.text("Grafica de acelerometro", margin, cursorY);
+              if (cursorY + 4 + finalH > pageH - margin) {
+                pdf.addPage();
+                cursorY = margin;
+              }
+              pdf.setFontSize(10);
+              pdf.setFont("helvetica", "bold");
+              pdf.text(`Acelerometro - ${animalLabel}`, margin, cursorY);
               cursorY += 4;
-              pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+              pdf.addImage(chartImg, "PNG", margin, cursorY, finalW, finalH);
               cursorY += finalH + 6;
             }
           }
         } catch (err) {
           sectionFailed = true;
-          console.error("No se pudo capturar la grafica para el PDF:", err);
+          console.error(`No se pudo capturar la grafica de ${animalId} para el PDF:`, err);
         }
       }
 
@@ -758,6 +793,23 @@ export default function StudyFullscreen() {
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
+      {/* Fuera de pantalla: una gráfica por animal seleccionado, solo para exportPdf (Fallo C). */}
+      <div style={{ position: "fixed", top: 0, left: "-10000px" }} aria-hidden="true">
+        {selectedAnimals.map((a) => (
+          <div
+            key={a}
+            ref={(el) => {
+              if (el) exportChartRefs.current.set(a, el);
+              else exportChartRefs.current.delete(a);
+            }}
+            style={{ width: "900px", height: "260px" }}
+            data-testid={`export-chart-${a}`}
+          >
+            <AccelerometerChart data={downsample(accData[a] || [], MAX_CHART_POINTS)} />
+          </div>
+        ))}
+      </div>
+
       {/* Mapa: dos tercios superiores (se reduce para ampliar el acelerómetro) */}
       <div ref={dragParentRef} className="h-2/3 relative">
         {infoBoxOpen ? (
