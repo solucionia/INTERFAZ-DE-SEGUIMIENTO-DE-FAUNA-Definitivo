@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
-import type { EmissionAlert, Individual } from "@shared/schema";
+import type { EmissionAlert, Individual, Project } from "@shared/schema";
 import { formatAnimalLabelById } from "@/lib/animal-label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AnimalSearch } from "@/components/animal-search";
 import { useToast } from "@/hooks/use-toast";
 import {
   Table,
@@ -62,17 +64,62 @@ export default function EmissionMonitor() {
   const [showAlertDialog, setShowAlertDialog] = useState(false);
   const [alertDays, setAlertDays] = useState("3");
   const [alertEmail, setAlertEmail] = useState(user?.email || "");
+  // Filtros de la tabla de resultados (solo cliente, no afectan a la alerta
+  // por email ni a la consulta al servidor — la búsqueda ya trae todo).
+  const [studyFilter, setStudyFilter] = useState<string>("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [animalFilter, setAnimalFilter] = useState<string[]>([]);
 
   const { data: emissionAlerts, isLoading: alertsLoading } = useQuery<EmissionAlert[]>({
     queryKey: ["/api/emission-alerts"],
   });
 
   const { data: allIndividuals } = useQuery<Individual[]>({ queryKey: ["/api/individuals/all"] });
+  const { data: allProjects } = useQuery<(Project & { animalCount: number })[]>({
+    queryKey: ["/api/projects"],
+  });
   const individualMap = useMemo(() => {
     const m = new Map<string, Individual>();
     for (const ind of allIndividuals || []) if (ind.localIdentifier) m.set(ind.localIdentifier, ind);
     return m;
   }, [allIndividuals]);
+
+  // Estudios presentes en los resultados actuales (para el filtro de estudio).
+  const studiesInResults = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of results || []) map.set(r.studyId, r.studyName);
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [results]);
+
+  // Proyectos presentes en los resultados actuales, cruzando animalId -> projectId
+  // vía individualMap (mismo patrón que study-visualization.tsx).
+  const projectIdsInResults = useMemo(() => {
+    const set = new Set<number>();
+    for (const r of results || []) {
+      const projectId = individualMap.get(r.animalId)?.projectId;
+      if (projectId != null) set.add(projectId);
+    }
+    return set;
+  }, [results, individualMap]);
+
+  // Solo los animales que aparecen en los resultados actuales, para no ofrecer
+  // en el selector animales que ya están emitiendo con normalidad.
+  const animalsInResults = useMemo(() => {
+    const ids = new Set((results || []).map((r) => r.animalId));
+    return (allIndividuals || []).filter((ind) => ind.localIdentifier && ids.has(ind.localIdentifier));
+  }, [results, allIndividuals]);
+
+  const filteredResults = useMemo(() => {
+    return (results || []).filter((r) => {
+      if (studyFilter !== "all" && r.studyId !== studyFilter) return false;
+      if (projectFilter !== "all") {
+        const projectId = individualMap.get(r.animalId)?.projectId;
+        if (projectId == null || String(projectId) !== projectFilter) return false;
+      }
+      if (animalFilter.length > 0 && !animalFilter.includes(r.animalId)) return false;
+      return true;
+    });
+  }, [results, studyFilter, projectFilter, animalFilter, individualMap]);
 
   const createAlertMutation = useMutation({
     mutationFn: async () => {
@@ -126,6 +173,9 @@ export default function EmissionMonitor() {
       if (!res.ok) throw new Error("Error al consultar emisiones");
       const data = await res.json();
       setResults(data);
+      setStudyFilter("all");
+      setProjectFilter("all");
+      setAnimalFilter([]);
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
@@ -195,6 +245,57 @@ export default function EmissionMonitor() {
 
       {results !== null && !searching && results.length > 0 && (
         <Card>
+          <CardContent className="pt-5 pb-4 px-5">
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Estudio</Label>
+                <Select value={studyFilter} onValueChange={setStudyFilter}>
+                  <SelectTrigger className="w-48" data-testid="select-filter-study">
+                    <SelectValue placeholder="Todos los estudios" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los estudios</SelectItem>
+                    {studiesInResults.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {projectIdsInResults.size > 0 && (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Proyecto</Label>
+                  <Select value={projectFilter} onValueChange={setProjectFilter}>
+                    <SelectTrigger className="w-48" data-testid="select-filter-project">
+                      <SelectValue placeholder="Todos los proyectos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los proyectos</SelectItem>
+                      {(allProjects || [])
+                        .filter((p) => projectIdsInResults.has(p.id))
+                        .map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>{p.descripcion}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="space-y-1 flex-1 min-w-[220px]">
+                <Label className="text-xs text-muted-foreground">Ejemplar</Label>
+                <AnimalSearch
+                  individuals={animalsInResults}
+                  selected={animalFilter}
+                  onChange={setAnimalFilter}
+                  multiple
+                  placeholder="Filtrar por ejemplar..."
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {results !== null && !searching && results.length > 0 && filteredResults.length > 0 && (
+        <Card>
           <CardContent className="p-0">
             <div className="overflow-auto">
               <Table>
@@ -208,7 +309,7 @@ export default function EmissionMonitor() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {results.map((r, idx) => (
+                  {filteredResults.map((r, idx) => (
                     <TableRow key={`${r.studyId}-${r.animalId}-${idx}`} data-testid={`row-emission-${r.animalId}`}>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -263,6 +364,17 @@ export default function EmissionMonitor() {
                 </TableBody>
               </Table>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {results !== null && !searching && results.length > 0 && filteredResults.length === 0 && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
+            <p className="text-sm text-muted-foreground">
+              Ningún resultado coincide con los filtros aplicados
+            </p>
           </CardContent>
         </Card>
       )}
