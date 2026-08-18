@@ -16,7 +16,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Loader2, MapPin, Activity, ChevronRight, ChevronLeft, SlidersHorizontal, Minimize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
+import { Loader2, MapPin, Activity, ChevronRight, ChevronLeft, SlidersHorizontal, Minimize2, Maximize2, Eye, EyeOff, Route, GripVertical, FileDown, Image as ImageIcon, FileText, Globe, Database, X } from "lucide-react";
 import { MapLayerControl, GoogleMapsClick, googleMapsLink } from "@/components/map-layers";
 import { formatAnimalLabel, formatAnimalLabelById } from "@/lib/animal-label";
 import { AnimalSearch } from "@/components/animal-search";
@@ -166,6 +166,12 @@ export default function StudyFullscreen() {
   const [exporting, setExporting] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  // Un <div> oculto por animal seleccionado, con su propia gráfica de
+  // acelerómetro no interactiva — usado solo por exportPdf para poder generar
+  // una sección por animal en el informe. El gráfico visible en pantalla
+  // (chartContainerRef) siempre muestra un único animal a la vez (ver Fallo D),
+  // así que no sirve para capturar los demás.
+  const exportChartRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Parámetros iniciales desde la URL (solo se leen una vez para sembrar el estado).
   const initial = useMemo(() => {
@@ -188,6 +194,7 @@ export default function StudyFullscreen() {
   const [focusAnimal, setFocusAnimal] = useState<string>(initial.focus);
   const [compareAnimal, setCompareAnimal] = useState<string>("");
   const [panelOpen, setPanelOpen] = useState(true);
+  const [infoBoxOpen, setInfoBoxOpen] = useState(true);
   const [activeQuickRange, setActiveQuickRange] = useState<QuickRange | null>(null);
   const [hideLowQuality, setHideLowQuality] = useState(false);
   const [showTrackLine, setShowTrackLine] = useState(true);
@@ -427,20 +434,20 @@ export default function StudyFullscreen() {
   const totalGps = useMemo(() => Object.values(gpsData).reduce((s, a) => s + a.length, 0), [gpsData]);
   const totalAcc = useMemo(() => Object.values(accData).reduce((s, a) => s + a.length, 0), [accData]);
 
-  // Datos de la gráfica ACC: un animal si hay foco/uno solo, si no la mezcla ordenada.
+  // Datos de la gráfica ACC: siempre un único animal (el enfocado, o el primero
+  // de la selección si no hay foco explícito). Ya no existe una vista
+  // "combinada" que mezcle los puntos de varios animales en una sola serie.
   const chartData = useMemo(() => {
-    const animalId = focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
-    let data: AccPoint[];
-    if (animalId) data = accData[animalId] || [];
-    else data = Object.values(accData).flat().sort((a, b) => a.timestamp - b.timestamp);
+    const animalId = focusAnimal || selectedAnimals[0] || null;
+    const data = animalId ? accData[animalId] || [] : [];
     return downsample(data, MAX_CHART_POINTS);
   }, [accData, focusAnimal, selectedAnimals]);
 
   const compareChartData = useMemo(() => downsample(compareAccData, MAX_CHART_POINTS), [compareAccData]);
 
-  // Animal cuyo ACC se muestra en el panel principal (foco o único seleccionado).
+  // Animal cuyo ACC se muestra en el panel principal (foco o primero de la selección).
   const mainAccAnimalId = useMemo(
-    () => focusAnimal || (selectedAnimals.length === 1 ? selectedAnimals[0] : null),
+    () => focusAnimal || selectedAnimals[0] || null,
     [focusAnimal, selectedAnimals]
   );
 
@@ -627,26 +634,55 @@ export default function StudyFullscreen() {
       pdf.text(`GPS: ${totalGps} puntos | Acelerometro: ${totalAcc} muestras`, margin, cursorY);
       cursorY += 8;
 
+      // Una sección de acelerómetro por animal seleccionado (Fallo C): el
+      // gráfico interactivo en pantalla (chartContainerRef) solo muestra un
+      // animal a la vez, así que se captura en su lugar el render oculto de
+      // cada uno (exportChartRefs, ver más arriba).
+      const ACC_SECTION_MAX_H = 65; // mm — deja sitio para varias secciones por página
       let sectionFailed = false;
-      if (chartContainerRef.current) {
+      for (const animalId of selectedAnimals) {
+        const animalLabel = formatAnimalLabelById(animalId, individualByLocalId);
+        const points = accData[animalId] || [];
+
+        if (cursorY + 12 > pageH - margin) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        if (points.length === 0) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`${animalLabel}: sin datos de acelerometro en este rango`, margin, cursorY);
+          cursorY += 8;
+          continue;
+        }
+
+        const el = exportChartRefs.current.get(animalId);
+        if (!el) { sectionFailed = true; continue; }
         try {
-          const chartCanvas = await captureChart(chartContainerRef.current, "#ffffff");
+          const chartCanvas = await captureChart(el, "#ffffff");
           if (chartCanvas.width > 0 && chartCanvas.height > 0) {
             const chartImg = chartCanvas.toDataURL("image/png");
             const chartAspect = chartCanvas.width / chartCanvas.height;
-            const chartImgH = contentW / chartAspect;
-            const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
-            const finalW = finalH * chartAspect;
+            let finalH = Math.min(contentW / chartAspect, ACC_SECTION_MAX_H);
+            let finalW = finalH * chartAspect;
+            if (finalW > contentW) { finalW = contentW; finalH = finalW / chartAspect; }
             if (finalH > 0 && finalW > 0 && Number.isFinite(finalH) && Number.isFinite(finalW)) {
-              pdf.text("Grafica de acelerometro", margin, cursorY);
+              if (cursorY + 4 + finalH > pageH - margin) {
+                pdf.addPage();
+                cursorY = margin;
+              }
+              pdf.setFontSize(10);
+              pdf.setFont("helvetica", "bold");
+              pdf.text(`Acelerometro - ${animalLabel}`, margin, cursorY);
               cursorY += 4;
-              pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+              pdf.addImage(chartImg, "PNG", margin, cursorY, finalW, finalH);
               cursorY += finalH + 6;
             }
           }
         } catch (err) {
           sectionFailed = true;
-          console.error("No se pudo capturar la grafica para el PDF:", err);
+          console.error(`No se pudo capturar la grafica de ${animalId} para el PDF:`, err);
         }
       }
 
@@ -757,32 +793,71 @@ export default function StudyFullscreen() {
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-background" data-testid="view-fullscreen">
+      {/* Fuera de pantalla: una gráfica por animal seleccionado, solo para exportPdf (Fallo C). */}
+      <div style={{ position: "fixed", top: 0, left: "-10000px" }} aria-hidden="true">
+        {selectedAnimals.map((a) => (
+          <div
+            key={a}
+            ref={(el) => {
+              if (el) exportChartRefs.current.set(a, el);
+              else exportChartRefs.current.delete(a);
+            }}
+            style={{ width: "900px", height: "260px" }}
+            data-testid={`export-chart-${a}`}
+          >
+            <AccelerometerChart data={downsample(accData[a] || [], MAX_CHART_POINTS)} />
+          </div>
+        ))}
+      </div>
+
       {/* Mapa: dos tercios superiores (se reduce para ampliar el acelerómetro) */}
       <div ref={dragParentRef} className="h-2/3 relative">
-        <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
-            <MapPin className="w-4 h-4 text-primary shrink-0" />
-            <span className="truncate">{headerLabel}</span>
-          </div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {study?.name ? `${study.name} · ` : ""}{dateStart} → {dateEnd}
-          </div>
-          {!loading && !error && (
-            <div className="text-[11px] text-muted-foreground mt-0.5" data-testid="text-fullscreen-counts">
-              {totalGps} GPS · {totalAcc} muestras ACC
+        {infoBoxOpen ? (
+          <div className="absolute top-2 left-2 z-[1000] bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-1.5 shadow-md max-w-[60%]" data-testid="info-box-fullscreen">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground" data-testid="text-fullscreen-animal">
+              <MapPin className="w-4 h-4 text-primary shrink-0" />
+              <span className="truncate flex-1 min-w-0">{headerLabel}</span>
+              <button
+                onClick={() => setInfoBoxOpen(false)}
+                className="text-muted-foreground hover:text-foreground shrink-0"
+                data-testid="button-collapse-info-box"
+                title="Minimizar"
+              >
+                <Minimize2 className="w-3.5 h-3.5" />
+              </button>
             </div>
-          )}
-          {selectedAnimals.length > 1 && (
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {selectedAnimals.map((a) => (
-                <span key={a} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: animalColorMap[a] }} />
-                  {formatAnimalLabelById(a, individualByLocalId)}
-                </span>
-              ))}
+            <div className="text-xs text-muted-foreground mt-0.5">
+              {study?.name ? `${study.name} · ` : ""}{dateStart} → {dateEnd}
             </div>
-          )}
-        </div>
+            {!loading && !error && (
+              <div className="text-[11px] text-muted-foreground mt-0.5" data-testid="text-fullscreen-counts">
+                {totalGps} GPS · {totalAcc} muestras ACC
+              </div>
+            )}
+            {selectedAnimals.length > 1 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {selectedAnimals.map((a) => (
+                  <span key={a} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: animalColorMap[a] }} />
+                    {formatAnimalLabelById(a, individualByLocalId)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="absolute top-2 left-2 z-[1000]">
+            <button
+              onClick={() => setInfoBoxOpen(true)}
+              className="flex items-center gap-1.5 bg-background/95 backdrop-blur-sm border border-border rounded-md px-2.5 py-1.5 shadow-md text-xs font-medium hover-elevate"
+              data-testid="button-expand-info-box"
+              title="Mostrar información"
+            >
+              <MapPin className="w-4 h-4 text-primary" />
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Panel de control flotante minimizable (esquina superior derecha) */}
         {panelOpen ? (
@@ -936,19 +1011,12 @@ export default function StudyFullscreen() {
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Acelerómetro: enfocar animal</Label>
                   <div className="flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => setFocusAnimal("")}
-                      className={`text-[11px] px-2 py-1 rounded border ${focusAnimal === "" ? "bg-primary text-primary-foreground border-primary" : "border-input text-foreground hover-elevate"}`}
-                      data-testid="button-focus-all"
-                    >
-                      Todos
-                    </button>
                     {selectedAnimals.map((a) => (
                       <button
                         key={a}
                         onClick={() => setFocusAnimal(a)}
                         className="text-[11px] px-2 py-1 rounded border"
-                        style={focusAnimal === a
+                        style={mainAccAnimalId === a
                           ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" }
                           : { borderColor: animalColorMap[a], color: animalColorMap[a] }}
                         data-testid={`button-focus-${a}`}
@@ -1157,20 +1225,16 @@ export default function StudyFullscreen() {
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1 shrink-0">
           <Activity className="w-3.5 h-3.5" />
           Acelerómetro
-          {focusAnimal
-            ? <span className="text-muted-foreground font-normal">· {formatAnimalLabelById(focusAnimal, individualByLocalId)}</span>
-            : selectedAnimals.length > 1
-              ? <span className="text-muted-foreground font-normal">· {selectedAnimals.length} animales (combinado)</span>
-              : null}
+          {mainAccAnimalId && (
+            <span className="text-muted-foreground font-normal">· {formatAnimalLabelById(mainAccAnimalId, individualByLocalId)}</span>
+          )}
           <span className="text-muted-foreground font-normal ml-auto text-[10px]">Pincha un punto para resaltarlo en el mapa</span>
         </div>
         <div className="flex-1 min-h-0 flex gap-3">
           <div className="flex-1 min-w-0 flex flex-col">
             {compareAnimal && (
               <div className="text-[11px] font-medium text-foreground shrink-0 mb-0.5 truncate" data-testid="label-acc-main">
-                {mainAccAnimalId
-                  ? formatAnimalLabelById(mainAccAnimalId, individualByLocalId)
-                  : `${selectedAnimals.length} animales (combinado)`}
+                {mainAccAnimalId ? formatAnimalLabelById(mainAccAnimalId, individualByLocalId) : "—"}
               </div>
             )}
             <div className="flex-1 min-h-0" ref={chartContainerRef}>

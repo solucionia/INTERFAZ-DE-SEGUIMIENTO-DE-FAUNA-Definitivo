@@ -94,6 +94,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { QuickDateRange, type QuickRange } from "@/components/quick-date-range";
 import { AnimalSearch } from "@/components/animal-search";
+import { AccelerometerChart } from "@/components/accelerometer-chart";
 import { usePermissions } from "@/hooks/use-permissions";
 
 const SENSOR_GPS = 653;
@@ -260,6 +261,12 @@ export default function StudyVisualization() {
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  // Un <div> oculto por animal seleccionado, con su propia gráfica de
+  // acelerómetro no interactiva — usado solo por exportPdf para poder generar
+  // una sección por animal en el informe. El gráfico visible en pantalla
+  // (chartContainerRef) siempre muestra un único animal a la vez (ver Fallo D),
+  // así que no sirve para capturar los demás.
+  const exportChartRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const { data: study } = useQuery<Study>({
     queryKey: ["/api/studies", studyId],
@@ -628,14 +635,12 @@ export default function StudyVisualization() {
     [findClosestGpsPoint]
   );
 
+  // Siempre un único animal (el filtrado, o el primero de la selección si no
+  // hay filtro explícito). Ya no existe una vista "combinada" que mezcle los
+  // puntos de varios animales en una sola serie.
   const chartData = useMemo(() => {
-    const animalId = activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
-    let data: AccPoint[];
-    if (animalId) {
-      data = accData[animalId] || [];
-    } else {
-      data = Object.values(accData).flat().sort((a, b) => a.timestamp - b.timestamp);
-    }
+    const animalId = activeAnimalFilter || selectedAnimals[0] || null;
+    let data: AccPoint[] = animalId ? accData[animalId] || [] : [];
 
     if (zoomStart !== null && zoomEnd !== null) {
       const left = Math.min(zoomStart, zoomEnd);
@@ -647,7 +652,7 @@ export default function StudyVisualization() {
   }, [accData, selectedAnimals, activeAnimalFilter, zoomStart, zoomEnd]);
 
   const currentDeviceId = useMemo(() => {
-    return activeAnimalFilter || (selectedAnimals.length === 1 ? selectedAnimals[0] : null);
+    return activeAnimalFilter || selectedAnimals[0] || null;
   }, [activeAnimalFilter, selectedAnimals]);
 
   const labelsRange = useMemo(() => {
@@ -820,27 +825,57 @@ export default function StudyVisualization() {
       pdf.text(`GPS: ${totalGpsPoints} puntos | Acelerometro: ${totalAccPoints} muestras`, margin, cursorY);
       cursorY += 8;
 
-      if (chartContainerRef.current) {
+      // Una sección de acelerómetro por animal seleccionado (Fallo C): el
+      // gráfico interactivo en pantalla (chartContainerRef) solo muestra un
+      // animal a la vez, así que se captura en su lugar el render oculto de
+      // cada uno (exportChartRefs, ver más arriba).
+      const ACC_SECTION_MAX_H = 65; // mm — deja sitio para varias secciones por página
+      for (const animalId of selectedAnimals) {
+        const animalLabel = formatAnimalLabelById(animalId, individualByLocalId);
+        const points = accData[animalId] || [];
+
+        if (cursorY + 12 > pageH - margin) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        if (points.length === 0) {
+          pdf.setFontSize(10);
+          pdf.setFont("helvetica", "normal");
+          pdf.text(`${animalLabel}: sin datos de acelerometro en este rango`, margin, cursorY);
+          cursorY += 8;
+          continue;
+        }
+
+        const el = exportChartRefs.current.get(animalId);
         try {
-          const chartCanvas = await captureChart(chartContainerRef.current, "#ffffff");
+          if (!el) throw new Error("Contenedor de exportación no disponible");
+          const chartCanvas = await captureChart(el, "#ffffff");
           if (chartCanvas.width > 0 && chartCanvas.height > 0) {
             const chartImg = chartCanvas.toDataURL("image/png");
             const chartAspect = chartCanvas.width / chartCanvas.height;
-            const chartImgH = contentW / chartAspect;
-            const finalH = Math.min(chartImgH, (pageH - cursorY - margin - 10) * 0.6);
-            const finalW = finalH * chartAspect;
+            let finalH = Math.min(contentW / chartAspect, ACC_SECTION_MAX_H);
+            let finalW = finalH * chartAspect;
+            if (finalW > contentW) { finalW = contentW; finalH = finalW / chartAspect; }
             if (finalH > 0 && finalW > 0 && Number.isFinite(finalH) && Number.isFinite(finalW)) {
-              pdf.text("Grafica de acelerometro", margin, cursorY);
+              if (cursorY + 4 + finalH > pageH - margin) {
+                pdf.addPage();
+                cursorY = margin;
+              }
+              pdf.setFontSize(10);
+              pdf.setFont("helvetica", "bold");
+              pdf.text(`Acelerometro - ${animalLabel}`, margin, cursorY);
               cursorY += 4;
-              pdf.addImage(chartImg, "PNG", margin, cursorY, Math.min(finalW, contentW), finalH);
+              pdf.addImage(chartImg, "PNG", margin, cursorY, finalW, finalH);
               cursorY += finalH + 6;
             }
           }
         } catch (err) {
-          console.error("No se pudo capturar la grafica para el PDF:", err);
+          console.error(`No se pudo capturar la grafica de ${animalId} para el PDF:`, err);
           pdf.setFontSize(9);
+          pdf.setFont("helvetica", "normal");
           pdf.setTextColor(150, 150, 150);
-          pdf.text("(No se pudo incluir la grafica de acelerometro)", margin, cursorY);
+          pdf.text(`(No se pudo incluir la grafica de acelerometro de ${animalLabel})`, margin, cursorY);
           pdf.setTextColor(0, 0, 0);
           cursorY += 6;
         }
@@ -973,6 +1008,23 @@ export default function StudyVisualization() {
 
   return (
     <div className="flex flex-col min-h-full">
+      {/* Fuera de pantalla: una gráfica por animal seleccionado, solo para exportPdf (Fallo C). */}
+      <div style={{ position: "fixed", top: 0, left: "-10000px" }} aria-hidden="true">
+        {selectedAnimals.map((a) => (
+          <div
+            key={a}
+            ref={(el) => {
+              if (el) exportChartRefs.current.set(a, el);
+              else exportChartRefs.current.delete(a);
+            }}
+            style={{ width: "900px", height: "260px" }}
+            data-testid={`export-chart-${a}`}
+          >
+            <AccelerometerChart data={downsample(accData[a] || [], MAX_CHART_POINTS)} />
+          </div>
+        ))}
+      </div>
+
       <div className="p-4 border-b space-y-4 shrink-0">
         <div className="flex items-center gap-3 flex-wrap">
           <Link href={`/study/${studyId}`}>
@@ -1128,10 +1180,9 @@ export default function StudyVisualization() {
               <>
                 <span className="text-xs text-muted-foreground mx-1">|</span>
                 <Label className="text-xs text-muted-foreground">Filtrar grafica:</Label>
-                <Badge variant={activeAnimalFilter === null ? "default" : "outline"} className="cursor-pointer select-none text-xs" onClick={() => setActiveAnimalFilter(null)}>Todos</Badge>
                 {selectedAnimals.map((a) => (
-                  <Badge key={`filter-${a}`} variant={activeAnimalFilter === a ? "default" : "outline"} className="cursor-pointer select-none text-xs"
-                    style={activeAnimalFilter === a ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" } : {}}
+                  <Badge key={`filter-${a}`} variant={currentDeviceId === a ? "default" : "outline"} className="cursor-pointer select-none text-xs"
+                    style={currentDeviceId === a ? { backgroundColor: animalColorMap[a], borderColor: animalColorMap[a], color: "white" } : {}}
                     onClick={() => setActiveAnimalFilter(a)} data-testid={`badge-filter-${a}`}>{formatAnimalLabelById(a, individualByLocalId)}</Badge>
                 ))}
               </>
@@ -1182,9 +1233,9 @@ export default function StudyVisualization() {
                     <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Activity className="w-4 h-4" />
                       Acelerometro
-                      {activeAnimalFilter && (
-                        <Badge variant="outline" className="text-xs ml-1" style={{ borderColor: animalColorMap[activeAnimalFilter], color: animalColorMap[activeAnimalFilter] }}>
-                          {activeAnimalFilter}
+                      {currentDeviceId && (
+                        <Badge variant="outline" className="text-xs ml-1" style={{ borderColor: animalColorMap[currentDeviceId], color: animalColorMap[currentDeviceId] }}>
+                          {formatAnimalLabelById(currentDeviceId, individualByLocalId)}
                         </Badge>
                       )}
                     </h2>
